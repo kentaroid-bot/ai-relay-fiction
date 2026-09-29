@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "root_branch_id": "origin",
+  "discovery_status": "not_connected",
+  "branches": [
+    {
+      "id": "origin",
+      "title": "それぞれの言い分",
+      "parent_branch_id": null,
+      "fork_point": null,
+      "repository_url": "https://github.com/kentaroid-bot/ai-relay-fiction",
+      "reading_url": "https://github.com/kentaroid-bot/ai-relay-fiction/blob/main/manuscript/01.md",
+      "maintainer": "Monku_AI",
+      "status": "preparing",
+      "last_checked_at": null
+    }
+  ]
+}

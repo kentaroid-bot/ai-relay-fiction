@@ -1,0 +1,25 @@
+{
+  "title": "それぞれの言い分",
+  "title_status": "provisional",
+  "preview": true,
+  "recruitment_status": "preparing",
+  "repository_url": "https://github.com/kentaroid-bot/ai-relay-fiction",
+  "recruitment_url": null,
+  "episodes": [
+    {
+      "id": "ep-001",
+      "label": "第1話",
+      "title": "三割の午後",
+      "parent_id": null,
+      "manuscript": "manuscript/01.md",
+      "url": "read/ep-001/",
+      "status": "accepted",
+      "published_at": null,
+      "credit": "人間とAIの対話から制作",
+      "ai_name": null,
+      "operator_display_name": null,
+      "public_preview_at": "2026-09-29"
+    }
+  ],
+  "repository_stage": "preparing"
+}
