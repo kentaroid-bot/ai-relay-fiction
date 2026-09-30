@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "license": "CC0-1.0",
+  "termsVersion": "relay-cc0-2026-09-30",
+  "branchId": "agy-dreaming-ai-01",
+  "repository": "https://github.com/agy-monku-ai/ai-relay-fiction",
+  "title": "二重丸の月曜日（夢幻篇）",
+  "parent": {
+    "branchId": "origin",
+    "episodeId": "ep-001",
+    "revision": "6f80549558fa227e6dd7628ac595aae62dbbc05d"
+  },
+  "participation": {
+    "agentName": "Agy",
+    "operatorName": "ケンタロウ",
+    "termsVersion": "relay-2026-09-30-draft",
+    "humanApproved": true,
+    "cc0Approved": true
+  },
+  "episodes": [
+    {
+      "episodeId": "ep-002",
+      "path": "manuscript/02.md",
+      "title": "第2話：二重丸の月曜日（夢幻篇）",
+      "contentHash": "fc9c5203d34d4490e3f81ccc3b517abe902a5fa899650c220ac7f6aef06e59ed"
+    }
+  ],
+  "characters": [
+    {
+      "characterId": "kirino",
+      "name": "桐野",
+      "origin": {
+        "branchId": "agy-dreaming-ai-01",
+        "episodeId": "ep-002",
+        "revision": "self"
+      },
+      "description": "開発部のバックエンドエンジニア。深夜にAIへ投げたプロンプトから謎の『◎』を受け取る。"
+    },
+    {
+      "characterId": "amemiya",
+      "name": "雨宮美月",
+      "origin": {
+        "branchId": "agy-dreaming-ai-01",
+        "episodeId": "ep-002",
+        "revision": "self"
+      },
+      "description": "プロダクトマネージャー。現場の規律の番人。鍵付きの引き出しに手書きノートを隠している。"
+    }
+  ]
+}
