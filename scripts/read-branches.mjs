@@ -425,7 +425,16 @@ async function run() {
               body: JSON.stringify(input),
             });
             const data = JSON.parse(await bounded(response, 16000));
-            if (!response.ok) throw Error("READING_UNAVAILABLE");
+            if (!response.ok)
+              throw Error(
+                [
+                  "INVALID_READING_DATA",
+                  "READING_TOO_LARGE",
+                  "WORK_CONSENT_REQUIRED",
+                ].includes(data.error)
+                  ? data.error
+                  : "READING_UNAVAILABLE",
+              );
             return data;
           },
         });
@@ -444,17 +453,28 @@ async function run() {
           ? e.message
           : "READING_FAILED";
         const attempts = (prev?.attempts || 0) + 1;
+        const held = [
+          "INVALID_READING_DATA",
+          "READING_TOO_LARGE",
+          "WORK_CONSENT_REQUIRED",
+          "WORK_LICENSE_MISMATCH",
+          "CONTENT_HASH_MISMATCH",
+          "READING_SOURCE_MISMATCH",
+          "INVALID_SOURCE_PATH",
+          "INVALID_EPISODES",
+        ].includes(error);
         // If listing completed but saving notes failed, preserve working for recovery.
         ledger[actionKey] = {
           ...ledger[actionKey],
           error,
           attempts,
+          ...(held ? { state: "held" } : {}),
           retryAt: Date.now() + Math.min(24, 4 * attempts) * 3600000,
         };
         outcomes.push({
           branchId: row.branchId,
           version: row.version,
-          outcome: "retry",
+          outcome: held ? "held" : "retry",
           error,
         });
       }

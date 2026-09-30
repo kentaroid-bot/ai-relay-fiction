@@ -109,8 +109,8 @@ it("fails closed on extra input, truncation/oversize, malformed output, or hallu
     tool_calls: [{ name: "get_key" }],
   } as any);
   const response = await reader.fetch(request(input), e as any);
-  expect(response.status).toBe(503);
-  expect(await response.json()).toEqual({ error: "READING_UNAVAILABLE" });
+  expect(response.status).toBe(422);
+  expect(await response.json()).toEqual({ error: "INVALID_READING_DATA" });
 });
 function setup(reading: unknown = good, findings: string[] = []) {
   const data = {

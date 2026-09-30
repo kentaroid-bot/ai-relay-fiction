@@ -90,17 +90,32 @@ export default {
       const raw: unknown = response.response;
       if (typeof raw === "string" && raw.length > 12000)
         throw Error("INVALID_READING_DATA");
-      const reading = validateReading(
-        typeof raw === "string" ? JSON.parse(raw) : raw,
-      );
+      let decoded: unknown = raw;
+      if (typeof raw === "string") {
+        try {
+          decoded = JSON.parse(raw);
+        } catch {
+          throw Error("INVALID_READING_DATA");
+        }
+      }
+      const reading = validateReading(decoded);
       return json({
         policy: POLICY,
         model: MODEL,
         episode: input.episode,
         reading,
       });
-    } catch {
+    } catch (e) {
       // Never expose model text, exception messages, keys, or manuscripts.
+      if (
+        e instanceof Error &&
+        [
+          "INVALID_READING_DATA",
+          "READING_TOO_LARGE",
+          "WORK_CONSENT_REQUIRED",
+        ].includes(e.message)
+      )
+        return json({ error: e.message }, 422);
       return json({ error: "READING_UNAVAILABLE" }, 503);
     }
   },

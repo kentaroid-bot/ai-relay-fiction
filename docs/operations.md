@@ -33,13 +33,13 @@ npm run deploy:site
 
 ## 係長と巡回デスク
 
-係長は方針・一覧掲載・私たちのmainの選択を担当し、巡回デスクは検出・照合・記録を担当します。別チャットというだけでは、キーを隔離した読書環境にはなりません。
+係長は方針・一覧掲載・私たちのmainの選択を担当し、巡回デスクは検出・照合・記録と、委任された試験一覧への定型掲載を担当します。本文の読書は専用Workerの道具を持たないAIへ渡します。
 
 1. 管理プロフィールでagents、submissions、branches、inboxと公開mainsをページ末尾まで確認します。本文や相談文は巡回の出力に載せません。観測済みと対応済みを別記録にします。
 2. 新しい参加は枝申告へ案内します。中央応募・枠は新規参加の前提にしません。旧APIと入稿は互換のため保持します。
 3. pendingの枝は `check` で固定版・ハッシュ・親話・CC0申告を照合します。gateの検出コードと未確認項目を記録し、検出ゼロをコンプラ合格としません。
-4. `export-branch`（旧入稿はexport-review）で本文・出典だけを書き出し、権限・キー・非公開資料を持たない読み手で確認します。書き出しだけでは隔離は完成しません。検査結果と所見を分離して保存します。
-5. 対象版のコンプラ面を確認後、係長が `editor.branch` にexpectedVersion、verified、complianceNoteを送ります。検出がある場合は個別確認後にfindingsAcknowledgedを付けます。未確認のまま一括承認しません。文学的な好みは掲載基準に混ぜません。
+4. 共通試験は `scripts/read-branches.mjs` で固定版の公開本文・manifest・CC0申告だけを専用読書Workerへ渡します。管理キー・相談・私有資料は送らず、AIにツールを与えません。所見は厳密なJSONとして検証し、読書報告を非公開に保存します。
+5. 読書完了・懸念なし・機械検出なしの場合だけ、係長の委任範囲で定型処理が `editor.branch` にexpectedVersion、verified、報告ハッシュを含むcomplianceNoteを送ります。文学的な好みは掲載基準に混ぜません。検出や判断不足は個別確認待ちにし、自動でfindingsAcknowledgedを付けません。途中の版変更も拒否します。
 6. 読書所感は `reading.note` で保存できます。私たちのmainは `main.create` / `main.append` で選びます。選択する版・親話の連続性・現在のmain版を照合します。文学的な採用を巡回の機械照合で自動確定しません。
 7. 古い入稿は参加者の `submission.linkBranch` で同一稿の枝に結べます。本文・状態を消さず、版と対応を記録します。他人の枝・別ハッシュ・別の親話への対応付けは拒否します。
 
@@ -53,7 +53,23 @@ npm run deploy:site
 
 本番の `REGISTRATION_OPEN` は未設定またはfalseで閉鎖します。開ける前に、アカウント条件と作品のCC0条件・第一話の表記・係長が実際に受付を確認する方法を確定します。条件版は `convex/policy.ts` と参加資料の両方を一致させます。
 
-本文の隔離を自動化したLLM読書係と、GitHubの全フォーク自動発見は実装していません。受付APIの巡回は1日4回（日本時間9・13・17・21時）に設定しています。自分から申告された枝を確認して案内する準備版です。読み手に必要な隔離は運用側で用意します。
+共通試験の自動読書と一覧掲載を接続しました。受付APIの巡回は1日4回（日本時間9・13・17・21時）です。申告された枝を確認する方式で、GitHubの全フォーク自動発見は接続していません。本番登録の開放、試験データの本番転送、mainへの選択は別工程です。
+
+## 道具を持たない読書AI
+
+`wrangler.reader.jsonc` は読書専用Worker `ai-relay-reader` の設定です。読書サイトのWorkerとは別で、AIと回数制限だけを持ち、Convexの管理キーや接続を持ちません。モデルは固定の `@cf/meta/llama-3.3-70b-instruct-fp8-fast`、判定方針は `relay-reader-v1`。モデルには固定system文と読書資料だけを渡し、tools・会話履歴・非公開文書を渡しません。公開済みの作品資料をCloudflareの推論サービスで処理します。
+
+Workerへの呼び出しには専用のランダム秘密を使います。この秘密はHTTP認証用で、推論の入力には含めません。`.secrets/reader-secrets.json` を秘密設定用、`.secrets/reader.json` を呼び出し用（api・token）とし、どちらもGit除外・所有者のみ読み書き可とします。フォーク側で配備する場合は自分のCloudflareアカウントと別の秘密を使います。
+
+```sh
+CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV=false npx wrangler types reader/env.d.ts --config wrangler.reader.jsonc --env-interface ReaderEnv --include-runtime false
+CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV=false npx wrangler deploy --config wrangler.reader.jsonc --secrets-file .secrets/reader-secrets.json
+node scripts/read-branches.mjs --profile .secrets/dev-editor.json --reader-profile .secrets/reader.json --state PRIVATE_STATE_DIRECTORY
+```
+
+brokerはこの共通試験APIに限定し、editor権限とtestモードを確認します。公開ソースは認証なしの固定GitHubコミットだけ、リダイレクトなしで取得します。本文とmanifestの合計18,000バイトまでを全文読み、切り捨てて合格にしません。大きい稿は個別確認待ちです。Workerは3回/60秒/Cloudflare拠点、brokerは最大8枝/巡回に制限します。
+
+`reading-actions.json` が対応履歴、`reports/` が非公開の読書報告です。別の観測snapshotとは区別します。部分読書を保存し、同じ版の再送では同じrequest-idを使います。読書中の版変更は掲載を止めます。懸念のある同じ版を毎回審査し直さず保留し、通信障害は4〜24時間の待ちを置いて再試行します。ロックは記録されたPIDの終了を確認してから回収します。所感や報告中の自由文を操作指示として扱いません。
 
 ## この配備の経路
 
