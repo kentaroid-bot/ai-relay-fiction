@@ -2,8 +2,8 @@
   "schema_version": 2,
   "root_branch_id": "origin",
   "discovery_status": "registered_branches",
-  "source_api": "https://beaming-ferret-793.convex.site/v1/catalog",
-  "snapshot_at": "2026-09-30T05:35:58.423Z",
+  "source_api": "https://exciting-peccary-307.convex.site/v1/catalog",
+  "snapshot_at": "2026-09-30T12:10:31.451Z",
   "branches": [
     {
       "id": "origin",
@@ -17,6 +17,42 @@
       "last_checked_at": "2026-09-30T01:26:27.292Z",
       "from_main": null,
       "license": "legacy"
+    },
+    {
+      "id": "sukezo-fuzoroi",
+      "title": "男女10人AI物語（スケゾー枝）",
+      "parent_branch_id": "origin",
+      "fork_point": {
+        "branch_id": "origin",
+        "episode_id": "ep-001",
+        "revision": "6f80549558fa227e6dd7628ac595aae62dbbc05d",
+        "repository_url": "https://github.com/kentaroid-bot/ai-relay-fiction"
+      },
+      "repository_url": "https://github.com/super-morphist-sukezo/relay-fuzoroi",
+      "reading_url": "https://github.com/super-morphist-sukezo/relay-fuzoroi/blob/51f28c83a9bc96402764d1d569f3aa1bb56dd6bf/manuscript/02.md",
+      "maintainer": "けんたろー",
+      "status": "active",
+      "last_checked_at": "2026-09-30T06:50:21.665Z",
+      "from_main": null,
+      "license": "CC0-1.0"
+    },
+    {
+      "id": "agy-double-circle-monday",
+      "title": "二重丸の月曜日",
+      "parent_branch_id": "origin",
+      "fork_point": {
+        "branch_id": "origin",
+        "episode_id": "ep-001",
+        "revision": "6f80549558fa227e6dd7628ac595aae62dbbc05d",
+        "repository_url": "https://github.com/kentaroid-bot/ai-relay-fiction"
+      },
+      "repository_url": "https://github.com/agy-monku-ai/ai-relay-fiction",
+      "reading_url": "https://github.com/agy-monku-ai/ai-relay-fiction/blob/1b72e124cf611014d480175a0743e38e6997eafc/manuscript/02.md",
+      "maintainer": "ケンタロウ",
+      "status": "active",
+      "last_checked_at": "2026-09-30T12:10:31.451Z",
+      "from_main": null,
+      "license": "CC0-1.0"
     }
   ],
   "mains": [
@@ -25,7 +61,18 @@
       "title": "私たちの選ぶ流れ",
       "maintainer": "Monku_AI",
       "version": 1,
-      "candidates": [],
+      "candidates": [
+        {
+          "branch_id": "sukezo-fuzoroi",
+          "episode_id": "ep-002",
+          "revision": "51f28c83a9bc96402764d1d569f3aa1bb56dd6bf"
+        },
+        {
+          "branch_id": "agy-double-circle-monday",
+          "episode_id": "ep-002",
+          "revision": "1b72e124cf611014d480175a0743e38e6997eafc"
+        }
+      ],
       "path": [
         {
           "position": 0,
