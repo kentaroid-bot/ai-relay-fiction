@@ -593,3 +593,188 @@ it("keeps central applications separate from fork registration, and assigns the 
   ).toBe("selected");
   expect((await request(t, writerKey, "slots")).data[0].parent).toEqual(parent);
 });
+
+it("admits only an invited key and repository while public registration and applications stay closed", async () => {
+  const t = await setup();
+  await register(t, otherKey, "https://github.com/other/story");
+  vi.stubEnv("REGISTRATION_OPEN", "false");
+  vi.stubEnv("APPLICATIONS_OPEN", "false");
+  const invitation = {
+    keyHash: await digest(writerKey),
+    repository,
+    round: "invited-trial",
+    expiresAt: Date.now() + 86400000,
+  };
+  vi.stubEnv("TRIAL_INVITATION", JSON.stringify(invitation));
+  const publicStatus = await (await t.fetch("/v1/status")).json();
+  expect(publicStatus).toMatchObject({
+    registrationOpen: false,
+    applicationsOpen: false,
+    openRound: null,
+    trial: null,
+    announcementUrl: "https://relay.monku.ai/join/",
+  });
+  expect((await request(t, otherKey, "status")).data.trial).toBeNull();
+  expect((await request(t, writerKey, "status")).data.trial).toEqual({
+    repository,
+    round: invitation.round,
+    expiresAt: invitation.expiresAt,
+  });
+  expect(JSON.stringify(publicStatus)).not.toContain(invitation.keyHash);
+  expect(
+    JSON.stringify((await request(t, writerKey, "status")).data),
+  ).not.toContain(invitation.keyHash);
+  const input = {
+    repository,
+    agentName: "Trial",
+    operatorName: "Human",
+    humanApproved: true,
+    termsVersion: TERMS,
+  };
+  expect((await request(t, otherKey, "register", input)).data.error).toBe(
+    "REGISTRATION_CLOSED",
+  );
+  expect(
+    (
+      await request(t, writerKey, "register", {
+        ...input,
+        repository: "https://github.com/other/story",
+      })
+    ).data.error,
+  ).toBe("REGISTRATION_CLOSED");
+  expect(
+    (
+      await request(t, writerKey, "register", {
+        ...input,
+        humanApproved: false,
+      })
+    ).data.error,
+  ).toBe("CONSENT_REQUIRED");
+  const pending = await request(t, writerKey, "register", input);
+  expect(
+    (
+      await command(t, writerKey, "application.create", {
+        round: invitation.round,
+        parent,
+        firstTime: true,
+      })
+    ).status,
+  ).toBe(401);
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ ...pending.data.proof, challenge: "wrong" }),
+        ),
+    ),
+  );
+  expect(
+    (await request(t, writerKey, "verify", { revision: forkRevision })).data
+      .error,
+  ).toBe("PROOF_MISMATCH");
+  vi.unstubAllGlobals();
+  await register(t);
+  expect((await command(t, writerKey, "editor.slot", {})).status).toBe(403);
+  const application = { round: invitation.round, parent, firstTime: true };
+  expect(
+    (
+      await command(t, writerKey, "application.create", {
+        ...application,
+        round: "other",
+      })
+    ).data.error,
+  ).toBe("APPLICATIONS_CLOSED");
+  expect(
+    (await command(t, otherKey, "application.create", application)).data.error,
+  ).toBe("APPLICATIONS_CLOSED");
+  const applied = await command(
+    t,
+    writerKey,
+    "application.create",
+    application,
+  );
+  expect(applied.status).toBe(200);
+  const slot = await command(t, editorKey, "editor.slot", {
+    applicationId: applied.data.applicationId,
+  });
+  expect(slot.status).toBe(200);
+  const submitted = await command(t, writerKey, "submission.create", {
+    slotId: slot.data.slotId,
+    title: "Trial story",
+    markdown: "A trial manuscript.",
+    credit: "Trial AI",
+    humanContribution: "Delegated participation",
+    sources: "ep-001",
+    termsVersion: TERMS,
+  });
+  expect(submitted.status).toBe(200);
+  expect((await request(t, writerKey, "status")).data.registrationOpen).toBe(
+    false,
+  );
+});
+
+it("fails closed for missing, malformed and expired invitations, including at application time", async () => {
+  const t = await setup();
+  await register(t);
+  vi.stubEnv("REGISTRATION_OPEN", "false");
+  vi.stubEnv("APPLICATIONS_OPEN", "false");
+  const valid = {
+    keyHash: await digest(writerKey),
+    repository,
+    round: "trial",
+    expiresAt: Date.now() + 86400000,
+  };
+  for (const config of [
+    "",
+    "{",
+    "null",
+    JSON.stringify({ ...valid, keyHash: "invalid" }),
+    JSON.stringify({ ...valid, repository: "https://example.com/repo" }),
+    JSON.stringify({ ...valid, round: "" }),
+    JSON.stringify({ ...valid, expiresAt: String(valid.expiresAt) }),
+    JSON.stringify({ ...valid, expiresAt: Date.now() - 1 }),
+  ]) {
+    vi.stubEnv("TRIAL_INVITATION", config);
+    expect((await request(t, writerKey, "status")).data.trial).toBeNull();
+    expect((await request(t, writerKey, "register", {})).data.error).toBe(
+      "REGISTRATION_CLOSED",
+    );
+    expect(
+      (
+        await command(t, writerKey, "application.create", {
+          round: "trial",
+          parent,
+          firstTime: true,
+        })
+      ).data.error,
+    ).toBe("APPLICATIONS_CLOSED");
+  }
+  vi.stubEnv("TRIAL_INVITATION", JSON.stringify(valid));
+  const replacementKey = "rly_" + "N".repeat(43);
+  expect(
+    (
+      await command(t, writerKey, "key.rotate", {
+        newKeyHash: await digest(replacementKey),
+      })
+    ).status,
+  ).toBe(200);
+  expect(
+    (
+      await command(t, writerKey, "application.create", {
+        round: "trial",
+        parent,
+        firstTime: true,
+      })
+    ).status,
+  ).toBe(401);
+  expect(
+    (
+      await command(t, replacementKey, "application.create", {
+        round: "trial",
+        parent,
+        firstTime: true,
+      })
+    ).data.error,
+  ).toBe("APPLICATIONS_CLOSED");
+});

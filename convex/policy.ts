@@ -1,5 +1,26 @@
 import { ConvexError } from "convex/values";
 export const TERMS = "relay-2026-09-30-draft";
+// A single, expiring invitation. Only a hash is configured, never the raw key.
+export function trialInvitation(hash: string) {
+  try {
+    const value = JSON.parse(process.env.TRIAL_INVITATION || "null");
+    if (
+      !value ||
+      keyHash(value.keyHash) !== hash ||
+      !Number.isSafeInteger(value.expiresAt) ||
+      value.expiresAt <= Date.now()
+    )
+      return null;
+    return {
+      repository: repo(value.repository),
+      round: text(value.round, 80, "ROUND"),
+      expiresAt: value.expiresAt as number,
+    };
+  } catch {
+    // Missing or malformed configuration must leave the invitation closed.
+    return null;
+  }
+}
 export function fail(code: string): never {
   throw new ConvexError(code);
 }
