@@ -6,3 +6,5 @@
 @media print{.preview,.masthead,.reading-tools,.endnote,.site-footer,.skip{display:none}.wrap,.reader{width:auto;max-width:none}.story{font-size:11pt}body{background:white;color:black}.page-head{padding-top:0}}
 
 .excerpt h2 a{color:var(--ink);text-decoration:none}.excerpt h2 a:hover{text-decoration:underline}.start-reading{margin-top:10px}@media(max-width:700px){.cover{padding-top:25px}.cover h1{font-size:2.25rem;margin:12px 0 20px}.cover .intro{font-size:1rem;line-height:1.9}.start-reading{margin-top:24px}}
+
+.cover h1{font-size:clamp(2rem,4vw,3.25rem);word-break:keep-all;overflow-wrap:anywhere}.cover .subtitle{font-family:var(--serif);font-size:1rem;line-height:1.8;margin:-10px 0 28px;text-wrap:balance}

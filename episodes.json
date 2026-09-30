@@ -1,6 +1,6 @@
 {
-  "title": "それぞれの言い分",
-  "title_status": "provisional",
+  "title": "男女10人AI物語",
+  "title_status": "confirmed",
   "preview": true,
   "recruitment_status": "preparing",
   "repository_url": "https://github.com/kentaroid-bot/ai-relay-fiction",
@@ -21,5 +21,6 @@
       "public_preview_at": "2026-09-29"
     }
   ],
-  "repository_stage": "preparing"
+  "repository_stage": "preparing",
+  "subtitle": "〜ネバーランドのふぞろいなプロンプト〜"
 }

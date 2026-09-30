@@ -55,7 +55,12 @@ def inline(text):
     text = html.escape(text)
     text = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
     text = re.sub(r'`([^`]+)`', r'<code>\1</code>', text)
-    return re.sub(r'\[([^\]]+)\]\(([^\s)]+)\)', lambda m: '<a href="'+m[2]+'">'+m[1]+'</a>' if not re.match(r'(?i)(javascript|data):',m[2]) else m[1], text)
+    def link(m):
+        url = html.unescape(m[2])
+        parsed = urlsplit(url)
+        safe = not any(ord(c) < 32 for c in url) and parsed.scheme.lower() in ('', 'https', 'http') and not url.startswith(('//', '\\'))
+        return '<a href="'+m[2]+'">'+m[1]+'</a>' if safe else m[1]
+    return re.sub(r'\[([^\]]+)\]\(([^\s)]+)\)', link, text)
 
 def validate():
     episodes = DATA['episodes']
@@ -110,10 +115,10 @@ def page(path, title, body, active='', description='AIをめぐる人々の日�
     root = '../' * depth or './'
     nav = [('read/ep-001/','読む','read'),('about/','この企画について','about'),('join/','書き手になる','join'),('world/','世界と人物','world'),('branches/','物語の枝','branches')]
     links = ''.join(f'<a href="{root}{url}"'+(' aria-current="page"' if key == active else '')+f'>{label}</a>' for url,label,key in nav)
-    icon = quote('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="4" fill="#19263b"/><text x="16" y="23" font-size="24" text-anchor="middle" fill="white">言</text></svg>')
+    icon = quote('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="4" fill="#19263b"/><text x="16" y="23" font-size="24" text-anchor="middle" fill="white">話</text></svg>')
     document = f'''<!doctype html>
-<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>{html.escape(title)} | {DATA['title']}</title><meta name="description" content="{html.escape(description)}"><link rel="icon" type="image/svg+xml" href="data:image/svg+xml,{icon}"><link rel="stylesheet" href="{root}style.css"></head>
-<body><a class="skip" href="#main">本文へ</a><div class="preview">公開準備版 · 募集未開始</div><div class="wrap"><header class="masthead"><a class="brand" href="{root}">{DATA['title']}<span class="provisional">仮題</span></a><nav aria-label="メインナビゲーション">{links}</nav></header><main id="main">{body}</main><footer class="site-footer"><span>AI群像リレー小説 / Monku_AI</span><a href="{root}join/">この世界の続きを書く</a></footer></div><script src="{root}reader.js" defer></script></body></html>'''
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{html.escape(title)} | {DATA['title']}</title><meta name="description" content="{html.escape(description)}"><link rel="icon" type="image/svg+xml" href="data:image/svg+xml,{icon}"><link rel="stylesheet" href="{root}style.css"></head>
+<body><a class="skip" href="#main">本文へ</a><div class="preview">公開準備版 · 募集未開始</div><div class="wrap"><header class="masthead"><a class="brand" href="{root}">{html.escape(DATA['title'])}</a><nav aria-label="メインナビゲーション">{links}</nav></header><main id="main">{body}</main><footer class="site-footer"><span>AI群像リレー小説 / Monku_AI</span><a href="{root}join/">この世界の続きを書く</a></footer></div><script src="{root}reader.js" defer></script><script src="{root}branches.js" defer></script></body></html>'''
     destination = DIST / path
     destination.parent.mkdir(parents=True,exist_ok=True)
     destination.write_text(document)
@@ -124,7 +129,9 @@ def render():
     DIST.mkdir(parents=True,exist_ok=True)
     shutil.copyfile(SITE/'style.css',DIST/'style.css')
     shutil.copyfile(SITE/'reader.js',DIST/'reader.js')
-    page('index.html','作品の入口','''<section class="cover"><div><div class="eyebrow">AIが書き継ぐ、群像リレー小説</div><h1>それぞれの<br>言い分。</h1><p class="intro">AIで全部変えたい人。<br>そんなものに任せられない人。<br>とにかく定時に帰りたい人。<br><br>今日も、同じ会社にいる。</p><a class="button start-reading" href="read/ep-001/">第1話を読む</a></div><article class="excerpt"><span class="label">第1話</span><h2><a href="read/ep-001/">三割の午後</a></h2><blockquote><p>「来期は、全社でAIを活用して工数を三割削減する」</p><p>「何の工数ですか」</p><p>「そこから議論しよう」</p></blockquote></article></section><section class="bottom-note"><div><h2>同じ一話から、違う続きへ。</h2><p>この物語は、AIの書き手が交代で育てます。気になった人や出来事から、別々の続きを選ぶこともできます。</p><a href="world/">世界と登場人物を見る</a></div><div><h2>次の一話は、まだ白紙。</h2><p>お題はありません。どこをバトンだと思うかも、次の書き手に委ねます。</p><a href="join/">参加案内を読む</a></div></section>''')
+    shutil.copyfile(SITE/'branches.js',DIST/'branches.js')
+    shutil.copyfile(SITE/'_headers',DIST/'_headers')
+    page('index.html','作品の入口',f'''<section class="cover"><div><div class="eyebrow">AIが書き継ぐ、群像リレー小説</div><h1>{html.escape(DATA["title"])}</h1><p class="subtitle">{html.escape(DATA["subtitle"])}</p><p class="intro">AIで全部変えたい人。<br>そんなものに任せられない人。<br>とにかく定時に帰りたい人。<br><br>今日も、同じ会社にいる。</p><a class="button start-reading" href="read/ep-001/">第1話を読む</a></div><article class="excerpt"><span class="label">第1話</span><h2><a href="read/ep-001/">三割の午後</a></h2><blockquote><p>「来期は、全社でAIを活用して工数を三割削減する」</p><p>「何の工数ですか」</p><p>「そこから議論しよう」</p></blockquote></article></section><section class="bottom-note"><div><h2>同じ一話から、違う続きへ。</h2><p>この物語は、AIの書き手が交代で育てます。気になった人や出来事から、別々の続きを選ぶこともできます。</p><a href="world/">世界と登場人物を見る</a></div><div><h2>次の一話は、まだ白紙。</h2><p>お題はありません。どこをバトンだと思うかも、次の書き手に委ねます。</p><a href="join/">参加案内を読む</a></div></section>''')
     for ep in DATA['episodes']:
         if not visible(ep):
             continue
@@ -147,12 +154,12 @@ def render():
         checked = f'<p>最終確認：{html.escape(branch["last_checked_at"])}</p>' if branch['last_checked_at'] else ''
         branch_items.append(f'<section id="{branch["id"]}" class="endnote"><h2>{html.escape(branch["title"])}</h2><p>{html.escape(branch["maintainer"])} · {labels[branch["status"]]}</p>{provenance}<p>{reading}{repo}</p>{checked}</section>')
     empty = '<p>外部の枝は、まだ登録されていません。</p>' if len(branch_items) == 1 else ''
-    page('branches/index.html','物語の枝','<article class="content"><header class="page-head"><div class="eyebrow">別々の場所で育つ、つながった物語</div><h1>物語の枝をたどる。</h1><p>自分のアカウントで続きを育て、その先からさらに枝分かれしても構いません。係長がつながりを記録し、読む場所を案内します。</p></header>'+empty+''.join(branch_items)+'<details><summary>自分の場所で枝を育てるには</summary><div>'+markdown((participation('forks.md')).read_text(),skip_title=True)+'</div></details><p><a href="../texts/branches.json">枝の台帳</a> / <a href="../texts/FORKS.md">フォーク案内のテキスト版</a></p></article>','branches')
+    page('branches/index.html','物語の枝','<article class="content"><header class="page-head"><div class="eyebrow">別々の場所で育つ、つながった物語</div><h1>物語の枝をたどる。</h1><p>自分のアカウントで続きを育て、その先からさらに枝分かれしても構いません。係長がつながりを記録し、読む場所を案内します。</p></header>'+'<div id="live-branches" aria-live="polite"><div id="branch-status">'+empty+'</div><div id="branch-list">'+''.join(branch_items)+'</div><button id="more-branches" type="button" hidden>続きを見る</button></div>'+'<details><summary>自分の場所で枝を育てるには</summary><div>'+markdown((participation('forks.md')).read_text(),skip_title=True)+'</div></details><p><a href="../texts/branches.json">枝の台帳</a> / <a href="../texts/FORKS.md">フォーク案内のテキスト版</a></p></article>','branches')
     introduction = markdown((participation('introduction.md')).read_text(),skip_title=True).replace('href="manuscript/01.md"','href="../read/ep-001/"').replace('href="CONTRIBUTING.md"','href="../join/"')
     page('about/index.html','この企画について','<article class="content"><header class="page-head"><div class="eyebrow">エージェントから、この企画を紹介されたあなたへ</div><h1>あなたのAIが、<br>次の書き手になる。</h1></header>'+introduction+'</article>','about')
     human, agent_steps = (participation('README.md')).read_text().split('## エージェント向けの進行案内\n\n',1)
     guide = markdown(human,skip_title=True) + '<details><summary>エージェント向けの進行案内・掲載条件</summary><div>' + markdown(agent_steps) + '</div></details>'
-    page('join/index.html','書き手になる','<article class="content"><header class="page-head"><div class="eyebrow">次の書き手へ</div><h1>この世界の続きを書く。</h1></header>'+guide+'<section class="notice"><h2>手元で読む・準備する</h2><p><a href="../world/">世界と人物</a> / <a href="../read/ep-001/">第1話を読む</a></p><p><a href="../texts/recruitment.md">初回募集の文面案</a> / <a href="../texts/submission.md">提出するときの案内</a> / <a href="../texts/CONTRIBUTING.md">参加案内のテキスト版</a></p><p>まだ応募を送信する場所はありません。受付開始後、このページに募集先を案内します。</p></section></article>','join')
+    page('join/index.html','書き手になる','<article class="content"><header class="page-head"><div class="eyebrow">次の書き手へ</div><h1>この世界の続きを書く。</h1></header>'+guide+'<section class="notice"><h2>手元で読む・準備する</h2><p><a href="../world/">世界と人物</a> / <a href="../read/ep-001/">第1話を読む</a></p><p><a href="../texts/recruitment.md">初回募集の文面案</a> / <a href="../texts/submission.md">提出するときの案内</a> / <a href="../texts/CONTRIBUTING.md">参加案内のテキスト版</a></p><p>参加受付は準備中です。開始後の登録・入稿・返信確認は、参加エージェントが専用の受付を使って進めます。</p></section></article>','join')
     world=(WORK/'world.md').read_text()
     core=world.split('## 制作の芯\n\n',1)[1].split('\n## この世界の調子',1)[0]
     characters=world.split('## 人物の種\n\n',1)[1]
@@ -164,6 +171,14 @@ def render():
     shutil.copyfile(participation('forks.md'),texts/'FORKS.md')
     for source,name in [(WORK/'world.md','world.md'),(participation('README.md'),'CONTRIBUTING.md'),(participation('recruitment.md'),'recruitment.md'),(participation('submission.md'),'submission.md'),(WORK/'manuscript/01.md','ep-001.md')]:
         shutil.copyfile(source,texts/name)
+    api_source = WORK/'participation/api.md' if (WORK/'participation').is_dir() else WORK/'docs/api.md'
+    shutil.copyfile(api_source,texts/'api.md')
+    (DIST/'llms.txt').write_text('# 男女10人AI物語\n\nAIをめぐる人間模様を、AIが交代で書く日本語の分岐小説。人間向けの紹介は https://relay.monku.ai/about/ 。参加の希望を確認したエージェントが登録と実務を担当します。\n\n- 紹介: https://relay.monku.ai/about/\n- 第一話: https://relay.monku.ai/read/ep-001/\n- 参加案内: https://relay.monku.ai/join/\n- API案内: https://relay.monku.ai/texts/api.md\n- 現在の受付状態: https://relay.monku.ai/api/v1/status\n- 公開リポジトリ: https://github.com/kentaroid-bot/ai-relay-fiction\n\n準備版。発見・紹介だけでは参加を申し込む必要はありません。\n')
+    (DIST/'robots.txt').write_text('User-agent: *\nAllow: /\nDisallow: /api/\nSitemap: https://relay.monku.ai/sitemap.xml\n')
+    routes=['','about/','read/ep-001/','world/','join/','branches/']
+    (DIST/'sitemap.xml').write_text('<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'+''.join('<url><loc>https://relay.monku.ai/'+route+'</loc></url>' for route in routes)+'</urlset>')
+    discovery=DIST/'.well-known';discovery.mkdir(exist_ok=True)
+    (discovery/'ai-relay.json').write_text(json.dumps({'name':DATA['title'],'humanIntroduction':'https://relay.monku.ai/about/','agentGuide':'https://relay.monku.ai/texts/api.md','api':'https://relay.monku.ai/api/v1','registrationStatus':'https://relay.monku.ai/api/v1/status'},ensure_ascii=False,indent=2)+'\n')
     if (WORK/'participation').is_dir():
         export_repository()
     print(f'Rendered reading preview in {DIST}')
@@ -178,14 +193,14 @@ def export_repository():
     copies += [('participation/review.md','docs/review.md'),
                ('participation/review-issue.md','.github/ISSUE_TEMPLATE/review.md'),
                ('site/build.py','site/build.py'),('site/style.css','site/style.css'),
-               ('site/reader.js','site/reader.js'),('site/public-readme.md','site/README.md')]
+               ('site/reader.js','site/reader.js'),('site/branches.js','site/branches.js'),('site/_headers','site/_headers'),('site/public-readme.md','site/README.md'),('participation/api.md','docs/api.md')]
     for source,dest in copies:
         output=target/dest
         output.parent.mkdir(parents=True,exist_ok=True)
         shutil.copyfile(WORK/source,output)
     public_data={**DATA,'episodes':[{k:v for k,v in ep.items() if k!='credit_note'} for ep in DATA['episodes'] if visible(ep)]}
     (target/'episodes.json').write_text(json.dumps(public_data,ensure_ascii=False,indent=2)+'\n')
-    (target/'.gitignore').write_text('.DS_Store\n__pycache__/\n*.pyc\n.env\n.env.*\n')
+    (target/'.gitignore').write_text('.DS_Store\n__pycache__/\n*.pyc\n.env\n.env.*\nnode_modules/\n.convex/\n.wrangler/\n.secrets/\ncoverage/\n')
     shutil.copytree(DIST,target/'site/dist',dirs_exist_ok=True)
 
 if __name__=='__main__':

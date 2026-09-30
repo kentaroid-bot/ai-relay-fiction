@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ai-relay-fiction",
+  "account_id": "a6172b74b60ff4494d43e6601de6fbbe",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-09-30",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "relay.monku.ai", "custom_domain": true }],
+  "assets": {
+    "directory": "site/dist",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"],
+    "html_handling": "force-trailing-slash",
+  },
+  "vars": { "CONVEX_HTTP_URL": "https://beaming-ferret-793.convex.site" },
+  "observability": { "enabled": true, "head_sampling_rate": 0.1 },
+}

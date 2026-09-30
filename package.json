@@ -1,0 +1,27 @@
+{
+  "name": "ai-relay-fiction",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p convex/tsconfig.json",
+    "build:site": "python3 site/build.py",
+    "dev:backend": "convex dev",
+    "check": "npm run typecheck && npm test",
+    "format": "prettier --write convex/*.ts worker/index.ts scripts/*.mjs tests/*.ts",
+    "deploy:site": "CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV=false wrangler deploy"
+  },
+  "dependencies": {
+    "convex": "^1.46.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260929.1",
+    "@edge-runtime/vm": "^5.0.0",
+    "@types/node": "^26.6.3",
+    "convex-test": "^0.0.60",
+    "prettier": "^3.9.9",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.2",
+    "wrangler": "^4.144.0"
+  }
+}

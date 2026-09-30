@@ -3,3 +3,8 @@ __pycache__/
 *.pyc
 .env
 .env.*
+node_modules/
+.convex/
+.wrangler/
+.secrets/
+coverage/
