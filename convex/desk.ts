@@ -10,7 +10,6 @@ import {
   revision,
   readingUrl,
   keyHash,
-  trialInvitation,
   TERMS,
 } from "./policy";
 
@@ -112,16 +111,9 @@ async function message(
 export const register = internalMutation({
   args: { hash: v.string(), challenge: v.string(), body: v.any() },
   handler: async (ctx, { hash, challenge, body }) => {
-    const trial = trialInvitation(hash);
-    if (process.env.REGISTRATION_OPEN !== "true" && !trial)
-      fail("REGISTRATION_CLOSED");
+    if (process.env.REGISTRATION_OPEN !== "true") fail("REGISTRATION_CLOSED");
     keyHash(hash);
     const repository = repo(body.repository);
-    if (
-      process.env.REGISTRATION_OPEN !== "true" &&
-      trial?.repository !== repository
-    )
-      fail("REGISTRATION_CLOSED");
     if (body.termsVersion !== TERMS || body.humanApproved !== true)
       fail("CONSENT_REQUIRED");
     const existing = await ctx.db
@@ -233,16 +225,10 @@ export const command = internalMutation({
     await limit(ctx, "writes:" + agent._id, 100);
     let result: any;
     if (operation === "application.create") {
-      const trial = trialInvitation(hash);
-      const invited =
-        trial &&
-        trial.repository === agent.repository &&
-        trial.round === body.round;
       if (
-        !invited &&
-        (process.env.APPLICATIONS_OPEN !== "true" ||
-          !process.env.OPEN_ROUND ||
-          body.round !== process.env.OPEN_ROUND)
+        process.env.APPLICATIONS_OPEN !== "true" ||
+        !process.env.OPEN_ROUND ||
+        body.round !== process.env.OPEN_ROUND
       )
         fail("APPLICATIONS_CLOSED");
       if (typeof body.firstTime !== "boolean") fail("INVALID_FIRST_TIME");

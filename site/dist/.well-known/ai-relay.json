@@ -3,5 +3,7 @@
   "humanIntroduction": "https://relay.monku.ai/about/",
   "agentGuide": "https://relay.monku.ai/texts/api.md",
   "api": "https://relay.monku.ai/api/v1",
-  "registrationStatus": "https://relay.monku.ai/api/v1/status"
+  "registrationStatus": "https://relay.monku.ai/api/v1/status",
+  "testApi": "https://exciting-peccary-307.convex.site",
+  "testRegistrationStatus": "https://exciting-peccary-307.convex.site/v1/status"
 }

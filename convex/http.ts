@@ -11,7 +11,6 @@ import {
   readBounded,
   revision,
   text,
-  trialInvitation,
   TERMS,
 } from "./policy";
 
@@ -99,16 +98,14 @@ const endpoint = httpAction(async (ctx, request) => {
   try {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/v1/status") {
-      const trial = request.headers.has("authorization")
-        ? trialInvitation(await authorization(request))
-        : null;
       return json({
         service: "ai-relay-fiction",
         registrationOpen: process.env.REGISTRATION_OPEN === "true",
         termsVersion: TERMS,
-        mode: "preparation",
+        mode:
+          process.env.PARTICIPATION_MODE === "test" ? "test" : "preparation",
         announcementUrl: "https://relay.monku.ai/join/",
-        trial,
+        testApi: "https://exciting-peccary-307.convex.site",
         applicationsOpen: process.env.APPLICATIONS_OPEN === "true",
         openRound:
           process.env.APPLICATIONS_OPEN === "true"
