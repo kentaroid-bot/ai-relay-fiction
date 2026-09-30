@@ -87,6 +87,439 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+describe("GitHub PR intake", () => {
+  const nextRevision = "3".repeat(40);
+  const fork = {
+    html_url: repository,
+    private: false,
+    fork: true,
+    owner: { id: 41, login: "test-writer", type: "User" },
+    parent: { full_name: "kentaroid-bot/ai-relay-fiction" },
+  };
+  const pull = (sha = forkRevision) => ({
+    number: 5,
+    state: "open",
+    draft: false,
+    user: { id: 41, login: "test-writer" },
+    base: {
+      ref: "main",
+      repo: { full_name: "kentaroid-bot/ai-relay-fiction" },
+    },
+    head: { sha, repo: { html_url: repository, owner: fork.owner } },
+  });
+  const manifest = async () => ({
+    schemaVersion: 1,
+    branchId: "pr-story",
+    repository,
+    title: "午後の続き",
+    parent,
+    license: "CC0-1.0",
+    termsVersion: WORK_TERMS,
+    participation: {
+      agentName: "参加AI",
+      operatorName: "依頼者",
+      termsVersion: TERMS,
+      humanApproved: true,
+      cc0Approved: true,
+    },
+    episodes: [
+      {
+        episodeId: "ep-002",
+        path: "manuscript/02.md",
+        title: "午後の続き",
+        contentHash: await digest("next story"),
+      },
+    ],
+  });
+  function sources(m: any, p = pull(), repositoryMetadata = fork) {
+    const fn = vi.fn(async (url: string, options: RequestInit) => {
+      expect(options.redirect).toBe("manual");
+      expect(JSON.stringify(options)).not.toContain(editorKey);
+      expect(JSON.stringify(options)).not.toContain(writerKey);
+      if (
+        url ===
+        "https://api.github.com/repos/kentaroid-bot/ai-relay-fiction/pulls/5"
+      )
+        return new Response(JSON.stringify(p));
+      if (url === "https://api.github.com/repos/test-writer/story")
+        return new Response(JSON.stringify(repositoryMetadata));
+      if (
+        /^https:\/\/raw.githubusercontent.com\/test-writer\/story\/[a-f0-9]{40}\/relay-branch.json$/.test(
+          url,
+        )
+      )
+        return new Response(JSON.stringify(m));
+      if (
+        /^https:\/\/raw.githubusercontent.com\/test-writer\/story\/[a-f0-9]{40}\/manuscript\/02.md$/.test(
+          url,
+        )
+      )
+        return new Response("next story");
+      throw Error("Unexpected source");
+    });
+    vi.stubGlobal("fetch", fn);
+    return fn;
+  }
+  const ingest = (t: Test, sha = forkRevision, key = editorKey) =>
+    request(t, key, "branches/github", { number: 5, revision: sha });
+
+  it("accepts a PR-only participant without keys, then checks through the normal pipeline; repeated scans are idempotent", async () => {
+    vi.stubEnv("PARTICIPATION_MODE", "test");
+    const t = await setup(),
+      m = await manifest();
+    sources(m);
+    const created = await ingest(t);
+    expect(created.data).toMatchObject({
+      branchId: "pr-story",
+      version: 1,
+      status: "pending",
+      outcome: "created",
+    });
+    const a = await t.run(async (ctx) =>
+      (await ctx.db.query("agents").collect()).find(
+        (a) => a.repository === repository,
+      )!,
+    );
+    expect(a).toMatchObject({
+      role: "writer",
+      status: "active",
+      githubPrOwner: "test-writer",
+    });
+    expect(
+      await t.run((ctx) =>
+        ctx.db
+          .query("keys")
+          .withIndex("agent", (q) => q.eq("agentId", a._id))
+          .collect(),
+      ),
+    ).toEqual([]);
+    expect((await ingest(t)).data).toMatchObject({
+      version: 1,
+      outcome: "already_registered",
+    });
+    const checked = await request(t, editorKey, "branches/check", {
+      branchId: "pr-story",
+    });
+    expect(checked.data).toMatchObject({ status: "checked", version: 2 });
+    expect((await ingest(t)).data).toMatchObject({
+      version: 2,
+      outcome: "already_registered",
+    });
+    expect(
+      (
+        await command(t, editorKey, "editor.branch", {
+          branchId: "pr-story",
+          expectedVersion: 2,
+          status: "verified",
+          complianceNote: "対象版の確認済み",
+        })
+      ).status,
+    ).toBe(200);
+    expect((await ingest(t)).data).toMatchObject({
+      version: 3,
+      outcome: "already_registered",
+    });
+  });
+
+  it.each([
+    ["consent", "CONSENT_REQUIRED"],
+    ["cc0", "WORK_CONSENT_REQUIRED"],
+    ["terms", "CONSENT_REQUIRED"],
+    ["repository", "MANIFEST_MISMATCH"],
+    ["parent", "PARENT_NOT_VERIFIED"],
+  ])(
+    "holds %s mistakes without creating an owner or branch",
+    async (kind, code) => {
+      vi.stubEnv("PARTICIPATION_MODE", "test");
+      const t = await setup(),
+        m: any = await manifest();
+      if (kind === "consent") delete m.participation;
+      if (kind === "cc0") m.participation.cc0Approved = false;
+      if (kind === "terms") m.participation.termsVersion = "obsolete";
+      if (kind === "repository")
+        m.repository = "https://github.com/other/story";
+      if (kind === "parent") m.parent.branchId = "unknown";
+      sources(m);
+      expect((await ingest(t)).data.error).toBe(code);
+      expect(
+        await t.run((ctx) =>
+          ctx.db
+            .query("agents")
+            .withIndex("repository", (q) => q.eq("repository", repository))
+            .collect(),
+        ),
+      ).toEqual([]);
+      // parent is shared by fixtures; restore it after this case.
+      parent.branchId = "origin";
+    },
+  );
+
+  it("requires an editor and the open test environment before making outbound requests", async () => {
+    const t = await setup();
+    await register(t);
+    const source = sources(await manifest());
+    vi.stubEnv("PARTICIPATION_MODE", "test");
+    expect((await ingest(t, forkRevision, writerKey)).status).toBe(403);
+    vi.stubEnv("PARTICIPATION_MODE", "preparation");
+    expect((await ingest(t)).data.error).toBe("REGISTRATION_CLOSED");
+    vi.stubEnv("PARTICIPATION_MODE", "test");
+    vi.stubEnv("REGISTRATION_OPEN", "false");
+    expect((await ingest(t)).data.error).toBe("REGISTRATION_CLOSED");
+    expect(source).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "author",
+    "organization",
+    "private",
+    "fork-parent",
+    "base",
+    "draft",
+    "head",
+  ])("rejects a forged or ineligible %s", async (kind) => {
+    vi.stubEnv("PARTICIPATION_MODE", "test");
+    const t = await setup(),
+      p: any = structuredClone(pull()),
+      f: any = structuredClone(fork);
+    if (kind === "author") p.user.id = 99;
+    if (kind === "organization") f.owner.type = "Organization";
+    if (kind === "private") f.private = true;
+    if (kind === "fork-parent") f.parent.full_name = "elsewhere/story";
+    if (kind === "base") p.base.repo.full_name = "elsewhere/story";
+    if (kind === "draft") p.draft = true;
+    if (kind === "head") p.head.sha = nextRevision;
+    sources(await manifest(), p, f);
+    expect((await ingest(t)).status).not.toBe(200);
+    expect(
+      await t.run((ctx) => ctx.db.query("branches").collect()),
+    ).toHaveLength(1);
+  });
+
+  it("holds force-pushes during discovery and concurrent changes during commit", async () => {
+    vi.stubEnv("PARTICIPATION_MODE", "test");
+    const t = await setup(),
+      p = pull(),
+      m = await manifest();
+    const source = sources(m, p);
+    source.mockImplementationOnce(async () => {
+      const original = structuredClone(p);
+      p.head.sha = nextRevision;
+      return new Response(JSON.stringify(original));
+    });
+    expect((await ingest(t)).data.error).toBe("PR_HEAD_CONFLICT");
+    sources(m);
+    expect((await ingest(t)).status).toBe(200);
+    await expect(
+      t.mutation(internal.desk.importGithubBranch, {
+        hash: await digest(editorKey),
+        number: 5,
+        revision: nextRevision,
+        repository,
+        login: "test-writer",
+        manifest: m,
+        expectedVersion: null,
+      }),
+    ).rejects.toThrow("VERSION_CONFLICT");
+  });
+
+  it("rechecks a new PR head, but respects an owner's subsequent API update", async () => {
+    vi.stubEnv("PARTICIPATION_MODE", "test");
+    const t = await setup(),
+      m = await manifest();
+    sources(m);
+    await ingest(t);
+    await request(t, editorKey, "branches/check", { branchId: "pr-story" });
+    await command(t, editorKey, "editor.branch", {
+      branchId: "pr-story",
+      expectedVersion: 2,
+      status: "verified",
+      complianceNote: "対象版の確認済み",
+    });
+    sources(m, pull(nextRevision));
+    expect((await ingest(t, nextRevision)).data).toMatchObject({
+      outcome: "updated",
+      status: "pending",
+      version: 4,
+    });
+    const branch = await t.run(
+      async (ctx) =>
+        (await ctx.db
+          .query("branches")
+          .withIndex("branchId", (q) => q.eq("branchId", "pr-story"))
+          .unique())!,
+    );
+    expect(branch.compliance).toBeUndefined();
+    vi.unstubAllGlobals();
+    await register(t); // claims this same GitHub owner through nonce proof
+    expect(
+      (
+        await command(t, writerKey, "branch.update", {
+          branchId: "pr-story",
+          expectedVersion: 4,
+          license,
+          title: m.title,
+          readingUrl: repository,
+          revision: "4".repeat(40),
+        })
+      ).status,
+    ).toBe(200);
+    sources(m, pull("5".repeat(40)));
+    expect((await ingest(t, "5".repeat(40))).data.error).toBe(
+      "EXISTING_BRANCH_API_MANAGED",
+    );
+  });
+
+  it("does not require a second consent or change an existing API owner's entry", async () => {
+    vi.stubEnv("PARTICIPATION_MODE", "test");
+    const t = await setup(),
+      id = await register(t),
+      m: any = await manifest();
+    await command(t, writerKey, "branch.create", {
+      branchId: m.branchId,
+      title: m.title,
+      parent,
+      repository,
+      license,
+      readingUrl: repository,
+      revision: forkRevision,
+    });
+    delete m.participation;
+    sources(m);
+    expect((await ingest(t)).data).toMatchObject({
+      outcome: "already_registered",
+      version: 1,
+    });
+    expect(
+      await t.run(
+        async (ctx) =>
+          (await ctx.db
+            .query("branches")
+            .withIndex("branchId", (q) => q.eq("branchId", m.branchId))
+            .unique())!.owner,
+      ),
+    ).toBe(id);
+    sources(m, pull(nextRevision));
+    expect((await ingest(t, nextRevision)).data.error).toBe(
+      "EXISTING_BRANCH_API_MANAGED",
+    );
+  });
+
+  it("binds a later API key to the existing PR owner only after fixed nonce proof", async () => {
+    vi.stubEnv("PARTICIPATION_MODE", "test");
+    const t = await setup();
+    sources(await manifest());
+    await ingest(t);
+    vi.unstubAllGlobals();
+    const pending = await request(t, writerKey, "register", {
+      repository,
+      agentName: "参加AI",
+      operatorName: "依頼者",
+      humanApproved: true,
+      termsVersion: TERMS,
+    });
+    expect(pending.data.status).toBe("pending");
+    expect((await request(t, writerKey, "me")).status).toBe(401);
+    expect((await command(t, writerKey, "main.create", {})).status).toBe(401);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({ ...pending.data.proof, challenge: "wrong" }),
+          ),
+      ),
+    );
+    expect(
+      (await request(t, writerKey, "verify", { revision: forkRevision })).data
+        .error,
+    ).toBe("PROOF_MISMATCH");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, options: RequestInit) => {
+        expect(url).toBe(
+          `https://raw.githubusercontent.com/test-writer/story/${forkRevision}/${pending.data.proofPath}`,
+        );
+        expect(JSON.stringify(options)).not.toContain(writerKey);
+        return new Response(JSON.stringify(pending.data.proof));
+      }),
+    );
+    expect(
+      (await request(t, writerKey, "verify", { revision: forkRevision }))
+        .status,
+    ).toBe(200);
+    expect((await request(t, writerKey, "me")).data.agentId).toBe(
+      pending.data.agentId,
+    );
+    expect(
+      await t.run(
+        async (ctx) =>
+          (await ctx.db
+            .query("branches")
+            .withIndex("branchId", (q) => q.eq("branchId", "pr-story"))
+            .unique())!.owner,
+      ),
+    ).toBe(pending.data.agentId);
+    expect(
+      await t.run((ctx) =>
+        ctx.db
+          .query("agents")
+          .withIndex("repository", (q) => q.eq("repository", repository))
+          .collect(),
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("handles API registration begun before PR discovery without granting its pending key rights", async () => {
+    vi.stubEnv("PARTICIPATION_MODE", "test");
+    const t = await setup();
+    const pending = await request(t, writerKey, "register", {
+      repository,
+      agentName: "AI",
+      operatorName: "Human",
+      humanApproved: true,
+      termsVersion: TERMS,
+    });
+    sources(await manifest());
+    await ingest(t);
+    expect((await request(t, writerKey, "me")).status).toBe(401);
+    const branch = await t.run(
+      async (ctx) =>
+        (await ctx.db
+          .query("branches")
+          .withIndex("branchId", (q) => q.eq("branchId", "pr-story"))
+          .unique())!,
+    );
+    expect(branch.owner).not.toBe(pending.data.agentId);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify(pending.data.proof))),
+    );
+    const verified = await request(t, writerKey, "verify", {
+      revision: forkRevision,
+    });
+    expect(verified.data.agentId).toBe(branch.owner);
+    expect((await request(t, writerKey, "me")).data.agentId).toBe(branch.owner);
+  });
+
+  it("keeps a blocked PR branch blocked on repeated or updated heads", async () => {
+    vi.stubEnv("PARTICIPATION_MODE", "test");
+    const t = await setup(),
+      m = await manifest();
+    sources(m);
+    await ingest(t);
+    await t.run(async (ctx) => {
+      const branch = (await ctx.db
+        .query("branches")
+        .withIndex("branchId", (q) => q.eq("branchId", "pr-story"))
+        .unique())!;
+      await ctx.db.patch(branch._id, { status: "blocked" });
+    });
+    expect((await ingest(t)).data.error).toBe("FORBIDDEN");
+    sources(m, pull(nextRevision));
+    expect((await ingest(t, nextRevision)).data.error).toBe("FORBIDDEN");
+  });
+});
+
 describe("delegated registration and keys", () => {
   it("keeps registration closed by default; requires declaration and repository write proof", async () => {
     const t = await setup();

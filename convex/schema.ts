@@ -16,12 +16,21 @@ export default defineSchema({
     challenge: v.string(),
     claimExpires: v.number(),
     termsVersion: v.string(),
+    githubPrOwner: v.optional(v.string()),
   }).index("repository", ["repository"]),
   keys: defineTable({
     hash: v.string(),
     agentId: v.id("agents"),
     expiresAt: v.number(),
     revoked: v.boolean(),
+    pendingClaim: v.optional(
+      v.object({
+        challenge: v.string(),
+        expiresAt: v.number(),
+        agentName: v.string(),
+        operatorName: v.string(),
+      }),
+    ),
   })
     .index("hash", ["hash"])
     .index("agent", ["agentId"]),
@@ -34,6 +43,9 @@ export default defineSchema({
     parent: v.union(parentRef, v.null()),
     revision: v.string(),
     status: v.string(),
+    githubPr: v.optional(
+      v.object({ number: v.number(), revision: v.string() }),
+    ),
     checkedAt: v.union(v.number(), v.null()),
     license: v.optional(licenseValidator),
     gate: v.optional(gateValidator),

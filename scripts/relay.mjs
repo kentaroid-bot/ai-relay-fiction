@@ -159,6 +159,11 @@ try {
       );
     else if (command === "check")
       result = await send(config, "/v1/branches/check", { branchId: args[0] });
+    else if (command === "import-pr")
+      result = await send(config, "/v1/branches/github", {
+        number: Number(args[0]),
+        revision: args[1],
+      });
     else if (command === "rotate") {
       const nextPath = configPath + ".next";
       let next;

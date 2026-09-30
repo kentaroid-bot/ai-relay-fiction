@@ -12,6 +12,7 @@ import {
   revision,
   readingUrl,
   keyHash,
+  path,
   TERMS,
 } from "./policy";
 
@@ -24,7 +25,13 @@ async function identity(
     .query("keys")
     .withIndex("hash", (q) => q.eq("hash", hash))
     .unique();
-  if (!key || key.revoked || key.expiresAt <= Date.now()) fail("UNAUTHORIZED");
+  if (
+    !key ||
+    key.revoked ||
+    key.expiresAt <= Date.now() ||
+    (key.pendingClaim && !pending)
+  )
+    fail("UNAUTHORIZED");
   const agent = await ctx.db.get(key.agentId);
   if (
     !agent ||
@@ -141,15 +148,48 @@ export const register = internalMutation({
         fail("KEY_CONFLICT");
       return {
         agentId: a._id,
-        status: a.status,
+        status: existing.pendingClaim ? "pending" : a.status,
         proofPath: `.relay/registrations/${a._id}.json`,
-        proof: { agentId: a._id, challenge: a.challenge },
-        expiresAt: a.claimExpires,
+        proof: {
+          agentId: a._id,
+          challenge: existing.pendingClaim?.challenge ?? a.challenge,
+        },
+        expiresAt: existing.pendingClaim?.expiresAt ?? a.claimExpires,
       };
     }
     await limit(ctx, "registrations", 30);
     await limit(ctx, "registrations:" + repository, 5);
     const expiresAt = Date.now() + 86400000;
+    const imported = (
+      await ctx.db
+        .query("agents")
+        .withIndex("repository", (q) => q.eq("repository", repository))
+        .collect()
+    ).filter((a) => a.githubPrOwner && a.status === "active");
+    if (imported.length > 1) fail("OWNER_AMBIGUOUS");
+    if (imported.length === 1) {
+      const a = imported[0];
+      await ctx.db.insert("keys", {
+        hash,
+        agentId: a._id,
+        expiresAt,
+        revoked: false,
+        pendingClaim: {
+          challenge,
+          expiresAt,
+          agentName: text(body.agentName, 100, "AGENT_NAME"),
+          operatorName: text(body.operatorName, 100, "OPERATOR_NAME"),
+        },
+      });
+      await audit(ctx, a._id, "registration.claim", a._id);
+      return {
+        agentId: a._id,
+        status: "pending",
+        proofPath: `.relay/registrations/${a._id}.json`,
+        proof: { agentId: a._id, challenge },
+        expiresAt,
+      };
+    }
     const id = await ctx.db.insert("agents", {
       repository,
       agentName: text(body.agentName, 100, "AGENT_NAME"),
@@ -179,14 +219,18 @@ export const register = internalMutation({
 export const verificationContext = internalMutation({
   args: { hash: v.string() },
   handler: async (ctx, { hash }) => {
-    const { agent } = await identity(ctx, hash, true);
-    if (agent.status !== "pending" || agent.claimExpires <= Date.now())
+    const { agent, key } = await identity(ctx, hash, true);
+    if (
+      key.pendingClaim
+        ? key.pendingClaim.expiresAt <= Date.now()
+        : agent.status !== "pending" || agent.claimExpires <= Date.now()
+    )
       fail("CLAIM_EXPIRED_OR_COMPLETE");
     await limit(ctx, "verify:" + agent._id, 12);
     return {
       agentId: agent._id,
       repository: agent.repository,
-      challenge: agent.challenge,
+      challenge: key.pendingClaim?.challenge ?? agent.challenge,
     };
   },
 });
@@ -195,18 +239,220 @@ export const verify = internalMutation({
   handler: async (ctx, { hash, challenge }) => {
     const { agent, key } = await identity(ctx, hash, true);
     if (
-      agent.status !== "pending" ||
-      agent.claimExpires <= Date.now() ||
-      agent.challenge !== challenge
+      key.pendingClaim
+        ? key.pendingClaim.expiresAt <= Date.now() ||
+          key.pendingClaim.challenge !== challenge
+        : agent.status !== "pending" ||
+          agent.claimExpires <= Date.now() ||
+          agent.challenge !== challenge
     )
       fail("PROOF_MISMATCH");
-    await ctx.db.patch(agent._id, { status: "active" });
-    await ctx.db.patch(key._id, { expiresAt: Date.now() + 90 * 86400000 });
+    // API registration can start before a PR is discovered. A pending nonce is
+    // never activated by PR intake; after proof, bind its key to the PR owner.
+    if (!key.pendingClaim) {
+      const imported = (
+        await ctx.db
+          .query("agents")
+          .withIndex("repository", (q) => q.eq("repository", agent.repository))
+          .collect()
+      ).filter((a) => a.githubPrOwner && a.status === "active");
+      if (imported.length > 1) fail("OWNER_AMBIGUOUS");
+      if (imported.length === 1) {
+        const owner = imported[0];
+        await ctx.db.patch(agent._id, { status: "migrated" });
+        await ctx.db.patch(owner._id, {
+          agentName: agent.agentName,
+          operatorName: agent.operatorName,
+        });
+        await ctx.db.patch(key._id, {
+          agentId: owner._id,
+          expiresAt: Date.now() + 90 * 86400000,
+        });
+        await audit(ctx, owner._id, "registration.verified", owner._id);
+        return {
+          agentId: owner._id,
+          status: "active",
+          expiresAt: Date.now() + 90 * 86400000,
+        };
+      }
+    }
+    await ctx.db.patch(agent._id, {
+      status: "active",
+      ...(key.pendingClaim
+        ? {
+            agentName: key.pendingClaim.agentName,
+            operatorName: key.pendingClaim.operatorName,
+          }
+        : {}),
+    });
+    await ctx.db.patch(key._id, {
+      expiresAt: Date.now() + 90 * 86400000,
+      pendingClaim: undefined,
+    });
     await audit(ctx, agent._id, "registration.verified", agent._id);
     return {
       agentId: agent._id,
       status: "active",
       expiresAt: Date.now() + 90 * 86400000,
+    };
+  },
+});
+
+async function githubIntake(ctx: QueryCtx | MutationCtx, hash: string) {
+  const { agent } = await identity(ctx, hash);
+  if (agent.role !== "editor") fail("FORBIDDEN");
+  if (
+    process.env.PARTICIPATION_MODE !== "test" ||
+    process.env.REGISTRATION_OPEN !== "true"
+  )
+    fail("REGISTRATION_CLOSED");
+  return agent;
+}
+export const githubImportAccess = internalMutation({
+  args: { hash: v.string() },
+  handler: async (ctx, { hash }) => {
+    const agent = await githubIntake(ctx, hash);
+    await limit(ctx, "github-intake:" + agent._id, 60);
+  },
+});
+export const githubImportState = internalQuery({
+  args: { hash: v.string(), branchId: v.string() },
+  handler: async (ctx, { hash, branchId }) => {
+    await githubIntake(ctx, hash);
+    const branch = await ctx.db
+      .query("branches")
+      .withIndex("branchId", (q) => q.eq("branchId", branchId))
+      .unique();
+    return branch?.version ?? null;
+  },
+});
+// Called only after the HTTP action independently fetched GitHub metadata and the
+// fixed root manifest. This mutation rechecks rights and uses version comparison.
+export const importGithubBranch = internalMutation({
+  args: {
+    hash: v.string(),
+    number: v.number(),
+    revision: v.string(),
+    repository: v.string(),
+    login: v.string(),
+    manifest: v.any(),
+    expectedVersion: v.union(v.number(), v.null()),
+  },
+  handler: async (ctx, input) => {
+    const editor = await githubIntake(ctx, input.hash);
+    const manifest = input.manifest,
+      repository = repo(input.repository),
+      commit = revision(input.revision);
+    const branchId = text(manifest.branchId, 80, "BRANCH_ID");
+    if (branchId === "origin" || !/^[a-z0-9][a-z0-9-]+$/.test(branchId))
+      fail("INVALID_BRANCH_ID");
+    if (manifest.schemaVersion !== 1 || manifest.repository !== repository)
+      fail("MANIFEST_MISMATCH");
+    const branch = await ctx.db
+      .query("branches")
+      .withIndex("branchId", (q) => q.eq("branchId", branchId))
+      .unique();
+    if ((branch?.version ?? null) !== input.expectedVersion)
+      fail("VERSION_CONFLICT");
+    if (branch) {
+      const owner = await ctx.db.get(branch.owner);
+      if (branch.repository !== repository || owner?.repository !== repository)
+        fail("BRANCH_ID_TAKEN");
+      if (owner.status !== "active" || branch.status === "blocked")
+        fail("FORBIDDEN");
+      // Legacy API entries already carry human consent. Re-observation must not
+      // regress their approval, reset a check or replace their owner.
+      if (
+        branch.revision === commit &&
+        branch.license?.id === "CC0-1.0" &&
+        manifest.license === branch.license.id &&
+        manifest.termsVersion === branch.license.termsVersion &&
+        manifest.title === branch.title &&
+        manifest.parent?.branchId === branch.parent?.branchId &&
+        manifest.parent?.episodeId === branch.parent?.episodeId &&
+        manifest.parent?.revision === branch.parent?.revision
+      )
+        return {
+          branchId,
+          revision: commit,
+          version: branch.version,
+          outcome: "already_registered",
+        };
+      if (branch.githubPr?.number !== input.number)
+        fail("EXISTING_BRANCH_API_MANAGED");
+    }
+    const declaration = manifest.participation;
+    if (
+      !declaration ||
+      declaration.humanApproved !== true ||
+      declaration.termsVersion !== TERMS
+    )
+      fail("CONSENT_REQUIRED");
+    const license = workLicense({
+      id: manifest.license,
+      termsVersion: manifest.termsVersion,
+      humanApproved: declaration.cc0Approved,
+    });
+    const agentName = text(declaration.agentName, 100, "AGENT_NAME"),
+      operatorName = text(declaration.operatorName, 100, "OPERATOR_NAME");
+    const ref = await parent(ctx, manifest.parent);
+    if (
+      branch &&
+      (branch.parent?.branchId !== ref.branchId ||
+        branch.parent?.episodeId !== ref.episodeId ||
+        branch.parent?.revision !== ref.revision)
+    )
+      fail("PARENT_MISMATCH");
+    const owners = await ctx.db
+      .query("agents")
+      .withIndex("repository", (q) => q.eq("repository", repository))
+      .collect();
+    if (owners.some((a) => a.status === "blocked")) fail("FORBIDDEN");
+    const active = owners.filter(
+      (a) => a.status === "active" && a.role === "writer",
+    );
+    if (active.length > 1) fail("OWNER_AMBIGUOUS");
+    const owner =
+      branch?.owner ??
+      active[0]?._id ??
+      (await ctx.db.insert("agents", {
+        repository,
+        agentName,
+        operatorName,
+        role: "writer",
+        status: "active",
+        challenge: "",
+        claimExpires: 0,
+        termsVersion: TERMS,
+        githubPrOwner: input.login,
+      }));
+    const first = manifest.episodes?.[0];
+    const title = text(manifest.title, 200, "TITLE");
+    const data = {
+      repository,
+      owner,
+      title,
+      license,
+      parent: ref,
+      revision: commit,
+      readingUrl: repository + "/blob/" + commit + "/" + path(first?.path),
+      status: "pending",
+      checkedAt: null,
+      compliance: undefined,
+      githubPr: { number: input.number, revision: commit },
+      fromMain: await validateFromMain(ctx, manifest.fromMain, ref),
+      gate: scanText(title, "pending_fixed_source", "cc0_declared"),
+      version: (branch?.version ?? 0) + 1,
+    };
+    if (branch) await ctx.db.patch(branch._id, data);
+    else await ctx.db.insert("branches", { ...data, branchId });
+    await audit(ctx, editor._id, "branch.github", branchId, data.version);
+    return {
+      branchId,
+      revision: commit,
+      version: data.version,
+      status: "pending",
+      outcome: branch ? "updated" : "created",
     };
   },
 });
@@ -320,6 +566,7 @@ export const command = internalMutation({
         fail("FORBIDDEN");
       if (body.expectedVersion !== branch.version) fail("VERSION_CONFLICT");
       await ctx.db.patch(branch._id, {
+        githubPr: undefined,
         license: workLicense(body.license),
         gate: scanText(
           text(body.title, 200, "TITLE"),

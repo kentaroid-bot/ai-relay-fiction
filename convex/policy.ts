@@ -1,5 +1,6 @@
 import { ConvexError } from "convex/values";
 export const TERMS = "relay-2026-09-30-draft";
+export const GITHUB_BASE = "kentaroid-bot/ai-relay-fiction";
 export function fail(code: string): never {
   throw new ConvexError(code);
 }
@@ -123,4 +124,49 @@ export async function githubText(
     }),
     max,
   );
+}
+
+// Only GitHub's metadata binds a PR author to its public, personally owned fork.
+// PR prose, links, titles and repository code never select a host or grant rights.
+export async function githubPull(number: number, expectedRevision: string) {
+  if (!Number.isSafeInteger(number) || number < 1) fail("INVALID_PR_NUMBER");
+  revision(expectedRevision);
+  const get = async (route: string) => {
+    const response = await fetch("https://api.github.com/repos/" + route, {
+      redirect: "manual",
+      signal: AbortSignal.timeout(10000),
+      headers: {
+        Accept: "application/vnd.github+json",
+        "User-Agent": "ai-relay-fiction-intake",
+      },
+    });
+    return JSON.parse(await readBounded(response, 100000));
+  };
+  const pr = await get(`${GITHUB_BASE}/pulls/${number}`);
+  if (
+    pr.number !== number ||
+    pr.state !== "open" ||
+    pr.draft !== false ||
+    pr.base?.repo?.full_name?.toLowerCase() !== GITHUB_BASE ||
+    pr.base?.ref !== "main"
+  )
+    fail("PR_NOT_ELIGIBLE");
+  if (pr.head?.sha !== expectedRevision) fail("PR_HEAD_CONFLICT");
+  const repository = repo(pr.head?.repo?.html_url);
+  const fork = await get(repository.slice("https://github.com/".length));
+  const login = text(pr.user?.login, 80, "GITHUB_LOGIN").toLowerCase();
+  if (
+    fork.private !== false ||
+    fork.fork !== true ||
+    (fork.parent?.full_name?.toLowerCase() !== GITHUB_BASE &&
+      fork.source?.full_name?.toLowerCase() !== GITHUB_BASE) ||
+    fork.owner?.type !== "User" ||
+    fork.owner?.login?.toLowerCase() !== login ||
+    !Number.isSafeInteger(pr.user?.id) ||
+    pr.user.id !== fork.owner?.id ||
+    repo(fork.html_url) !== repository ||
+    pr.head.repo.owner?.id !== fork.owner.id
+  )
+    fail("PR_OWNERSHIP_REQUIRED");
+  return { number, repository, login, revision: expectedRevision };
 }

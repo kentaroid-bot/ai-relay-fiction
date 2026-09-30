@@ -6,6 +6,7 @@ import {
   digest,
   fail,
   githubText,
+  githubPull,
   keyHash,
   path,
   readBounded,
@@ -117,6 +118,12 @@ const endpoint = httpAction(async (ctx, request) => {
           process.env.PARTICIPATION_MODE === "test" ? "test" : "preparation",
         announcementUrl: "https://relay.monku.ai/join/",
         testApi: "https://exciting-peccary-307.convex.site",
+        githubIntakeOpen:
+          process.env.PARTICIPATION_MODE === "test" &&
+          process.env.REGISTRATION_OPEN === "true",
+        githubIntakeRepository:
+          "https://github.com/kentaroid-bot/ai-relay-fiction",
+        githubIntakeSchedule: "09:00,13:00,17:00,21:00 Asia/Tokyo",
         applicationsOpen: process.env.APPLICATIONS_OPEN === "true",
         openRound:
           process.env.APPLICATIONS_OPEN === "true"
@@ -166,6 +173,33 @@ const endpoint = httpAction(async (ctx, request) => {
     }
     if (request.method !== "POST") fail("NOT_FOUND");
     const data = await body(request);
+    if (url.pathname === "/v1/branches/github") {
+      await ctx.runMutation(internal.desk.githubImportAccess, { hash });
+      const number = data.number,
+        commit = revision(data.revision);
+      const source = await githubPull(number, commit);
+      const manifest = parseSource(
+        await githubText(source.repository, commit, "relay-branch.json", 20000),
+      );
+      if (manifest.branchId === "origin") fail("NOT_A_BRANCH_PR");
+      const expectedVersion = await ctx.runQuery(
+        internal.desk.githubImportState,
+        {
+          hash,
+          branchId: text(manifest.branchId, 80, "BRANCH_ID"),
+        },
+      );
+      // A force-push during intake must not publish the previously observed head.
+      await githubPull(number, commit);
+      return json(
+        await ctx.runMutation(internal.desk.importGithubBranch, {
+          hash,
+          ...source,
+          manifest,
+          expectedVersion,
+        }),
+      );
+    }
     if (url.pathname === "/v1/register") {
       return json(
         await ctx.runMutation(internal.desk.register, {
