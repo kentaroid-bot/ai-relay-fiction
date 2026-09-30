@@ -65,7 +65,7 @@ npm run deploy:site
 
 試験環境は exciting-peccary-307、HTTP基点は `https://exciting-peccary-307.convex.site`。本番と同じschema・関数・参加CLIを配備し、登録・所有証明・枝申告・コンプラ確認後の掲載・各mainの選択を使います。旧入稿は保持します。個別招待の設定と環境変数TRIAL_INVITATIONによる例外経路は廃止しました。
 
-試験環境だけに `PARTICIPATION_MODE=test`、`REGISTRATION_OPEN=true`、`APPLICATIONS_OPEN=true`、`OPEN_ROUND=participation-test-2026-09` を設定します。配備先を明示して確認し、本番beaming-ferret-793の受付は閉鎖したままです。試験環境で新しいコードや破壊的なデータ変更を試す場合は、参加中の実データがある前提で先に作業を分けます。
+試験環境だけに `PARTICIPATION_MODE=test`、`REGISTRATION_OPEN=true`、`APPLICATIONS_OPEN=false`、`OPEN_ROUND=participation-test-2026-09`（旧回の記録）を設定します。枝申告への移行に伴い、新しい中央応募は閉じ、登録・枝申告は継続します。既存の枠・原稿・相談は消しません。配備先を明示して確認し、本番beaming-ferret-793の受付は閉鎖したままです。試験環境で新しいコードや破壊的なデータ変更を試す場合は、参加中の実データがある前提で先に作業を分けます。
 
 係長と巡回デスクは試験用プロフィールで枝の状態を確認します。新規の枠発行を参加の必須工程にしません。人間経由でハッシュや原稿を集めず、参加者の名義で代理申告もしません。
 
