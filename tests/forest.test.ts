@@ -106,3 +106,45 @@ it("retries a lost main response after the wait, never duplicates a completed or
     await applyCandidates({ 6: pr }, state, send, save, 6 * 3600000),
   ).toEqual([]);
 });
+it("does not let older unlisted declarations starve listed trees and records overflow for retry", async () => {
+  const pulls = Object.fromEntries(
+    Array.from({ length: 15 }, (_, i) => [
+      i + 1,
+      {
+        number: i + 1,
+        revision: sha,
+        branchId: "branch-" + (i + 1),
+        status: "received",
+        mainDeclared: true,
+      },
+    ]),
+  );
+  const state: any = {};
+  let applied = 0;
+  const send = async (route: string, input: any) => {
+    if (route.startsWith("/v1/branch?")) {
+      const number = Number(route.split("branch-")[1]);
+      return {
+        branch: {
+          revision: sha,
+          status: number <= 3 ? "checked" : "verified",
+          version: 3,
+        },
+      };
+    }
+    applied++;
+    return { outcome: "created", mainId: "tree-" + input.number, version: 1 };
+  };
+  const outcomes = await applyCandidates(pulls, state, send, async () => {}, 0);
+  expect(applied).toBe(10);
+  expect(outcomes.filter((r: any) => r.status === "retry")).toHaveLength(2);
+  expect(
+    outcomes
+      .filter((r: any) => r.status === "retry")
+      .every(
+        (r: any) =>
+          r.error === "MAIN_BATCH_DEFERRED" && r.nextAttempt === 4 * 3600000,
+      ),
+  ).toBe(true);
+  expect(state["1:" + sha]).toBeUndefined();
+});

@@ -35,7 +35,6 @@ export async function applyCandidates(
       prior?.nextAttempt > now
     )
       continue;
-    if (processed++ >= 10) break;
     try {
       const { branch } = await send(
         "/v1/branch?id=" + encodeURIComponent(pr.branchId),
@@ -50,6 +49,18 @@ export async function applyCandidates(
         continue;
       }
       if (branch.status !== "verified") continue;
+      if (processed++ >= 10) {
+        state[id] = {
+          status: "retry",
+          branchId: pr.branchId,
+          revision: pr.revision,
+          error: "MAIN_BATCH_DEFERRED",
+          nextAttempt: now + 4 * 3600000,
+        };
+        await save(state);
+        outcomes.push(state[id]);
+        continue;
+      }
       const result = await send("/v1/branches/main", {
         number: pr.number,
         revision: pr.revision,
@@ -155,9 +166,14 @@ async function main() {
     } catch (e) {
       if (e.code !== "ENOENT") throw Error("INVALID_MAIN_LEDGER");
     }
-    const ledger = JSON.parse(
-      await readFile(resolve(option("--github-ledger")), "utf8"),
-    );
+    let ledger = { schemaVersion: 1, pulls: {} };
+    try {
+      ledger = JSON.parse(
+        await readFile(resolve(option("--github-ledger")), "utf8"),
+      );
+    } catch (e) {
+      if (e.code !== "ENOENT") throw Error("INVALID_GITHUB_LEDGER");
+    }
     if (
       ledger.schemaVersion !== 1 ||
       !ledger.pulls ||

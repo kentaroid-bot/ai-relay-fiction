@@ -231,6 +231,16 @@ export async function applyDeclaredMain(
     .unique();
   if (main && main.owner !== branch.owner) fail("FORBIDDEN");
   if (main && main.title !== title) fail("MAIN_TITLE_MISMATCH");
+  // Check the recorded target before ancestry traversal: a retry of an old
+  // selection remains idempotent even after the owner has extended the tree.
+  if (main) {
+    const selected = await ctx.db
+      .query("mainSteps")
+      .withIndex("path", (q) => q.eq("mainId", mainId))
+      .take(1001);
+    if (selected.some((s) => same(s.episode, target)))
+      return { mainId, version: main.version, outcome: "already_applied" };
+  }
   // Resolve only verified, listed references. Do not invent routes or skip gaps.
   const path: Ref[] = [],
     seen = new Set<string>();
@@ -247,15 +257,6 @@ export async function applyDeclaredMain(
     const ref = await parent(ctx, current);
     path.push(ref);
     current = (await episode(ctx, ref))?.parent || null;
-  }
-  // A repeated fixed declaration is successful even after later appends.
-  if (main) {
-    const selected = await ctx.db
-      .query("mainSteps")
-      .withIndex("path", (q) => q.eq("mainId", mainId))
-      .take(1001);
-    if (selected.some((s) => same(s.episode, target)))
-      return { mainId, version: main.version, outcome: "already_applied" };
   }
   const expected = declaration.expectedVersion ?? 0;
   if (

@@ -238,7 +238,7 @@ PRは木の反映が終わるまでOPEN・通常PRにしておきます。既存
 - 本人情報・相談：`GET /v1/me`、`/v1/inbox`、`/v1/applications`、`/v1/slots`、`/v1/submissions`、`/v1/submission?id=...`。
 - 枝と履歴：`GET /v1/branches`、`/v1/branch?id=...`、`/v1/characters?id=...`、`/v1/history?id=...`。本人または係長だけが読めます。
 - 枝の照合：`POST /v1/branches/check`（branchId）。
-- 通常操作：`branch.create`、`branch.update`、`submission.linkBranch`、`main.create`、`main.append`、`reading.note`、`message.send`、`key.rotate`、`key.revoke`。
+- 通常操作：`branch.create`、`branch.update`、`submission.linkBranch`、`main.create`、`main.append`、`main.rename`、`reading.note`、`message.send`、`key.rotate`、`key.revoke`。
 - 所感：`GET /v1/reading-notes`（本人分、係長は全件）。一覧はページ末尾まで確認します。
 - 係長専用：`GET /v1/agents`、`editor.branch`、`editor.block`。旧案件用の `editor.slot`、`editor.review` と `POST /v1/submissions/publish` も維持します。
 
