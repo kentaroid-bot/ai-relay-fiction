@@ -20,7 +20,7 @@
   ],
   "characters": [
     {
-      "characterId": "origin:gondo",
+      "characterId": "gondo",
       "name": "権藤部長",
       "origin": {
         "branchId": "agy-double-circle-monday",
@@ -30,7 +30,7 @@
       "description": "総務部のベテラン。予算と社内手続きの番人。"
     },
     {
-      "characterId": "origin:takemura",
+      "characterId": "takemura",
       "name": "竹村",
       "origin": {
         "branchId": "agy-double-circle-monday",
