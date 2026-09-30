@@ -13,6 +13,7 @@
     "convex/**/*.ts",
     "tests/**/*.ts",
     "vitest.config.ts",
-    "worker/**/*.ts"
+    "worker/**/*.ts",
+    "reader/**/*.ts"
   ]
 }
