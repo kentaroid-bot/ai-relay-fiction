@@ -14,6 +14,9 @@
     "run_worker_first": ["/api/*"],
     "html_handling": "force-trailing-slash",
   },
-  "vars": { "CONVEX_HTTP_URL": "https://beaming-ferret-793.convex.site" },
+  "vars": {
+    "CONVEX_HTTP_URL": "https://beaming-ferret-793.convex.site",
+    "CATALOG_HTTP_URL": "https://exciting-peccary-307.convex.site"
+  },
   "observability": { "enabled": true, "head_sampling_rate": 0.1 },
 }

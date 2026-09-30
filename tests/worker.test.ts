@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import worker from "../worker/index";
 const env = {
   CONVEX_HTTP_URL: "https://example.convex.site",
+  CATALOG_HTTP_URL: "https://catalog.convex.site",
   ASSETS: { fetch: vi.fn(async () => new Response("page")) },
 };
 afterEach(() => vi.unstubAllGlobals());
@@ -9,7 +10,7 @@ it("proxies only listed API routes to a fixed host, forwards no cookies and neve
   const fetcher = vi.fn(async (_url: string, options: RequestInit) => {
     const headers = new Headers(options.headers);
     expect(headers.get("cookie")).toBeNull();
-    expect(headers.get("authorization")).toBe("Bearer test");
+    expect(headers.get("authorization")).toBeNull();
     expect(options.redirect).toBe("manual");
     return Response.json({ page: [] });
   });
@@ -22,7 +23,7 @@ it("proxies only listed API routes to a fixed host, forwards no cookies and neve
   );
   expect(response.status).toBe(200);
   expect(fetcher.mock.calls[0][0]).toBe(
-    "https://example.convex.site/v1/catalog?cursor=next",
+    "https://catalog.convex.site/v1/catalog?cursor=next",
   );
   expect(response.headers.get("cache-control")).toBe("no-store");
   expect(
@@ -34,6 +35,58 @@ it("proxies only listed API routes to a fixed host, forwards no cookies and neve
     ).status,
   ).toBe(404);
   expect(fetcher).toHaveBeenCalledTimes(1);
+});
+it("keeps authenticated reads and writes on production, separate from the anonymous catalog", async () => {
+  const fetcher = vi.fn(async (_url: string, options: RequestInit) => {
+    expect(new Headers(options.headers).get("authorization")).toBe(
+      "Bearer test",
+    );
+    return Response.json({ ok: true });
+  });
+  vi.stubGlobal("fetch", fetcher);
+  for (const [method, path] of [
+    ["GET", "/me"],
+    ["POST", "/commands"],
+  ]) {
+    await worker.fetch(
+      new Request("https://relay.monku.ai/api/v1" + path, {
+        method,
+        headers: { Authorization: "Bearer test" },
+      }),
+      env as any,
+    );
+  }
+  expect(fetcher.mock.calls.map((c) => c[0])).toEqual([
+    "https://example.convex.site/v1/me",
+    "https://example.convex.site/v1/commands",
+  ]);
+});
+it("uses the same public source for branch, main and candidate pagination, but rejects other catalog-host routes", async () => {
+  const fetcher = vi.fn(async (_url: string) => Response.json({ page: [] }));
+  vi.stubGlobal("fetch", fetcher);
+  for (const path of [
+    "/mains",
+    "/main?id=monku-main&cursor=next",
+    "/candidates?id=monku-main&cursor=next",
+  ]) {
+    await worker.fetch(
+      new Request("https://relay.monku.ai/api/v1" + path),
+      env as any,
+    );
+    expect(fetcher.mock.calls.at(-1)?.[0]).toBe(
+      "https://catalog.convex.site/v1" + path,
+    );
+  }
+  expect(
+    (
+      await worker.fetch(
+        new Request("https://relay.monku.ai/api/v1/catalog", {
+          method: "POST",
+        }),
+        env as any,
+      )
+    ).status,
+  ).toBe(404);
 });
 it("serves ordinary pages as assets and keeps upstream failures generic", async () => {
   expect(
