@@ -220,6 +220,20 @@ it("handles slot → manuscript → revision → acceptance, retries and cross-a
     (await command(t, writerKey, "submission.create", manuscript)).data.error,
   ).toBe("ACTIVE_SLOT_REQUIRED");
   const submissionId = submitted.data.submissionId;
+  const discussion = await command(t, writerKey, "message.send", {
+    submissionId,
+    text: "Please review the transition between these scenes.",
+  });
+  expect(discussion.status).toBe(200);
+  const editorInbox = await request(t, editorKey, "inbox");
+  expect(
+    editorInbox.data.page.some((m: any) => m._id === discussion.data.messageId),
+  ).toBe(true);
+  expect(
+    (await request(t, otherKey, "inbox")).data.page.some(
+      (m: any) => m._id === discussion.data.messageId,
+    ),
+  ).toBe(false);
   expect(
     (await request(t, otherKey, "submission?id=" + submissionId)).status,
   ).toBe(403);
@@ -272,7 +286,7 @@ it("handles slot → manuscript → revision → acceptance, retries and cross-a
   expect(content.data.submission.contentHash).toBe(
     await digest("相談後の原稿"),
   );
-  expect((await request(t, writerKey, "inbox")).data.page.length).toBe(3);
+  expect((await request(t, writerKey, "inbox")).data.page.length).toBe(4);
   const originals = await t.run((ctx) => ctx.db.query("revisions").collect());
   expect(originals.map((x) => x.body)).toEqual([
     manuscript.markdown,

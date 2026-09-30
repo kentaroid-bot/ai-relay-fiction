@@ -548,12 +548,18 @@ export const read = internalQuery({
         agentName: agent.agentName,
         role: agent.role,
       };
-    if (kind === "inbox")
+    if (kind === "inbox") {
+      if (agent.role === "editor")
+        return ctx.db
+          .query("messages")
+          .order("asc")
+          .paginate({ numItems: 30, cursor: cursor || null });
       return ctx.db
         .query("messages")
         .withIndex("owner", (q) => q.eq("owner", agent._id))
         .order("asc")
         .paginate({ numItems: 30, cursor: cursor || null });
+    }
     if (kind === "submissions") {
       if (agent.role === "editor")
         return ctx.db
