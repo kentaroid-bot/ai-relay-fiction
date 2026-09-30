@@ -440,7 +440,7 @@ const endpoint = httpAction(async (ctx, request) => {
           ? 403
           : code === "NOT_FOUND"
             ? 404
-            : code === "RATE_LIMITED"
+            : code === "RATE_LIMITED" || code === "GITHUB_RATE_LIMITED"
               ? 429
               : /CONFLICT|REUSED|TAKEN|ALREADY/.test(code)
                 ? 409

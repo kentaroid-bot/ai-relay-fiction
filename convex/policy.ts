@@ -110,17 +110,22 @@ function checkGithubResponse(
     const value = response.headers.get(name);
     return value !== null && /^\d{1,12}$/.test(value) ? Number(value) : null;
   };
+  const remaining = numberHeader("x-ratelimit-remaining");
   // Diagnose upstream failures without logging URLs, response bodies or secrets.
   console.warn(
     "GITHUB_SOURCE_FAILURE",
     JSON.stringify({
       stage,
       status: response.status,
-      remaining: numberHeader("x-ratelimit-remaining"),
+      remaining,
       reset: numberHeader("x-ratelimit-reset"),
     }),
   );
-  fail("SOURCE_UNAVAILABLE");
+  fail(
+    response.status === 429 || (response.status === 403 && remaining === 0)
+      ? "GITHUB_RATE_LIMITED"
+      : "SOURCE_UNAVAILABLE",
+  );
 }
 // No caller-supplied host, credentials, redirects, scripts or recursive link following.
 export async function githubText(

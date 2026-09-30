@@ -196,7 +196,11 @@ describe("GitHub PR intake", () => {
             ),
           );
         });
-        expect((await ingest(t)).data).toEqual({ error: "SOURCE_UNAVAILABLE" });
+        const failed = await ingest(t);
+        expect(failed.data).toEqual({
+          error: status === 403 ? "GITHUB_RATE_LIMITED" : "SOURCE_UNAVAILABLE",
+        });
+        expect(failed.status).toBe(status === 403 ? 429 : 400);
         expect(warning).toHaveBeenCalledWith(
           "GITHUB_SOURCE_FAILURE",
           JSON.stringify({ stage, status, remaining: 0, reset: 1906556400 }),
