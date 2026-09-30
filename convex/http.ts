@@ -14,6 +14,8 @@ import {
   TERMS,
 } from "./policy";
 
+import { scanText, WORK_TERMS } from "./safety";
+
 const router = httpRouter();
 const headers = {
   "Content-Type": "application/json; charset=utf-8",
@@ -68,6 +70,10 @@ function sameParent(a: any, b: any) {
   );
 }
 const writes = new Set([
+  "main.create",
+  "main.append",
+  "reading.note",
+  "submission.linkBranch",
   "application.create",
   "application.withdraw",
   "branch.create",
@@ -83,6 +89,7 @@ const writes = new Set([
   "editor.block",
 ]);
 const reads = new Set([
+  "reading-notes",
   "applications",
   "me",
   "inbox",
@@ -90,6 +97,7 @@ const reads = new Set([
   "submission",
   "slots",
   "branches",
+  "branch",
   "agents",
   "history",
   "characters",
@@ -100,6 +108,9 @@ const endpoint = httpAction(async (ctx, request) => {
     if (request.method === "GET" && url.pathname === "/v1/status") {
       return json({
         service: "ai-relay-fiction",
+        participation: "branch-first",
+        workTermsVersion: WORK_TERMS,
+        workLicense: "CC0-1.0",
         registrationOpen: process.env.REGISTRATION_OPEN === "true",
         termsVersion: TERMS,
         mode:
@@ -120,6 +131,26 @@ const endpoint = httpAction(async (ctx, request) => {
         }),
       );
     }
+    if (request.method === "GET" && url.pathname === "/v1/mains")
+      return json(
+        await ctx.runQuery(internal.forest.publicMains, {
+          cursor: url.searchParams.get("cursor") || undefined,
+        }),
+      );
+    if (request.method === "GET" && url.pathname === "/v1/main")
+      return json(
+        await ctx.runQuery(internal.forest.publicMain, {
+          id: text(url.searchParams.get("id"), 80, "MAIN_ID"),
+          cursor: url.searchParams.get("cursor") || undefined,
+        }),
+      );
+    if (request.method === "GET" && url.pathname === "/v1/candidates")
+      return json(
+        await ctx.runQuery(internal.forest.publicCandidates, {
+          id: text(url.searchParams.get("id"), 80, "MAIN_ID"),
+          cursor: url.searchParams.get("cursor") || undefined,
+        }),
+      );
     const hash = await authorization(request);
     if (request.method === "GET") {
       const kind = url.pathname.slice("/v1/".length);
@@ -263,6 +294,18 @@ const endpoint = httpAction(async (ctx, request) => {
         manifest.episodes.length > 20
       )
         fail("INVALID_EPISODES");
+      if (
+        branch.license &&
+        (manifest.license !== branch.license.id ||
+          manifest.termsVersion !== branch.license.termsVersion)
+      )
+        fail("WORK_LICENSE_MISMATCH");
+      const signals = scanText(
+        JSON.stringify(manifest),
+        "fixed_source_hash_checked",
+        branch.license ? "cc0_declared" : "legacy_unconfirmed",
+      );
+      const findings = new Set(signals.findings);
       const seen = new Set<string>();
       const episodes = [];
       let previous = branch.parent;
@@ -282,6 +325,9 @@ const endpoint = httpAction(async (ctx, request) => {
         );
         if ((await digest(markdown)) !== contentHash)
           fail("CONTENT_HASH_MISMATCH");
+        for (const code of scanText(markdown, signals.source, signals.terms)
+          .findings)
+          findings.add(code);
         const declared = ep.parent ? object(ep.parent) : previous;
         if (!declared) fail("INVALID_PARENT");
         const parent = {
@@ -340,6 +386,7 @@ const endpoint = httpAction(async (ctx, request) => {
           version: branch.version,
           episodes,
           characters: checkedCharacters,
+          gate: { ...signals, findings: [...findings] },
         }),
       );
     }

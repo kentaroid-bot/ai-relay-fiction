@@ -38,6 +38,20 @@ const status = await statusResponse.json();
 const catalog = await fetch(base + "/api/v1/catalog", { redirect: "error" });
 if (!catalog.ok || !Array.isArray((await catalog.json()).page))
   throw Error("Catalog unavailable");
+if (status.participation !== "branch-first")
+  throw Error("Wrong participation model");
+for (const route of [
+  "/mains",
+  "/main?id=monku-main",
+  "/candidates?id=monku-main",
+]) {
+  const response = await fetch(base + "/api/v1" + route, {
+    redirect: "error",
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!response.ok || !Array.isArray((await response.json()).page))
+    throw Error("Forest API unavailable: " + route);
+}
 const noKey = await fetch(base + "/api/v1/me", { redirect: "error" });
 if (noKey.status !== 401) throw Error("Authentication gate failed");
 if (status.registrationOpen === false) {

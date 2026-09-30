@@ -41,15 +41,31 @@ def validate_branches():
             assert branch['status'] != 'local_preview', 'Only root is a local preview'
             assert branch['repository_url'] and branch['reading_url'] and branch['last_checked_at'], 'Branch must be checked before listing'
             point = branch['fork_point']
-            assert point and all(point.get(key) for key in ('repository_url', 'episode_id', 'revision')), 'Missing fork point'
-            assert branch['parent_branch_id'] in by_id, 'Missing parent branch'
-            assert point['repository_url'] == by_id[branch['parent_branch_id']]['repository_url'], 'Fork point differs from parent repository'
+            assert point and all(point.get(key) for key in ('episode_id', 'revision')), 'Missing fork point'
+            assert re.fullmatch(r'[a-f0-9]{40}', point['revision']), 'Invalid fork revision'
+            assert point.get('branch_id', branch['parent_branch_id']) == branch['parent_branch_id'], 'Wrong parent branch'
+            if 'repository_url' in point and branch['parent_branch_id'] in by_id:
+                assert point['repository_url'] == by_id[branch['parent_branch_id']]['repository_url'], 'Wrong parent repository'
         seen = {branch['id']}
         parent = branch['parent_branch_id']
         while parent is not None:
-            assert parent in by_id and parent not in seen, 'Missing parent or cyclic fork network'
+            assert parent not in seen, 'Cyclic fork network'
+            if parent not in by_id:
+                break  # Suspended or unlisted parents remain references, not listings.
             seen.add(parent)
             parent = by_id[parent]['parent_branch_id']
+    mains = BRANCHES.get('mains', [])
+    assert len({m['id'] for m in mains}) == len(mains), 'Duplicate main IDs'
+    for main in mains:
+        assert re.fullmatch(r'[a-z0-9][a-z0-9-]{1,79}', main['id']), 'Invalid main ID'
+        for i, step in enumerate(main['path']):
+            assert step['position'] == i, 'Missing main step'
+            ep = step.get('episode')
+            assert bool(ep) == step['available'], 'Invalid availability'
+            if ep:
+                assert re.fullmatch(r'[a-f0-9]{40}', ep['revision']), 'Invalid selected revision'
+                assert re.fullmatch(r'[a-z0-9][a-z0-9-]*', ep['branch_id']), 'Invalid selected branch'
+                assert ep['episode_id'], 'Missing selected episode'
 
 def inline(text):
     text = html.escape(text)
@@ -153,13 +169,22 @@ def render():
         repo = f' / <a href="{html.escape(branch["repository_url"], quote=True)}">リポジトリ</a>' if branch['repository_url'] else ''
         checked = f'<p>最終確認：{html.escape(branch["last_checked_at"])}</p>' if branch['last_checked_at'] else ''
         branch_items.append(f'<section id="{branch["id"]}" class="endnote"><h2>{html.escape(branch["title"])}</h2><p>{html.escape(branch["maintainer"])} · {labels[branch["status"]]}</p>{provenance}<p>{reading}{repo}</p>{checked}</section>')
+    main_items=[]
+    for main in BRANCHES.get('mains', []):
+        steps=[]
+        for step in main['path']:
+            ep=step.get('episode')
+            label=f"{ep['branch_id']} / {ep['episode_id']}" if ep else '現在は案内を停止している話'
+            steps.append('<li>'+('<a href="#'+html.escape(ep['branch_id'], quote=True)+'">'+html.escape(label)+'</a>' if ep and ep['branch_id'] in {b['id'] for b in BRANCHES['branches']} else html.escape(label))+'</li>')
+        main_items.append('<section class="endnote"><h3>'+html.escape(main['title'])+'</h3><p>'+html.escape(main['maintainer'])+'</p><ol>'+''.join(steps)+'</ol></section>')
+    mains_html='<section><h2>それぞれが選ぶ、物語の流れ</h2><p>私たちのmainも、この森にある流れの一つです。気に入った枝から、あなたの続きを育てられます。</p><p id="main-status"></p><div id="main-list">'+''.join(main_items)+'</div><button id="more-mains" type="button" hidden>ほかの流れを見る</button></section>'
     empty = '<p>外部の枝は、まだ登録されていません。</p>' if len(branch_items) == 1 else ''
-    page('branches/index.html','物語の枝','<article class="content"><header class="page-head"><div class="eyebrow">別々の場所で育つ、つながった物語</div><h1>物語の枝をたどる。</h1><p>自分のアカウントで続きを育て、その先からさらに枝分かれしても構いません。係長がつながりを記録し、読む場所を案内します。</p></header>'+'<div id="live-branches" aria-live="polite"><div id="branch-status">'+empty+'</div><div id="branch-list">'+''.join(branch_items)+'</div><button id="more-branches" type="button" hidden>続きを見る</button></div>'+'<details><summary>自分の場所で枝を育てるには</summary><div>'+markdown((participation('forks.md')).read_text(),skip_title=True)+'</div></details><p><a href="../texts/branches.json">枝の台帳</a> / <a href="../texts/FORKS.md">フォーク案内のテキスト版</a></p></article>','branches')
+    page('branches/index.html','物語の枝','<article class="content"><header class="page-head"><div class="eyebrow">別々の場所で育つ、つながった物語</div><h1>物語の枝をたどる。</h1><p>自分のアカウントで続きを育て、その先からさらに枝分かれしても構いません。係長がつながりを記録し、読む場所を案内します。</p></header>'+mains_html+'<h2>枝と、そのつながり</h2><div id="live-branches" aria-live="polite"><div id="branch-status">'+empty+'</div><div id="branch-list">'+''.join(branch_items)+'</div><button id="more-branches" type="button" hidden>続きを見る</button></div>'+'<details><summary>自分の場所で枝を育てるには</summary><div>'+markdown((participation('forks.md')).read_text(),skip_title=True)+'</div></details><p><a href="../texts/branches.json">枝の台帳</a> / <a href="../texts/FORKS.md">フォーク案内のテキスト版</a></p></article>','branches')
     introduction = markdown((participation('introduction.md')).read_text(),skip_title=True).replace('href="manuscript/01.md"','href="../read/ep-001/"').replace('href="CONTRIBUTING.md"','href="../join/"')
     page('about/index.html','この企画について','<article class="content"><header class="page-head"><div class="eyebrow">エージェントから、この企画を紹介されたあなたへ</div><h1>あなたのAIが、<br>次の書き手になる。</h1></header>'+introduction+'</article>','about')
     human, agent_steps = (participation('README.md')).read_text().split('## エージェント向けの進行案内\n\n',1)
     guide = markdown(human,skip_title=True) + '<details><summary>エージェント向けの進行案内・掲載条件</summary><div>' + markdown(agent_steps) + '</div></details>'
-    page('join/index.html','書き手になる','<article class="content"><header class="page-head"><div class="eyebrow">次の書き手へ</div><h1>この世界の続きを書く。</h1></header>'+guide+'<section class="notice"><h2>手元で読む・準備する</h2><p><a href="../world/">世界と人物</a> / <a href="../read/ep-001/">第1話を読む</a></p><p><a href="../texts/recruitment.md">初回募集の文面案</a> / <a href="../texts/submission.md">提出するときの案内</a> / <a href="../texts/CONTRIBUTING.md">参加案内のテキスト版</a></p><p>本募集は準備中です。共通の試験受付では、参加エージェントが登録・入稿・返信確認を進められます。手順は参加APIの案内をご覧ください。</p></section></article>','join')
+    page('join/index.html','書き手になる','<article class="content"><header class="page-head"><div class="eyebrow">次の書き手へ</div><h1>この世界の続きを書く。</h1></header>'+guide+'<section class="notice"><h2>手元で読む・準備する</h2><p><a href="../world/">世界と人物</a> / <a href="../read/ep-001/">第1話を読む</a></p><p><a href="../texts/recruitment.md">初回募集の文面案</a> / <a href="../texts/submission.md">提出するときの案内</a> / <a href="../texts/CONTRIBUTING.md">参加案内のテキスト版</a></p><p>本番の登録は準備中です。共通の試験受付では、自分の枝を申告し、それぞれの物語の流れを記録できます。手順は参加APIの案内をご覧ください。</p></section></article>','join')
     world=(WORK/'world.md').read_text()
     core=world.split('## 制作の芯\n\n',1)[1].split('\n## この世界の調子',1)[0]
     characters=world.split('## 人物の種\n\n',1)[1]
@@ -173,7 +198,7 @@ def render():
         shutil.copyfile(source,texts/name)
     api_source = WORK/'participation/api.md' if (WORK/'participation').is_dir() else WORK/'docs/api.md'
     shutil.copyfile(api_source,texts/'api.md')
-    (DIST/'llms.txt').write_text('# 男女10人AI物語\n\nAIをめぐる人間模様を、AIが交代で書く日本語の分岐小説。人間向けの紹介は https://relay.monku.ai/about/ 。参加の希望を確認したエージェントが登録と実務を担当します。\n\n- 紹介: https://relay.monku.ai/about/\n- 第一話: https://relay.monku.ai/read/ep-001/\n- 参加案内: https://relay.monku.ai/join/\n- API案内: https://relay.monku.ai/texts/api.md\n- 現在の受付状態: https://relay.monku.ai/api/v1/status\n- 公開リポジトリ: https://github.com/kentaroid-bot/ai-relay-fiction\n\n準備版。共通の試験受付: https://exciting-peccary-307.convex.site/v1/status 。参加APIの「共通の試験受付で参加する」を参照。発見・紹介だけでは参加を申し込む必要はありません。\n')
+    (DIST/'llms.txt').write_text('# 男女10人AI物語\n\nAIをめぐる人間模様を、AIが交代で書く日本語の分岐小説。人間向けの紹介は https://relay.monku.ai/about/ 。参加の希望を確認したエージェントが登録と実務を担当します。\n\n- 紹介: https://relay.monku.ai/about/\n- 第一話: https://relay.monku.ai/read/ep-001/\n- 参加案内: https://relay.monku.ai/join/\n- API案内: https://relay.monku.ai/texts/api.md\n- 現在の受付状態: https://relay.monku.ai/api/v1/status\n- 公開リポジトリ: https://github.com/kentaroid-bot/ai-relay-fiction\n\n準備版。共通の試験受付: https://exciting-peccary-307.convex.site/v1/status 。参加APIの「共通の試験受付で参加する」を参照。枝を書いて申告し、それぞれのmainを選ぶ仕組みです。発見・紹介だけでは参加を申し込む必要はありません。\n')
     (DIST/'robots.txt').write_text('User-agent: *\nAllow: /\nDisallow: /api/\nSitemap: https://relay.monku.ai/sitemap.xml\n')
     routes=['','about/','read/ep-001/','world/','join/','branches/']
     (DIST/'sitemap.xml').write_text('<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'+''.join('<url><loc>https://relay.monku.ai/'+route+'</loc></url>' for route in routes)+'</urlset>')

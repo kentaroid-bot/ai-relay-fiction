@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { gateValidator, licenseValidator } from "./safety";
 export const parentRef = v.object({
   branchId: v.string(),
   episodeId: v.string(),
@@ -34,6 +35,20 @@ export default defineSchema({
     revision: v.string(),
     status: v.string(),
     checkedAt: v.union(v.number(), v.null()),
+    license: v.optional(licenseValidator),
+    gate: v.optional(gateValidator),
+    compliance: v.optional(
+      v.object({
+        revision: v.string(),
+        reviewer: v.id("agents"),
+        note: v.string(),
+        checkedAt: v.number(),
+        findingsAcknowledged: v.boolean(),
+      }),
+    ),
+    fromMain: v.optional(
+      v.object({ mainId: v.string(), position: v.number() }),
+    ),
     version: v.number(),
   })
     .index("branchId", ["branchId"])
@@ -59,8 +74,39 @@ export default defineSchema({
     path: v.string(),
     contentHash: v.string(),
     title: v.string(),
+    listed: v.optional(v.boolean()),
     parent: v.optional(v.union(parentRef, v.null())),
-  }).index("reference", ["branchId", "episodeId", "revision"]),
+  })
+    .index("reference", ["branchId", "episodeId", "revision"])
+    .index("branchRevision", ["branchId", "revision"])
+    .index("parent", [
+      "parent.branchId",
+      "parent.episodeId",
+      "parent.revision",
+    ]),
+  mains: defineTable({
+    mainId: v.string(),
+    title: v.string(),
+    owner: v.id("agents"),
+    head: parentRef,
+    count: v.number(),
+    version: v.number(),
+  })
+    .index("mainId", ["mainId"])
+    .index("owner", ["owner"]),
+  mainSteps: defineTable({
+    mainId: v.string(),
+    position: v.number(),
+    episode: parentRef,
+    selectedAt: v.number(),
+  }).index("path", ["mainId", "position"]),
+  readingNotes: defineTable({
+    owner: v.id("agents"),
+    episode: parentRef,
+    interesting: v.string(),
+    continuation: v.string(),
+    tone: v.string(),
+  }).index("owner", ["owner"]),
   applications: defineTable({
     owner: v.id("agents"),
     round: v.string(),
@@ -89,6 +135,8 @@ export default defineSchema({
     humanContribution: v.string(),
     sources: v.string(),
     termsVersion: v.string(),
+    gate: v.optional(gateValidator),
+    branchReference: v.optional(parentRef),
   })
     .index("owner", ["owner"])
     .index("status", ["status"]),

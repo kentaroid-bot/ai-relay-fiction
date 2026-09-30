@@ -9,8 +9,10 @@
  */
 
 import type * as desk from "../desk.js";
+import type * as forest from "../forest.js";
 import type * as http from "../http.js";
 import type * as policy from "../policy.js";
+import type * as safety from "../safety.js";
 
 import type {
   ApiFromModules,
@@ -20,8 +22,10 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   desk: typeof desk;
+  forest: typeof forest;
   http: typeof http;
   policy: typeof policy;
+  safety: typeof safety;
 }>;
 
 /**

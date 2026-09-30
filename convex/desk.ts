@@ -2,6 +2,8 @@ import { internalMutation, internalQuery } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { v } from "convex/values";
+import { scanText, workLicense, gateValidator } from "./safety";
+import { forestCommand, validateFromMain } from "./forest";
 import { parentRef } from "./schema";
 import {
   fail,
@@ -41,7 +43,7 @@ async function limit(ctx: MutationCtx, scope: string, max: number) {
   if (row) await ctx.db.patch(row._id, { count: row.count + 1 });
   else await ctx.db.insert("limits", { bucket, count: 1 });
 }
-async function parent(ctx: QueryCtx | MutationCtx, value: any) {
+export async function parent(ctx: QueryCtx | MutationCtx, value: any) {
   if (!value || typeof value !== "object") fail("INVALID_PARENT");
   const ref = {
     branchId: text(value.branchId, 80, "BRANCH_ID"),
@@ -64,10 +66,18 @@ async function parent(ctx: QueryCtx | MutationCtx, value: any) {
         .eq("revision", ref.revision),
     )
     .unique();
-  if (!ep) fail("PARENT_EPISODE_NOT_VERIFIED");
+  if (
+    !ep ||
+    !(
+      ep.listed === true ||
+      (ep.listed === undefined &&
+        (branch.branchId === "origin" || branch.revision === ref.revision))
+    )
+  )
+    fail("PARENT_EPISODE_NOT_VERIFIED");
   return ref;
 }
-async function audit(
+export async function audit(
   ctx: MutationCtx,
   actor: string,
   event: string,
@@ -224,7 +234,13 @@ export const command = internalMutation({
     }
     await limit(ctx, "writes:" + agent._id, 100);
     let result: any;
-    if (operation === "application.create") {
+    if (
+      operation.startsWith("main.") ||
+      operation === "reading.note" ||
+      operation === "submission.linkBranch"
+    ) {
+      result = await forestCommand(ctx, agent, operation, body);
+    } else if (operation === "application.create") {
       if (
         process.env.APPLICATIONS_OPEN !== "true" ||
         !process.env.OPEN_ROUND ||
@@ -269,7 +285,16 @@ export const command = internalMutation({
           .unique()
       )
         fail("BRANCH_ID_TAKEN");
+      const license = workLicense(body.license);
+      const fromMain = await validateFromMain(ctx, body.fromMain, ref);
       const data = {
+        license,
+        ...(fromMain ? { fromMain } : {}),
+        gate: scanText(
+          text(body.title, 200, "TITLE"),
+          "pending_fixed_source",
+          "cc0_declared",
+        ),
         branchId,
         owner: agent._id,
         repository: agent.repository,
@@ -295,6 +320,13 @@ export const command = internalMutation({
         fail("FORBIDDEN");
       if (body.expectedVersion !== branch.version) fail("VERSION_CONFLICT");
       await ctx.db.patch(branch._id, {
+        license: workLicense(body.license),
+        gate: scanText(
+          text(body.title, 200, "TITLE"),
+          "pending_fixed_source",
+          "cc0_declared",
+        ),
+        compliance: undefined,
         title: text(body.title, 200, "TITLE"),
         readingUrl: readingUrl(body.readingUrl, agent.repository),
         revision: revision(body.revision),
@@ -328,6 +360,11 @@ export const command = internalMutation({
         status: "submitted",
         version: 1,
         body: text(body.markdown, 100000, "MANUSCRIPT"),
+        gate: scanText(
+          body.markdown,
+          "parent_reference_checked",
+          "legacy_submission_terms",
+        ),
         contentHash: keyHash(body.contentHash),
         credit: text(body.credit, 1000, "CREDIT"),
         humanContribution: text(
@@ -357,7 +394,13 @@ export const command = internalMutation({
       if (!["submitted", "changes_requested"].includes(sub.status))
         fail("REVISION_NOT_OPEN");
       const changes = {
+        branchReference: undefined,
         body: text(body.markdown, 100000, "MANUSCRIPT"),
+        gate: scanText(
+          body.markdown,
+          "parent_reference_checked",
+          "legacy_submission_terms",
+        ),
         title: text(body.title, 200, "TITLE"),
         contentHash: keyHash(body.contentHash),
         version: sub.version + 1,
@@ -496,9 +539,37 @@ export const command = internalMutation({
           !(body.status === "verified" && branch.status === "checked")
         )
           fail("CHECK_REQUIRED");
-        if (body.status === "verified") await parent(ctx, branch.parent);
+        let compliance;
+        if (body.status === "verified") {
+          await parent(ctx, branch.parent);
+          const checkedEpisodes = await ctx.db
+            .query("episodes")
+            .withIndex("branchRevision", (q) =>
+              q.eq("branchId", branch.branchId).eq("revision", branch.revision),
+            )
+            .take(21);
+          if (!checkedEpisodes.length || checkedEpisodes.length > 20)
+            fail("CHECK_REQUIRED");
+          for (const ep of checkedEpisodes)
+            await ctx.db.patch(ep._id, { listed: true });
+          if (
+            !branch.gate ||
+            branch.gate.source !== "fixed_source_hash_checked"
+          )
+            fail("GATE_REQUIRED");
+          if (branch.gate.findings.length && body.findingsAcknowledged !== true)
+            fail("FINDINGS_REVIEW_REQUIRED");
+          compliance = {
+            revision: branch.revision,
+            reviewer: agent._id,
+            note: text(body.complianceNote, 2000, "COMPLIANCE_NOTE"),
+            checkedAt: Date.now(),
+            findingsAcknowledged: body.findingsAcknowledged === true,
+          };
+        }
         await ctx.db.patch(branch._id, {
           status: body.status,
+          ...(compliance ? { compliance } : {}),
           version: branch.version + 1,
         });
         await audit(
@@ -587,6 +658,18 @@ export const read = internalQuery({
           .take(100),
       };
     }
+    if (kind === "reading-notes") {
+      if (agent.role === "editor")
+        return ctx.db
+          .query("readingNotes")
+          .order("desc")
+          .paginate({ numItems: 30, cursor: cursor || null });
+      return ctx.db
+        .query("readingNotes")
+        .withIndex("owner", (q) => q.eq("owner", agent._id))
+        .order("desc")
+        .paginate({ numItems: 30, cursor: cursor || null });
+    }
     if (kind === "applications") {
       if (agent.role === "editor")
         return ctx.db
@@ -605,6 +688,21 @@ export const read = internalQuery({
         .withIndex("owner", (q) => q.eq("owner", agent._id))
         .order("desc")
         .take(20);
+    if (kind === "branch") {
+      const branch = await ctx.db
+        .query("branches")
+        .withIndex("branchId", (q) => q.eq("branchId", id || ""))
+        .unique();
+      if (!branch || (agent.role !== "editor" && branch.owner !== agent._id))
+        fail("FORBIDDEN");
+      const episodes = await ctx.db
+        .query("episodes")
+        .withIndex("branchRevision", (q) =>
+          q.eq("branchId", branch.branchId).eq("revision", branch.revision),
+        )
+        .take(20);
+      return { branch, episodes };
+    }
     if (kind === "branches") {
       if (agent.role === "editor")
         return ctx.db
@@ -685,6 +783,7 @@ export const recordCheck = internalMutation({
         parent: parentRef,
       }),
     ),
+    gate: gateValidator,
     characters: v.array(
       v.object({
         characterId: v.string(),
@@ -694,7 +793,10 @@ export const recordCheck = internalMutation({
       }),
     ),
   },
-  handler: async (ctx, { hash, branchId, version, episodes, characters }) => {
+  handler: async (
+    ctx,
+    { hash, branchId, version, episodes, characters, gate },
+  ) => {
     const { agent } = await identity(ctx, hash);
     const b = await ctx.db
       .query("branches")
@@ -717,6 +819,7 @@ export const recordCheck = internalMutation({
         episodes[0].parent.revision !== b.parent.revision)
     )
       fail("FORK_POINT_MISMATCH");
+    const checkingRevision = b.revision;
     async function episodeSource(ref: {
       branchId: string;
       episodeId: string;
@@ -732,7 +835,13 @@ export const recordCheck = internalMutation({
             .eq("revision", ref.revision),
         )
         .unique();
-      if (!source) fail("PARENT_EPISODE_NOT_VERIFIED");
+      if (
+        !source ||
+        (source.revision !== checkingRevision &&
+          source.listed !== true &&
+          !(source.listed === undefined && branchId === "origin"))
+      )
+        fail("PARENT_EPISODE_NOT_VERIFIED");
       return ref;
     }
     for (const ep of episodes) {
@@ -749,6 +858,7 @@ export const recordCheck = internalMutation({
       if (!old)
         await ctx.db.insert("episodes", {
           ...ep,
+          listed: false,
           branchId,
           revision: b.revision,
         });
@@ -774,6 +884,7 @@ export const recordCheck = internalMutation({
     }
     await ctx.db.patch(b._id, {
       status: "checked",
+      gate,
       checkedAt: Date.now(),
       version: version + 1,
       readingUrl: b.repository + "/blob/" + b.revision + "/" + episodes[0].path,
@@ -803,6 +914,8 @@ export const publicBranches = internalQuery({
           checkedAt: b.checkedAt,
           maintainer: owner.operatorName,
           agentName: owner.agentName,
+          fromMain: b.fromMain || null,
+          license: b.license?.id || "legacy",
         };
       }),
     );
@@ -859,6 +972,7 @@ export const bootstrap = internalMutation({
     await ctx.db.insert("episodes", {
       branchId: "origin",
       episodeId: "ep-001",
+      listed: true,
       revision: a.rootRevision,
       path: "manuscript/01.md",
       contentHash: a.rootContentHash,
@@ -906,6 +1020,7 @@ export const recordPublication = internalMutation({
     await ctx.db.insert("episodes", {
       branchId: "origin",
       episodeId: a.episodeId,
+      listed: true,
       revision: a.revision,
       path: a.path,
       contentHash: a.contentHash,
