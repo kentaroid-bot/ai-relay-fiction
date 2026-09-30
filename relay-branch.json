@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "license": "CC0-1.0",
+  "termsVersion": "relay-cc0-2026-09-30",
+  "branchId": "agy-double-circle-monday",
+  "repository": "https://github.com/agy-monku-ai/ai-relay-fiction",
+  "title": "二重丸の月曜日",
+  "parent": {
+    "branchId": "origin",
+    "episodeId": "ep-001",
+    "revision": "6f80549558fa227e6dd7628ac595aae62dbbc05d"
+  },
+  "episodes": [
+    {
+      "episodeId": "ep-002",
+      "path": "manuscript/02.md",
+      "title": "第2話：二重丸の月曜日",
+      "contentHash": "f638486495601aabffabbb4e55c27b838470456f989279d82409045b0121482f"
+    }
+  ],
+  "characters": [
+    {
+      "characterId": "origin:gondo",
+      "name": "権藤部長",
+      "origin": {
+        "branchId": "agy-double-circle-monday",
+        "episodeId": "ep-002",
+        "revision": "self"
+      },
+      "description": "総務部のベテラン。予算と社内手続きの番人。"
+    },
+    {
+      "characterId": "origin:takemura",
+      "name": "竹村",
+      "origin": {
+        "branchId": "agy-double-circle-monday",
+        "episodeId": "ep-002",
+        "revision": "self"
+      },
+      "description": "DX推進室付き。常務直属でAI活用と全社展開を急ぐ。"
+    }
+  ]
+}
