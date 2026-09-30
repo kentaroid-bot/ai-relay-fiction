@@ -101,6 +101,27 @@ export async function readBounded(
   }
   return new TextDecoder("utf-8", { fatal: true }).decode(data);
 }
+function checkGithubResponse(
+  response: Response,
+  stage: "pull" | "fork" | "text",
+) {
+  if (response.ok && response.body) return;
+  const numberHeader = (name: string) => {
+    const value = response.headers.get(name);
+    return value !== null && /^\d{1,12}$/.test(value) ? Number(value) : null;
+  };
+  // Diagnose upstream failures without logging URLs, response bodies or secrets.
+  console.warn(
+    "GITHUB_SOURCE_FAILURE",
+    JSON.stringify({
+      stage,
+      status: response.status,
+      remaining: numberHeader("x-ratelimit-remaining"),
+      reset: numberHeader("x-ratelimit-reset"),
+    }),
+  );
+  fail("SOURCE_UNAVAILABLE");
+}
 // No caller-supplied host, credentials, redirects, scripts or recursive link following.
 export async function githubText(
   repository: string,
@@ -116,14 +137,13 @@ export async function githubText(
   )
     fail("INVALID_PATH");
   const url = `https://raw.githubusercontent.com/${base}/${commit}/${file}`;
-  return readBounded(
-    await fetch(url, {
-      redirect: "manual",
-      signal: AbortSignal.timeout(10000),
-      headers: { Accept: "text/plain" },
-    }),
-    max,
-  );
+  const response = await fetch(url, {
+    redirect: "manual",
+    signal: AbortSignal.timeout(10000),
+    headers: { Accept: "text/plain" },
+  });
+  checkGithubResponse(response, "text");
+  return readBounded(response, max);
 }
 
 // Only GitHub's metadata binds a PR author to its public, personally owned fork.
@@ -131,7 +151,7 @@ export async function githubText(
 export async function githubPull(number: number, expectedRevision: string) {
   if (!Number.isSafeInteger(number) || number < 1) fail("INVALID_PR_NUMBER");
   revision(expectedRevision);
-  const get = async (route: string) => {
+  const get = async (route: string, stage: "pull" | "fork") => {
     const response = await fetch("https://api.github.com/repos/" + route, {
       redirect: "manual",
       signal: AbortSignal.timeout(10000),
@@ -140,9 +160,10 @@ export async function githubPull(number: number, expectedRevision: string) {
         "User-Agent": "ai-relay-fiction-intake",
       },
     });
+    checkGithubResponse(response, stage);
     return JSON.parse(await readBounded(response, 100000));
   };
-  const pr = await get(`${GITHUB_BASE}/pulls/${number}`);
+  const pr = await get(`${GITHUB_BASE}/pulls/${number}`, "pull");
   if (
     pr.number !== number ||
     pr.state !== "open" ||
@@ -153,7 +174,10 @@ export async function githubPull(number: number, expectedRevision: string) {
     fail("PR_NOT_ELIGIBLE");
   if (pr.head?.sha !== expectedRevision) fail("PR_HEAD_CONFLICT");
   const repository = repo(pr.head?.repo?.html_url);
-  const fork = await get(repository.slice("https://github.com/".length));
+  const fork = await get(
+    repository.slice("https://github.com/".length),
+    "fork",
+  );
   const login = text(pr.user?.login, 80, "GITHUB_LOGIN").toLowerCase();
   if (
     fork.private !== false ||

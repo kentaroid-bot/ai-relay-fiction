@@ -163,6 +163,58 @@ describe("GitHub PR intake", () => {
   const ingest = (t: Test, sha = forkRevision, key = editorKey) =>
     request(t, key, "branches/github", { number: 5, revision: sha });
 
+  it("records only safe upstream diagnostics and leaves failed PR intake unregistered", async () => {
+    vi.stubEnv("PARTICIPATION_MODE", "test");
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      for (const [stage, status] of [
+        ["pull", 403],
+        ["fork", 503],
+        ["text", 302],
+      ] as const) {
+        const t = await setup(),
+          m = await manifest();
+        warning.mockClear();
+        vi.stubGlobal("fetch", async (url: string) => {
+          const actual = url.includes("raw.githubusercontent.com")
+            ? "text"
+            : url.includes("/pulls/")
+              ? "pull"
+              : "fork";
+          if (actual === stage)
+            return new Response(writerKey, {
+              status,
+              headers: {
+                Location: "https://example.com/" + writerKey,
+                "x-ratelimit-remaining": "0",
+                "x-ratelimit-reset": "1906556400",
+              },
+            });
+          return new Response(
+            JSON.stringify(
+              actual === "pull" ? pull() : actual === "fork" ? fork : m,
+            ),
+          );
+        });
+        expect((await ingest(t)).data).toEqual({ error: "SOURCE_UNAVAILABLE" });
+        expect(warning).toHaveBeenCalledWith(
+          "GITHUB_SOURCE_FAILURE",
+          JSON.stringify({ stage, status, remaining: 0, reset: 1906556400 }),
+        );
+        expect(JSON.stringify(warning.mock.calls)).not.toContain(writerKey);
+        expect(JSON.stringify(warning.mock.calls)).not.toContain("example.com");
+        expect(
+          await t.run((ctx) => ctx.db.query("branches").collect()),
+        ).toHaveLength(1);
+        expect(
+          await t.run((ctx) => ctx.db.query("agents").collect()),
+        ).toHaveLength(1);
+      }
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
   it("accepts a PR-only participant without keys, then checks through the normal pipeline; repeated scans are idempotent", async () => {
     vi.stubEnv("PARTICIPATION_MODE", "test");
     const t = await setup(),
