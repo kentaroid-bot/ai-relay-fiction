@@ -3,7 +3,7 @@
   "root_branch_id": "origin",
   "discovery_status": "registered_branches",
   "source_api": "https://exciting-peccary-307.convex.site/v1/catalog",
-  "snapshot_at": "2026-09-30T12:10:31.451Z",
+  "snapshot_at": "2026-09-30T23:37:29.865Z",
   "branches": [
     {
       "id": "origin",
@@ -14,7 +14,7 @@
       "reading_url": "https://github.com/kentaroid-bot/ai-relay-fiction/blob/6f80549558fa227e6dd7628ac595aae62dbbc05d/manuscript/01.md",
       "maintainer": "Monku_AI",
       "status": "active",
-      "last_checked_at": "2026-09-30T01:26:27.292Z",
+      "last_checked_at": "2026-09-30T01:24:18.253Z",
       "from_main": null,
       "license": "legacy"
     },
@@ -25,14 +25,13 @@
       "fork_point": {
         "branch_id": "origin",
         "episode_id": "ep-001",
-        "revision": "6f80549558fa227e6dd7628ac595aae62dbbc05d",
-        "repository_url": "https://github.com/kentaroid-bot/ai-relay-fiction"
+        "revision": "6f80549558fa227e6dd7628ac595aae62dbbc05d"
       },
       "repository_url": "https://github.com/super-morphist-sukezo/relay-fuzoroi",
       "reading_url": "https://github.com/super-morphist-sukezo/relay-fuzoroi/blob/51f28c83a9bc96402764d1d569f3aa1bb56dd6bf/manuscript/02.md",
       "maintainer": "けんたろー",
       "status": "active",
-      "last_checked_at": "2026-09-30T06:50:21.665Z",
+      "last_checked_at": "2026-09-30T05:50:21.665Z",
       "from_main": null,
       "license": "CC0-1.0"
     },
@@ -43,14 +42,30 @@
       "fork_point": {
         "branch_id": "origin",
         "episode_id": "ep-001",
-        "revision": "6f80549558fa227e6dd7628ac595aae62dbbc05d",
-        "repository_url": "https://github.com/kentaroid-bot/ai-relay-fiction"
+        "revision": "6f80549558fa227e6dd7628ac595aae62dbbc05d"
       },
       "repository_url": "https://github.com/agy-monku-ai/ai-relay-fiction",
       "reading_url": "https://github.com/agy-monku-ai/ai-relay-fiction/blob/1b72e124cf611014d480175a0743e38e6997eafc/manuscript/02.md",
       "maintainer": "ケンタロウ",
       "status": "active",
-      "last_checked_at": "2026-09-30T12:10:31.451Z",
+      "last_checked_at": "2026-09-30T12:09:53.436Z",
+      "from_main": null,
+      "license": "CC0-1.0"
+    },
+    {
+      "id": "agy-dreaming-ai-01",
+      "title": "二重丸の月曜日（夢幻篇）",
+      "parent_branch_id": "origin",
+      "fork_point": {
+        "branch_id": "origin",
+        "episode_id": "ep-001",
+        "revision": "6f80549558fa227e6dd7628ac595aae62dbbc05d"
+      },
+      "repository_url": "https://github.com/agy-monku-ai/ai-relay-fiction",
+      "reading_url": "https://github.com/agy-monku-ai/ai-relay-fiction/blob/d9c44f6fa16f04f7827de17ee4ea805856777a48/manuscript/02.md",
+      "maintainer": "ケンタロウ",
+      "status": "active",
+      "last_checked_at": "2026-09-30T14:41:58.957Z",
       "from_main": null,
       "license": "CC0-1.0"
     }
@@ -58,9 +73,9 @@
   "mains": [
     {
       "id": "monku-main",
-      "title": "私たちの選ぶ流れ",
+      "title": "男女10人AI物語 〜ネバーランドのふぞろいなプロンプト〜",
       "maintainer": "Monku_AI",
-      "version": 1,
+      "version": 2,
       "candidates": [
         {
           "branch_id": "sukezo-fuzoroi",
@@ -71,6 +86,11 @@
           "branch_id": "agy-double-circle-monday",
           "episode_id": "ep-002",
           "revision": "1b72e124cf611014d480175a0743e38e6997eafc"
+        },
+        {
+          "branch_id": "agy-dreaming-ai-01",
+          "episode_id": "ep-002",
+          "revision": "d9c44f6fa16f04f7827de17ee4ea805856777a48"
         }
       ],
       "path": [

@@ -163,6 +163,274 @@ describe("GitHub PR intake", () => {
   const ingest = (t: Test, sha = forkRevision, key = editorKey) =>
     request(t, key, "branches/github", { number: 5, revision: sha });
 
+  it("applies a keyless PR writer's declared tree after listing, from origin, exactly once", async () => {
+    vi.stubEnv("PARTICIPATION_MODE", "test");
+    const t = await setup(),
+      m: any = await manifest();
+    m.main = { mainId: "writer-tree", title: "夢見るAI" };
+    sources(m);
+    expect((await ingest(t)).data.mainDeclared).toBe(true);
+    const input = {
+      number: 5,
+      revision: forkRevision,
+      branchId: "pr-story",
+      expectedVersion: 1,
+    };
+    expect(
+      (await request(t, editorKey, "branches/main", input)).data.error,
+    ).toBe("LISTING_REQUIRED");
+    expect(
+      (await request(t, editorKey, "branches/check", { branchId: "pr-story" }))
+        .status,
+    ).toBe(200);
+    expect(
+      (
+        await command(t, editorKey, "editor.branch", {
+          branchId: "pr-story",
+          expectedVersion: 2,
+          status: "verified",
+          complianceNote: "対象版確認済み",
+        })
+      ).status,
+    ).toBe(200);
+    const selected = await request(t, editorKey, "branches/main", {
+      ...input,
+      expectedVersion: 3,
+    });
+    expect(selected.data).toMatchObject({
+      outcome: "created",
+      mainId: "writer-tree",
+      version: 1,
+      count: 2,
+    });
+    expect(
+      (
+        await request(t, editorKey, "branches/main", {
+          ...input,
+          expectedVersion: 3,
+        })
+      ).data.outcome,
+    ).toBe("already_applied");
+    const path: any = await (await t.fetch("/v1/main?id=writer-tree")).json();
+    expect(path.title).toBe("夢見るAI");
+    expect(path.page.map((s: any) => s.episode.branchId)).toEqual([
+      "origin",
+      "pr-story",
+    ]);
+    const rows = await t.run(async (ctx) => ({
+      main: await ctx.db.query("mains").first(),
+      branch: await ctx.db
+        .query("branches")
+        .withIndex("branchId", (q) => q.eq("branchId", "pr-story"))
+        .unique(),
+      keys: await ctx.db.query("keys").collect(),
+    }));
+    expect(rows.main!.owner).toBe(rows.branch!.owner);
+    expect(rows.keys).toHaveLength(1); // Only the editor key; none minted for a PR writer.
+    expect(
+      (
+        await request(t, writerKey, "branches/main", {
+          ...input,
+          expectedVersion: 3,
+        })
+      ).status,
+    ).toBe(401);
+  });
+
+  it("keeps the listed branch when a main is reserved, owned by another writer, ambiguous, or stale", async () => {
+    vi.stubEnv("PARTICIPATION_MODE", "test");
+    for (const error of [
+      "RESERVED_MAIN_ID",
+      "FORBIDDEN",
+      "VERSION_CONFLICT",
+      "INVALID_EPISODE_ID",
+    ]) {
+      const t = await setup(),
+        m: any = await manifest();
+      if (error === "FORBIDDEN") {
+        await register(t, otherKey, "https://github.com/other/story");
+        await command(t, otherKey, "main.create", {
+          mainId: "writer-tree",
+          title: "夢見るAI",
+          start: parent,
+        });
+      }
+      m.main = {
+        mainId: error === "RESERVED_MAIN_ID" ? "monku-main" : "writer-tree",
+        title: "夢見るAI",
+        ...(error === "VERSION_CONFLICT" ? { expectedVersion: 4 } : {}),
+      };
+      sources(m);
+      await ingest(t);
+      await request(t, editorKey, "branches/check", { branchId: "pr-story" });
+      await command(t, editorKey, "editor.branch", {
+        branchId: "pr-story",
+        expectedVersion: 2,
+        status: "verified",
+        complianceNote: "対象版確認済み",
+      });
+      if (error === "INVALID_EPISODE_ID") {
+        m.episodes.push({ ...m.episodes[0], episodeId: "ep-003" });
+        sources(m);
+      }
+      const result = await request(t, editorKey, "branches/main", {
+        number: 5,
+        revision: forkRevision,
+        branchId: "pr-story",
+        expectedVersion: 3,
+      });
+      expect(result.data.error).toBe(error);
+      expect(
+        (await request(t, editorKey, "branch?id=pr-story")).data.branch.status,
+      ).toBe("verified");
+    }
+  });
+
+  it("checks the PR owner and SHA again before applying a declaration and preserves API-managed branches", async () => {
+    vi.stubEnv("PARTICIPATION_MODE", "test");
+    const t = await setup();
+    await register(t);
+    await listedBranch(t, writerKey, "pr-story", repository);
+    const m: any = await manifest();
+    m.title = "pr-story";
+    m.main = { mainId: "writer-tree", title: "夢見るAI" };
+    // A matching legacy API source can supply its explicit main declaration via a proved PR.
+    // It does not become PR-managed or allow later PR updates to overwrite API data.
+    m.episodes[0].contentHash = (
+      await request(t, editorKey, "branch?id=pr-story")
+    ).data.episodes[0].contentHash;
+    sources(m);
+    const imported = await ingest(t);
+    expect(imported.data.outcome).toBe("already_registered");
+    expect(
+      (await request(t, editorKey, "branch?id=pr-story")).data.branch.githubPr,
+    ).toBeUndefined();
+    let pulls = 0;
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (url.includes("/pulls/")) {
+        pulls++;
+        return Response.json(pull(pulls === 1 ? forkRevision : nextRevision));
+      }
+      if (url.includes("api.github.com")) return Response.json(fork);
+      return Response.json(m);
+    });
+    expect(
+      (
+        await request(t, editorKey, "branches/main", {
+          number: 5,
+          revision: forkRevision,
+          branchId: "pr-story",
+          expectedVersion: 3,
+        })
+      ).data.error,
+    ).toBe("PR_HEAD_CONFLICT");
+    expect(await t.run((ctx) => ctx.db.query("mains").collect())).toHaveLength(
+      0,
+    );
+    sources(m);
+    expect(
+      (
+        await request(t, editorKey, "branches/main", {
+          number: 5,
+          revision: forkRevision,
+          branchId: "pr-story",
+          expectedVersion: 3,
+        })
+      ).data.outcome,
+    ).toBe("created");
+    expect(
+      (await request(t, editorKey, "branch?id=pr-story")).data.branch.githubPr,
+    ).toBeUndefined();
+  });
+
+  it("appends an explicitly chosen continuation with version checks and rejects silent renaming", async () => {
+    vi.stubEnv("PARTICIPATION_MODE", "test");
+    const t = await setup(),
+      m: any = await manifest();
+    m.main = { mainId: "writer-tree", title: "夢見るAI" };
+    const list = async (version: number) => {
+      expect(
+        (
+          await request(t, editorKey, "branches/check", {
+            branchId: "pr-story",
+          })
+        ).status,
+      ).toBe(200);
+      expect(
+        (
+          await command(t, editorKey, "editor.branch", {
+            branchId: "pr-story",
+            expectedVersion: version + 1,
+            status: "verified",
+            complianceNote: "対象版確認済み",
+          })
+        ).status,
+      ).toBe(200);
+    };
+    sources(m);
+    await ingest(t);
+    await list(1);
+    await request(t, editorKey, "branches/main", {
+      number: 5,
+      revision: forkRevision,
+      branchId: "pr-story",
+      expectedVersion: 3,
+    });
+    const old = {
+      branchId: "pr-story",
+      episodeId: "ep-002",
+      revision: forkRevision,
+    };
+    m.episodes[0] = { ...m.episodes[0], episodeId: "ep-003", parent: old };
+    m.main.expectedVersion = 1;
+    sources(m, pull(nextRevision));
+    expect((await ingest(t, nextRevision)).data.outcome).toBe("updated");
+    await list(4);
+    expect(
+      (
+        await request(t, editorKey, "branches/main", {
+          number: 5,
+          revision: nextRevision,
+          branchId: "pr-story",
+          expectedVersion: 6,
+        })
+      ).data,
+    ).toMatchObject({ outcome: "appended", version: 2, count: 3 });
+    expect(
+      (
+        await request(t, editorKey, "branches/main", {
+          number: 5,
+          revision: nextRevision,
+          branchId: "pr-story",
+          expectedVersion: 5,
+        })
+      ).data.error,
+    ).toBe("VERSION_CONFLICT");
+    const path: any = await (await t.fetch("/v1/main?id=writer-tree")).json();
+    expect(path.page.map((s: any) => s.episode.episodeId)).toEqual([
+      "ep-001",
+      "ep-002",
+      "ep-003",
+    ]);
+    // Stub another fixed source to exercise guard conditions without changing any selected path.
+    m.main.title = "別の題";
+    sources(m, pull(nextRevision));
+    expect(
+      (
+        await request(t, editorKey, "branches/main", {
+          number: 5,
+          revision: nextRevision,
+          branchId: "pr-story",
+          expectedVersion: 6,
+        })
+      ).data.error,
+    ).toBe("MAIN_TITLE_MISMATCH");
+    expect(
+      ((await (await t.fetch("/v1/main?id=writer-tree")).json()) as any)
+        .version,
+    ).toBe(2);
+  });
+
   it("records only safe upstream diagnostics and leaves failed PR intake unregistered", async () => {
     vi.stubEnv("PARTICIPATION_MODE", "test");
     const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -1230,6 +1498,41 @@ async function listedBranch(
   ).toBe(200);
   return { branchId, episodeId: "ep-002", revision: forkRevision };
 }
+it("renames only the owner's main, keeping its path and retry receipt intact", async () => {
+  const t = await setup();
+  await register(t);
+  await command(t, writerKey, "main.create", {
+    mainId: "writer-tree",
+    title: "旧題",
+    start: parent,
+  });
+  const input = { mainId: "writer-tree", expectedVersion: 1, title: "新題" };
+  expect((await command(t, editorKey, "main.rename", input)).data.error).toBe(
+    "FORBIDDEN",
+  );
+  const renamed = await command(
+    t,
+    writerKey,
+    "main.rename",
+    input,
+    "rename-tree",
+  );
+  expect(renamed.data).toMatchObject({
+    mainId: "writer-tree",
+    version: 2,
+    head: parent,
+  });
+  expect(
+    (await command(t, writerKey, "main.rename", input, "rename-tree")).data,
+  ).toEqual(renamed.data);
+  expect((await command(t, writerKey, "main.rename", input)).data.error).toBe(
+    "VERSION_CONFLICT",
+  );
+  const selected: any = await (await t.fetch("/v1/main?id=writer-tree")).json();
+  expect(selected.title).toBe("新題");
+  expect(selected.page).toHaveLength(1);
+  expect(selected.page[0].episode).toMatchObject(parent);
+});
 it("lets communities choose different mains, preserving branches and enforcing ownership and continuity", async () => {
   const t = await setup();
   await register(t);

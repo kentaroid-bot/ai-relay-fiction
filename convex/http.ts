@@ -73,6 +73,7 @@ function sameParent(a: any, b: any) {
 const writes = new Set([
   "main.create",
   "main.append",
+  "main.rename",
   "reading.note",
   "submission.linkBranch",
   "application.create",
@@ -173,6 +174,38 @@ const endpoint = httpAction(async (ctx, request) => {
     }
     if (request.method !== "POST") fail("NOT_FOUND");
     const data = await body(request);
+    if (url.pathname === "/v1/branches/main") {
+      await ctx.runMutation(internal.desk.githubImportAccess, { hash });
+      const branchId = text(data.branchId, 80, "BRANCH_ID"),
+        commit = revision(data.revision);
+      if (
+        !Number.isSafeInteger(data.expectedVersion) ||
+        data.expectedVersion < 1
+      )
+        fail("INVALID_VERSION");
+      const checked = await ctx.runQuery(internal.desk.githubMainSource, {
+        hash,
+        branchId,
+        revision: commit,
+        expectedVersion: data.expectedVersion,
+      });
+      const source = await githubPull(data.number, commit);
+      if (source.repository !== checked.repository) fail("MANIFEST_MISMATCH");
+      const manifest = parseSource(
+        await githubText(source.repository, commit, "relay-branch.json", 20000),
+      );
+      await githubPull(data.number, commit);
+      return json(
+        await ctx.runMutation(internal.desk.applyGithubMain, {
+          hash,
+          branchId,
+          revision: commit,
+          expectedVersion: data.expectedVersion,
+          repository: source.repository,
+          manifest,
+        }),
+      );
+    }
     if (url.pathname === "/v1/branches/github") {
       await ctx.runMutation(internal.desk.githubImportAccess, { hash });
       const number = data.number,

@@ -3,7 +3,7 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { v } from "convex/values";
 import { scanText, workLicense, gateValidator } from "./safety";
-import { forestCommand, validateFromMain } from "./forest";
+import { forestCommand, validateFromMain, applyDeclaredMain } from "./forest";
 import { parentRef } from "./schema";
 import {
   fail,
@@ -377,6 +377,7 @@ export const importGithubBranch = internalMutation({
           revision: commit,
           version: branch.version,
           outcome: "already_registered",
+          mainDeclared: manifest.main !== undefined,
         };
       if (branch.githubPr?.number !== input.number)
         fail("EXISTING_BRANCH_API_MANAGED");
@@ -453,7 +454,93 @@ export const importGithubBranch = internalMutation({
       version: data.version,
       status: "pending",
       outcome: branch ? "updated" : "created",
+      mainDeclared: manifest.main !== undefined,
     };
+  },
+});
+
+export const githubMainSource = internalQuery({
+  args: {
+    hash: v.string(),
+    branchId: v.string(),
+    revision: v.string(),
+    expectedVersion: v.number(),
+  },
+  handler: async (ctx, args) => {
+    await githubIntake(ctx, args.hash);
+    const branch = await ctx.db
+      .query("branches")
+      .withIndex("branchId", (q) => q.eq("branchId", args.branchId))
+      .unique();
+    if (!branch || branch.branchId === "origin") fail("NOT_FOUND");
+    if (
+      branch.revision !== args.revision ||
+      branch.version !== args.expectedVersion
+    )
+      fail("VERSION_CONFLICT");
+    if (
+      branch.status !== "verified" ||
+      branch.compliance?.revision !== args.revision
+    )
+      fail("LISTING_REQUIRED");
+    if ((await ctx.db.get(branch.owner))?.status !== "active")
+      fail("FORBIDDEN");
+    return { repository: branch.repository };
+  },
+});
+export const applyGithubMain = internalMutation({
+  args: {
+    hash: v.string(),
+    branchId: v.string(),
+    revision: v.string(),
+    expectedVersion: v.number(),
+    repository: v.string(),
+    manifest: v.any(),
+  },
+  handler: async (ctx, args) => {
+    await githubIntake(ctx, args.hash);
+    const branch = await ctx.db
+      .query("branches")
+      .withIndex("branchId", (q) => q.eq("branchId", args.branchId))
+      .unique();
+    if (!branch || branch.branchId === "origin") fail("NOT_FOUND");
+    if (
+      branch.revision !== args.revision ||
+      branch.version !== args.expectedVersion
+    )
+      fail("VERSION_CONFLICT");
+    if (
+      branch.status !== "verified" ||
+      branch.compliance?.revision !== args.revision
+    )
+      fail("LISTING_REQUIRED");
+    const owner = await ctx.db.get(branch.owner),
+      m = args.manifest;
+    if (
+      owner?.status !== "active" ||
+      owner.repository !== args.repository ||
+      branch.repository !== args.repository
+    )
+      fail("FORBIDDEN");
+    if (
+      m.schemaVersion !== 1 ||
+      m.branchId !== branch.branchId ||
+      m.repository !== branch.repository ||
+      m.title !== branch.title ||
+      m.license !== branch.license?.id ||
+      m.termsVersion !== branch.license?.termsVersion ||
+      m.parent?.branchId !== branch.parent?.branchId ||
+      m.parent?.episodeId !== branch.parent?.episodeId ||
+      m.parent?.revision !== branch.parent?.revision
+    )
+      fail("MANIFEST_MISMATCH");
+    if (
+      m.participation?.humanApproved !== true ||
+      m.participation?.cc0Approved !== true ||
+      m.participation?.termsVersion !== TERMS
+    )
+      fail("CONSENT_REQUIRED");
+    return applyDeclaredMain(ctx, branch, m);
   },
 });
 

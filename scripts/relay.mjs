@@ -164,6 +164,13 @@ try {
         number: Number(args[0]),
         revision: args[1],
       });
+    else if (command === "apply-main")
+      result = await send(config, "/v1/branches/main", {
+        number: Number(args[0]),
+        revision: args[1],
+        branchId: args[2],
+        expectedVersion: Number(args[3]),
+      });
     else if (command === "rotate") {
       const nextPath = configPath + ".next";
       let next;

@@ -127,6 +127,11 @@ export async function forestCommand(
     if (main) fail("MAIN_ID_TAKEN");
     if (mainId === "monku-main" && agent.role !== "editor")
       fail("RESERVED_MAIN_ID");
+    const owned = await ctx.db
+      .query("mains")
+      .withIndex("owner", (q) => q.eq("owner", agent._id))
+      .take(21);
+    if (owned.length >= 20) fail("MAIN_COUNT_LIMIT");
     const start = await parent(ctx, body.start);
     await ctx.db.insert("mains", {
       mainId,
@@ -145,10 +150,18 @@ export async function forestCommand(
     await audit(ctx, agent._id, operation, mainId, 1);
     return { mainId, version: 1, head: start };
   }
-  if (operation !== "main.append") fail("UNKNOWN_OPERATION");
+  if (!["main.append", "main.rename"].includes(operation))
+    fail("UNKNOWN_OPERATION");
   if (!main || main.owner !== agent._id) fail("FORBIDDEN");
   if (body.expectedVersion !== main.version) fail("VERSION_CONFLICT");
+  if (operation === "main.rename") {
+    const title = text(body.title, 200, "TITLE");
+    await ctx.db.patch(main._id, { title, version: main.version + 1 });
+    await audit(ctx, agent._id, operation, mainId, main.version + 1);
+    return { mainId, version: main.version + 1, head: main.head };
+  }
   // A suspended head must not be used to extend a public stream either.
+  if (main.count >= 1000) fail("MAIN_PATH_LIMIT");
   await parent(ctx, main.head);
   const next = await parent(ctx, body.episode);
   const ep = await episode(ctx, next);
@@ -166,6 +179,131 @@ export async function forestCommand(
   });
   await audit(ctx, agent._id, operation, mainId, main.version + 1);
   return { mainId, version: main.version + 1, head: next };
+}
+// The HTTP action fetches this declaration from a proved PR at a fixed SHA.
+// The privileged caller cannot supply a chosen title, route or target episode.
+export async function applyDeclaredMain(
+  ctx: MutationCtx,
+  branch: Doc<"branches">,
+  manifest: any,
+) {
+  if (manifest.main === undefined) return { outcome: "no_declaration" };
+  const declaration = manifest.main;
+  if (
+    !declaration ||
+    typeof declaration !== "object" ||
+    Array.isArray(declaration)
+  )
+    fail("INVALID_MAIN_DECLARATION");
+  const mainId = text(declaration.mainId, 80, "MAIN_ID"),
+    title = text(declaration.title, 200, "TITLE");
+  if (!/^[a-z0-9][a-z0-9-]+$/.test(mainId)) fail("INVALID_MAIN_ID");
+  if (mainId === "monku-main") fail("RESERVED_MAIN_ID");
+  if (
+    !Array.isArray(manifest.episodes) ||
+    !manifest.episodes.length ||
+    manifest.episodes.length > 20
+  )
+    fail("INVALID_EPISODES");
+  const episodeId =
+    declaration.episodeId === undefined && manifest.episodes.length === 1
+      ? manifest.episodes[0].episodeId
+      : text(declaration.episodeId, 80, "EPISODE_ID");
+  const declared = manifest.episodes.find(
+    (e: any) => e.episodeId === episodeId,
+  );
+  if (!declared) fail("MAIN_TARGET_NOT_DECLARED");
+  const target = await parent(ctx, {
+    branchId: branch.branchId,
+    episodeId,
+    revision: branch.revision,
+  });
+  const targetEpisode = await episode(ctx, target);
+  if (
+    !targetEpisode ||
+    targetEpisode.contentHash !== declared.contentHash ||
+    targetEpisode.path !== declared.path
+  )
+    fail("MANIFEST_MISMATCH");
+  const main = await ctx.db
+    .query("mains")
+    .withIndex("mainId", (q) => q.eq("mainId", mainId))
+    .unique();
+  if (main && main.owner !== branch.owner) fail("FORBIDDEN");
+  if (main && main.title !== title) fail("MAIN_TITLE_MISMATCH");
+  // Resolve only verified, listed references. Do not invent routes or skip gaps.
+  const path: Ref[] = [],
+    seen = new Set<string>();
+  let current: Ref | null = target;
+  let connected = false;
+  while (current) {
+    if (main && same(current, main.head)) {
+      connected = true;
+      break;
+    }
+    const fingerprint = JSON.stringify(current);
+    if (seen.has(fingerprint) || path.length >= 200) fail("MAIN_PATH_LIMIT");
+    seen.add(fingerprint);
+    const ref = await parent(ctx, current);
+    path.push(ref);
+    current = (await episode(ctx, ref))?.parent || null;
+  }
+  // A repeated fixed declaration is successful even after later appends.
+  if (main) {
+    const selected = await ctx.db
+      .query("mainSteps")
+      .withIndex("path", (q) => q.eq("mainId", mainId))
+      .take(1001);
+    if (selected.some((s) => same(s.episode, target)))
+      return { mainId, version: main.version, outcome: "already_applied" };
+  }
+  const expected = declaration.expectedVersion ?? 0;
+  if (
+    !Number.isSafeInteger(expected) ||
+    expected < 0 ||
+    expected !== (main?.version ?? 0)
+  )
+    fail("VERSION_CONFLICT");
+  if (main && !connected) fail("MAIN_CONTINUITY_REQUIRED");
+  if (!main) {
+    const owned = await ctx.db
+      .query("mains")
+      .withIndex("owner", (q) => q.eq("owner", branch.owner))
+      .take(21);
+    if (owned.length >= 20) fail("MAIN_COUNT_LIMIT");
+    // Every new tree starts at the project's origin, even when the route branches.
+    if (path[path.length - 1]?.branchId !== "origin")
+      fail("MAIN_ROOT_REQUIRED");
+  }
+  if ((main?.count ?? 0) + path.length > 1000) fail("MAIN_PATH_LIMIT");
+  path.reverse();
+  const version = (main?.version ?? 0) + 1;
+  const count = (main?.count ?? 0) + path.length;
+  if (main) await ctx.db.patch(main._id, { head: target, count, version });
+  else
+    await ctx.db.insert("mains", {
+      mainId,
+      title,
+      owner: branch.owner,
+      head: target,
+      count,
+      version,
+    });
+  for (const [i, ref] of path.entries())
+    await ctx.db.insert("mainSteps", {
+      mainId,
+      position: (main?.count ?? 0) + i,
+      episode: ref,
+      selectedAt: Date.now(),
+    });
+  await audit(ctx, branch.owner, "main.declaration", mainId, version);
+  return {
+    mainId,
+    version,
+    count,
+    head: target,
+    outcome: main ? "appended" : "created",
+  };
 }
 export const publicMains = internalQuery({
   args: { cursor: v.optional(v.string()) },
@@ -213,7 +351,17 @@ export const publicMain = internalQuery({
           : { position: step.position, available: false, episode: null };
       }),
     );
-    return { ...steps, mainId: id, version: main.version, page: rows };
+    const owner = await ctx.db.get(main.owner);
+    return {
+      ...steps,
+      mainId: id,
+      title: main.title,
+      count: main.count,
+      maintainer: owner!.operatorName,
+      agentName: owner!.agentName,
+      version: main.version,
+      page: rows,
+    };
   },
 });
 

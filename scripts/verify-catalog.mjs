@@ -83,16 +83,28 @@ export async function verifyCatalog(fetcher = fetch) {
       throw Error("PUBLIC_VERSION_CHANGED");
     return source;
   }
-  const [branches, mains, html, js] = await Promise.all([
-    compare("/catalog"),
-    compare("/mains"),
-    body(fetcher, SITE + "/branches/", 500000),
-    body(fetcher, SITE + "/branches.js", 100000),
-  ]);
+  const [branches, mains, html, js, home, reader, readerJs] = await Promise.all(
+    [
+      compare("/catalog"),
+      compare("/mains"),
+      body(fetcher, SITE + "/branches/", 500000),
+      body(fetcher, SITE + "/branches.js", 100000),
+      body(fetcher, SITE + "/", 500000),
+      body(fetcher, SITE + "/read/main/", 100000),
+      body(fetcher, SITE + "/main-reader.js", 100000),
+    ],
+  );
   if (
     !html.includes('id="live-branches"') ||
     !html.includes('src="../branches.js"') ||
-    !js.includes("/api/v1/catalog")
+    !js.includes("/api/v1/catalog") ||
+    !js.includes("/read/main/?id=") ||
+    !home.includes('id="main-list"') ||
+    !home.includes("つづきの森") ||
+    !reader.includes('id="main-reader"') ||
+    !reader.includes('src="../../main-reader.js"') ||
+    !readerJs.includes("/api/v1/main?id=") ||
+    !readerJs.includes("SHA-256")
   )
     throw Error("SITE_READING_ROUTE_MISMATCH");
   if (!branches.data.some((b) => b.branchId === "origin"))
@@ -122,6 +134,9 @@ export async function verifyCatalog(fetcher = fetch) {
   // A concurrent listing or withdrawal must be retried, not certified against a stale view.
   const again = await pages(fetcher, SOURCE, "/catalog");
   if (canonical(again.rows) !== canonical(branches.rows))
+    throw Error("PUBLIC_VERSION_CHANGED");
+  const mainsAgain = await pages(fetcher, SOURCE, "/mains");
+  if (canonical(mainsAgain.rows) !== canonical(mains.rows))
     throw Error("PUBLIC_VERSION_CHANGED");
   return {
     outcome: "confirmed",

@@ -72,8 +72,9 @@
     try {
       const data=await get('mains'+(cursor?'?cursor='+encodeURIComponent(cursor):'')); const fragment=document.createDocumentFragment();
       for(const main of data.page) {
-        const section=el('section',''); section.className='endnote'; section.id='main-'+main.mainId;
-        section.append(el('h3',main.title),el('p',main.maintainer+' / '+main.agentName));
+        const section=el('section',''); section.className='tree-card'; section.id='main-'+main.mainId;
+        section.append(el('h3',main.title),el('p',main.maintainer+' / '+main.agentName+' · '+main.count+'話'));
+        const read=el('a','第1話から読む');read.className='button secondary';read.href='/read/main/?id='+encodeURIComponent(main.mainId)+'&v='+main.version;section.append(read);
         const path=document.createElement('ol'); const button=el('button','この流れをたどる');button.type='button';
         let next=null, loaded=false;
         button.addEventListener('click', async () => {

@@ -8,3 +8,5 @@
 .excerpt h2 a{color:var(--ink);text-decoration:none}.excerpt h2 a:hover{text-decoration:underline}.start-reading{margin-top:10px}@media(max-width:700px){.cover{padding-top:25px}.cover h1{font-size:2.25rem;margin:12px 0 20px}.cover .intro{font-size:1rem;line-height:1.9}.start-reading{margin-top:24px}}
 
 .cover h1{font-size:clamp(2rem,4vw,3.25rem);word-break:keep-all;overflow-wrap:anywhere}.cover .subtitle{font-family:var(--serif);font-size:1rem;line-height:1.8;margin:-10px 0 28px;text-wrap:balance}
+
+.forest-cover{padding:48px 0 26px}.forest-cover h1{margin:12px 0 20px}.forest-cover .intro{font:1.15rem/2.1 var(--serif)}.forest{padding-bottom:50px}.tree-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,310px),1fr));gap:24px}.tree-card{border:1px solid var(--line);background:var(--white);padding:24px}.tree-card h3{font:1.4rem/1.8 var(--serif);margin:0 0 15px;overflow-wrap:anywhere}.tree-card p{color:var(--muted)}.tree-card .button{margin-bottom:16px}#tree-path a[aria-current=page]{font-weight:bold}#tree-navigation{margin-top:32px}

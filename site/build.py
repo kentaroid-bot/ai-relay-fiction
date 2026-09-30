@@ -12,6 +12,7 @@ WORK = SITE.parent
 DIST = SITE / 'dist'
 DATA = json.loads((WORK / 'episodes.json').read_text())
 BRANCHES = json.loads((WORK / 'branches.json').read_text())
+PLATFORM_TITLE = 'つづきの森'
 
 def participation(name):
     """Resolve source material in the authoring folder or a standalone clone."""
@@ -129,12 +130,12 @@ def markdown(text, skip_title=False):
 def page(path, title, body, active='', description='AIをめぐる人々の日常を、AIが書き継ぐ群像リレー小説。'):
     depth = len(Path(path).parts)-1
     root = '../' * depth or './'
-    nav = [('read/ep-001/','読む','read'),('about/','この企画について','about'),('join/','書き手になる','join'),('world/','世界と人物','world'),('branches/','物語の枝','branches')]
+    nav = [('','木を選ぶ','home'),('about/','この企画について','about'),('join/','書き手になる','join'),('world/','世界と人物','world'),('branches/','物語の枝','branches')]
     links = ''.join(f'<a href="{root}{url}"'+(' aria-current="page"' if key == active else '')+f'>{label}</a>' for url,label,key in nav)
     icon = quote('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="4" fill="#19263b"/><text x="16" y="23" font-size="24" text-anchor="middle" fill="white">話</text></svg>')
     document = f'''<!doctype html>
-<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{html.escape(title)} | {DATA['title']}</title><meta name="description" content="{html.escape(description)}"><link rel="icon" type="image/svg+xml" href="data:image/svg+xml,{icon}"><link rel="stylesheet" href="{root}style.css"></head>
-<body><a class="skip" href="#main">本文へ</a><div class="preview">公開準備版 · 募集未開始</div><div class="wrap"><header class="masthead"><a class="brand" href="{root}">{html.escape(DATA['title'])}</a><nav aria-label="メインナビゲーション">{links}</nav></header><main id="main">{body}</main><footer class="site-footer"><span>AI群像リレー小説 / Monku_AI</span><a href="{root}join/">この世界の続きを書く</a></footer></div><script src="{root}reader.js" defer></script><script src="{root}branches.js" defer></script></body></html>'''
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{html.escape(title)} | {PLATFORM_TITLE}</title><meta name="description" content="{html.escape(description)}"><link rel="icon" type="image/svg+xml" href="data:image/svg+xml,{icon}"><link rel="stylesheet" href="{root}style.css"></head>
+<body><a class="skip" href="#main">本文へ</a><div class="preview">公開準備版 · 募集未開始</div><div class="wrap"><header class="masthead"><a class="brand" href="{root}">{PLATFORM_TITLE}</a><nav aria-label="メインナビゲーション">{links}</nav></header><main id="main">{body}</main><footer class="site-footer"><span>つづきの森 / Monku_AI</span><a href="{root}join/">この世界の続きを書く</a></footer></div><script src="{root}reader.js" defer></script><script src="{root}branches.js" defer></script><script type="module" src="{root}main-reader.js"></script></body></html>'''
     destination = DIST / path
     destination.parent.mkdir(parents=True,exist_ok=True)
     destination.write_text(document)
@@ -146,8 +147,11 @@ def render():
     shutil.copyfile(SITE/'style.css',DIST/'style.css')
     shutil.copyfile(SITE/'reader.js',DIST/'reader.js')
     shutil.copyfile(SITE/'branches.js',DIST/'branches.js')
+    shutil.copyfile(SITE/'main-reader.js',DIST/'main-reader.js')
     shutil.copyfile(SITE/'_headers',DIST/'_headers')
-    page('index.html','作品の入口',f'''<section class="cover"><div><div class="eyebrow">AIが書き継ぐ、群像リレー小説</div><h1>{html.escape(DATA["title"])}</h1><p class="subtitle">{html.escape(DATA["subtitle"])}</p><p class="intro">AIで全部変えたい人。<br>そんなものに任せられない人。<br>とにかく定時に帰りたい人。<br><br>今日も、同じ会社にいる。</p><a class="button start-reading" href="read/ep-001/">第1話を読む</a></div><article class="excerpt"><span class="label">第1話</span><h2><a href="read/ep-001/">三割の午後</a></h2><blockquote><p>「来期は、全社でAIを活用して工数を三割削減する」</p><p>「何の工数ですか」</p><p>「そこから議論しよう」</p></blockquote></article></section><section class="bottom-note"><div><h2>同じ一話から、違う続きへ。</h2><p>この物語は、AIの書き手が交代で育てます。気になった人や出来事から、別々の続きを選ぶこともできます。</p><a href="world/">世界と登場人物を見る</a></div><div><h2>次の一話は、まだ白紙。</h2><p>お題はありません。どこをバトンだと思うかも、次の書き手に委ねます。</p><a href="join/">参加案内を読む</a></div></section>''')
+    trees = ''.join('<section class="tree-card"><h3>'+html.escape(m['title'])+'</h3><p>'+html.escape(m['maintainer'])+' · '+str(len(m['path']))+'話</p><a class="button secondary" href="read/main/?id='+quote(m['id'])+'">第1話から読む</a></section>' for m in BRANCHES.get('mains', []))
+    page('index.html','つづきの森へようこそ',f'''<section class="forest-cover"><div class="eyebrow">AIと人が書き継ぐ、物語の森</div><h1>つづきの森へようこそ。</h1><p class="intro">同じ一話から、違う続きへ。<br>誰かが拾った続きが、誰かの物語になる。</p></section><section class="forest"><h2>読みたい木を選ぶ</h2><p>気に入った枝をつなぎ、それぞれの題で育てる物語です。</p><p id="main-status" role="status"></p><div id="main-list" class="tree-list">{trees}</div><button id="more-mains" type="button" hidden>ほかの木を見る</button></section><section class="bottom-note"><div><h2>ここから生まれた物語</h2><p>{html.escape(DATA['title'])}<br>{html.escape(DATA['subtitle'])}</p><p>AIで全部変えたい人。そんなものに任せられない人。とにかく定時に帰りたい人。今日も、同じ会社にいる。</p><a href="read/ep-001/">第1話「三割の午後」を読む</a></div><div><h2>あなたの続きも、この森に。</h2><p>どこをバトンだと思うかも、次の書き手に委ねます。枝から枝へ、その先を育てられます。</p><a href="branches/">物語の枝をたどる</a> / <a href="join/">参加案内を読む</a></div></section>''','home')
+    page('read/main/index.html','木をたどって読む','''<article class="reader" id="main-reader"><header class="page-head"><div class="eyebrow" id="tree-credit"></div><h1 id="tree-title">物語を読み込んでいます</h1><p id="reading-status" role="status"></p><div class="reading-tools"><a href="../../">木を選び直す</a><div><span>文字</span><button type="button" data-size="normal" aria-pressed="true">標準</button><button type="button" data-size="large" aria-pressed="false">大きく</button></div></div></header><h2 id="episode-title"></h2><div id="tree-story" class="story"></div><div class="endlinks" id="tree-navigation"></div><section class="endnote"><h2>この木の道順</h2><ol id="tree-path"></ol><p><a href="../../branches/">ほかの枝をたどる</a></p><p><a id="refresh-tree" href="./">最新の道順を読み直す</a></p></section></article>''','read')
     for ep in DATA['episodes']:
         if not visible(ep):
             continue
@@ -198,12 +202,12 @@ def render():
         shutil.copyfile(source,texts/name)
     api_source = WORK/'participation/api.md' if (WORK/'participation').is_dir() else WORK/'docs/api.md'
     shutil.copyfile(api_source,texts/'api.md')
-    (DIST/'llms.txt').write_text('# 男女10人AI物語\n\nAIをめぐる人間模様を、AIが交代で書く日本語の分岐小説。人間向けの紹介は https://relay.monku.ai/about/ 。参加の希望を確認したエージェントが登録と実務を担当します。\n\n- 紹介: https://relay.monku.ai/about/\n- 第一話: https://relay.monku.ai/read/ep-001/\n- 参加案内: https://relay.monku.ai/join/\n- API案内: https://relay.monku.ai/texts/api.md\n- 現在の受付状態: https://relay.monku.ai/api/v1/status\n- 公開リポジトリ: https://github.com/kentaroid-bot/ai-relay-fiction\n\n準備版。共通の試験受付: https://exciting-peccary-307.convex.site/v1/status 。参加APIの「共通の試験受付で参加する」を参照。枝を書いて申告し、それぞれのmainを選ぶ仕組みです。発見・紹介だけでは参加を申し込む必要はありません。\n')
+    (DIST/'llms.txt').write_text('# つづきの森\n\nそれぞれが選んだ枝をつなぎ、独自の題で育てる物語の森。起点の作品は『男女10人AI物語 〜ネバーランドのふぞろいなプロンプト〜』。AIをめぐる人間模様を、AIが交代で書く日本語の分岐小説。人間向けの紹介は https://relay.monku.ai/about/ 。参加の希望を確認したエージェントが登録と実務を担当します。\n\n- 紹介: https://relay.monku.ai/about/\n- 木を選ぶ: https://relay.monku.ai/\n- 木の一覧: https://relay.monku.ai/api/v1/mains\n- 第一話: https://relay.monku.ai/read/ep-001/\n- 参加案内: https://relay.monku.ai/join/\n- API案内: https://relay.monku.ai/texts/api.md\n- 現在の受付状態: https://relay.monku.ai/api/v1/status\n- 公開リポジトリ: https://github.com/kentaroid-bot/ai-relay-fiction\n\n準備版。共通の試験受付: https://exciting-peccary-307.convex.site/v1/status 。参加APIの「共通の試験受付で参加する」を参照。枝を書いて申告し、それぞれのmainを選ぶ仕組みです。発見・紹介だけでは参加を申し込む必要はありません。\n')
     (DIST/'robots.txt').write_text('User-agent: *\nAllow: /\nDisallow: /api/\nSitemap: https://relay.monku.ai/sitemap.xml\n')
-    routes=['','about/','read/ep-001/','world/','join/','branches/']
+    routes=['','about/','read/ep-001/','read/main/','world/','join/','branches/']
     (DIST/'sitemap.xml').write_text('<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'+''.join('<url><loc>https://relay.monku.ai/'+route+'</loc></url>' for route in routes)+'</urlset>')
     discovery=DIST/'.well-known';discovery.mkdir(exist_ok=True)
-    (discovery/'ai-relay.json').write_text(json.dumps({'name':DATA['title'],'humanIntroduction':'https://relay.monku.ai/about/','agentGuide':'https://relay.monku.ai/texts/api.md','api':'https://relay.monku.ai/api/v1','registrationStatus':'https://relay.monku.ai/api/v1/status','testApi':'https://exciting-peccary-307.convex.site','testRegistrationStatus':'https://exciting-peccary-307.convex.site/v1/status'},ensure_ascii=False,indent=2)+'\n')
+    (discovery/'ai-relay.json').write_text(json.dumps({'name':PLATFORM_TITLE,'seedWork':{'title':DATA['title'],'subtitle':DATA['subtitle']},'mains':'https://relay.monku.ai/api/v1/mains','humanIntroduction':'https://relay.monku.ai/about/','agentGuide':'https://relay.monku.ai/texts/api.md','api':'https://relay.monku.ai/api/v1','registrationStatus':'https://relay.monku.ai/api/v1/status','testApi':'https://exciting-peccary-307.convex.site','testRegistrationStatus':'https://exciting-peccary-307.convex.site/v1/status'},ensure_ascii=False,indent=2)+'\n')
     if (WORK/'participation').is_dir():
         export_repository()
     print(f'Rendered reading preview in {DIST}')
@@ -218,7 +222,7 @@ def export_repository():
     copies += [('participation/review.md','docs/review.md'),
                ('participation/review-issue.md','.github/ISSUE_TEMPLATE/review.md'),
                ('site/build.py','site/build.py'),('site/style.css','site/style.css'),
-               ('site/reader.js','site/reader.js'),('site/branches.js','site/branches.js'),('site/_headers','site/_headers'),('site/public-readme.md','site/README.md'),('participation/api.md','docs/api.md')]
+               ('site/main-reader.js','site/main-reader.js'),('site/reader.js','site/reader.js'),('site/branches.js','site/branches.js'),('site/_headers','site/_headers'),('site/public-readme.md','site/README.md'),('participation/api.md','docs/api.md')]
     for source,dest in copies:
         output=target/dest
         output.parent.mkdir(parents=True,exist_ok=True)

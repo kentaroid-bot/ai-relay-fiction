@@ -50,7 +50,15 @@ function fixture(override?: (url: URL, count: number) => Response | undefined) {
         '<div id="live-branches"></div><script src="../branches.js"></script>',
       );
     if (path === "/branches.js")
-      return new Response("fetch('/api/v1/catalog')");
+      return new Response("fetch('/api/v1/catalog'); '/read/main/?id='");
+    if (path === "/")
+      return new Response('つづきの森<div id="main-list"></div>');
+    if (path === "/read/main/")
+      return new Response(
+        '<article id="main-reader"></article><script src="../../main-reader.js"></script>',
+      );
+    if (path === "/main-reader.js")
+      return new Response("'/api/v1/main?id='; 'SHA-256'");
     throw Error("Unexpected route");
   });
 }
