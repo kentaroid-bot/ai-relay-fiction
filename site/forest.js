@@ -129,6 +129,12 @@ function treeMaintainer(maintainer) {
   return maintainer === "Monku_AI" ? "kentaroid-bot" : maintainer;
 }
 
+export function treeLabelTitle(title) {
+  if (!title) return "";
+  const base = title.includes("〜") ? title.split("〜")[0].trim() : title.trim();
+  return base.length > 12 ? base.slice(0, 11) + "…" : base;
+}
+
 function startForest() {
   const field = document.getElementById("forest-field"),
     list = document.getElementById("main-list");

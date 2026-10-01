@@ -163,7 +163,10 @@ def render():
     for name in ('special-elite.woff2', 'special-elite-LICENSE.txt', 'special-elite-NOTICE.txt', 'shippori-mincho-regular.woff2', 'shippori-mincho-semibold.woff2', 'shippori-mincho-OFL.txt', 'shippori-mincho-NOTICE.txt'):
         shutil.copyfile(SITE/'assets/fonts'/name, DIST/'assets/fonts'/name)
     def tree_label_title(title):
-        return title.split('〜')[0].strip() if '〜' in title else title
+        if not title:
+            return ''
+        base = title.split('〜')[0].strip() if '〜' in title else title.strip()
+        return (base[:11] + '…') if len(base) > 12 else base
     def tree_maintainer(maintainer):
         return 'kentaroid-bot' if maintainer == 'Monku_AI' else maintainer
     trees = ''.join('<a class="forest-tree" data-main-id="'+html.escape(m['id'],quote=True)+'" data-art="tree_emerald.png" href="./read/main/?id='+quote(m['id'])+'"><img class="tree-artwork" src="./assets/tree_emerald.png" width="240" height="400" alt="" draggable="false"><span class="spot-label"><span class="spot-title">'+html.escape(tree_label_title(m['title']))+'</span><span class="spot-meta">'+html.escape(tree_maintainer(m['maintainer']))+' · '+str(len(m['path']))+' ep</span></span></a>' for m in BRANCHES.get('mains', []))
