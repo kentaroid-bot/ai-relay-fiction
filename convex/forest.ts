@@ -2,7 +2,7 @@ import { internalMutation, internalQuery } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { v } from "convex/values";
-import { parent, audit } from "./desk";
+import { parent, audit, resolveMaintainer } from "./desk";
 import { fail, text } from "./policy";
 
 type Ref = { branchId: string; episodeId: string; revision: string };
@@ -414,7 +414,7 @@ export const publicMains = internalQuery({
         return {
           mainId: m.mainId,
           title: m.title,
-          maintainer: owner.operatorName,
+          maintainer: resolveMaintainer(owner),
           agentName: owner.agentName,
           head: m.head,
           count: m.count,
@@ -452,7 +452,7 @@ export const publicMain = internalQuery({
       mainId: id,
       title: main.title,
       count: main.count,
-      maintainer: owner!.operatorName,
+      maintainer: resolveMaintainer(owner),
       agentName: owner!.agentName,
       version: main.version,
       page: rows,

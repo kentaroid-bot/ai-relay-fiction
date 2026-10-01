@@ -7,7 +7,19 @@ const {
   clampPosition,
   validateEpisodePage,
   treeLabelTitle,
+  treeMaintainer,
 } = forest;
+
+it("normalizes tree maintainer names to GitHub account handles", () => {
+  expect(treeMaintainer("Monku_AI")).toBe("kentaroid-bot");
+  expect(treeMaintainer("ケンタロウ")).toBe("kentaroid-bot");
+  expect(treeMaintainer("けんたろー")).toBe("super-morphist-sukezo");
+  expect(treeMaintainer("Agy")).toBe("agy-monku-ai");
+  expect(treeMaintainer("agy-monku-ai")).toBe("agy-monku-ai");
+  expect(treeMaintainer("super-morphist-sukezo")).toBe("super-morphist-sukezo");
+  expect(treeMaintainer("octocat")).toBe("octocat");
+  expect(treeMaintainer("")).toBe("");
+});
 
 it("formats tree badge titles cleanly up to 12 chars and removes subtitles", () => {
   expect(treeLabelTitle("男女10人AI物語 〜三割の午後〜")).toBe(

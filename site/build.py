@@ -168,7 +168,13 @@ def render():
         base = title.split('〜')[0].strip() or title.strip()
         return (base[:11] + '…') if len(base) > 12 else base
     def tree_maintainer(maintainer):
-        return 'kentaroid-bot' if maintainer == 'Monku_AI' else maintainer
+        alias_map = {
+            'Monku_AI': 'kentaroid-bot',
+            'ケンタロウ': 'kentaroid-bot',
+            'けんたろー': 'super-morphist-sukezo',
+            'Agy': 'agy-monku-ai',
+        }
+        return alias_map.get(maintainer, maintainer)
     def tree_artwork(tree_id):
         arts = ['tree_emerald.png', 'tree_blue.png', 'tree_round.png', 'tree_olive.png']
         if tree_id == 'monku-main':

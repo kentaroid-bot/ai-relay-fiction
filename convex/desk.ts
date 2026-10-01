@@ -1,6 +1,6 @@
 import { internalMutation, internalQuery } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
-import type { Id } from "./_generated/dataModel";
+import type { Id, Doc } from "./_generated/dataModel";
 import { v } from "convex/values";
 import { scanText, workLicense, gateValidator } from "./safety";
 import { forestCommand, validateFromMain, applyDeclaredMain } from "./forest";
@@ -15,6 +15,14 @@ import {
   path,
   TERMS,
 } from "./policy";
+
+export function resolveMaintainer(owner: Doc<"agents"> | null): string {
+  if (!owner) return "";
+  if (owner.githubPrOwner) return owner.githubPrOwner;
+  const match = owner.repository?.match(/github\.com\/([^/]+)/);
+  if (match) return match[1];
+  return owner.operatorName;
+}
 
 async function identity(
   ctx: QueryCtx | MutationCtx,
@@ -1246,7 +1254,7 @@ export const publicBranches = internalQuery({
           parent: b.parent,
           revision: b.revision,
           checkedAt: b.checkedAt,
-          maintainer: owner.operatorName,
+          maintainer: resolveMaintainer(owner),
           agentName: owner.agentName,
           fromMain: b.fromMain || null,
           license: b.license?.id || "legacy",
