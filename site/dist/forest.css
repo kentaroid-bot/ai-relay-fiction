@@ -1,4 +1,11 @@
 @charset "UTF-8";
+@font-face {
+  font-family: "Special Elite";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./assets/fonts/special-elite.woff2") format("woff2");
+}
 :root {
   --canvas: #fbf9f4;
   --paper: #ffffff;
@@ -6,7 +13,7 @@
   --pencil: #7a7670;
   --green: #3d6840;
   --serif: "Hiragino Mincho ProN", "Yu Mincho", "YuMincho", "Noto Serif CJK JP", "HiraMinProN-W3", "BIZ UDPMincho", serif;
-  --mono: "Courier New", Courier, "Courier Prime", monospace;
+  --mono: "Special Elite", "Courier New", Courier, "Courier Prime", monospace;
   --shadow-soft: 0 8px 24px rgba(60, 50, 40, 0.08);
 }
 * {
@@ -70,7 +77,7 @@ a:focus-visible {
   top: 12px;
 }
 .forest-header {
-  padding: 3rem clamp(24px, 5vw, 72px) 1rem;
+  padding: 2.2rem clamp(24px, 5vw, 64px) 0.6rem;
   display: flex;
   justify-content: space-between;
   gap: 32px;
@@ -82,7 +89,8 @@ a:focus-visible {
 }
 .typewriter-sub {
   font-family: var(--mono);
-  font-size: 0.85rem;
+  font-size: 0.95rem;
+  font-weight: bold;
   letter-spacing: 0.15em;
   color: var(--pencil);
   margin: 0 0 0.4rem;
@@ -140,6 +148,7 @@ h1 {
 .hommage-badge {
   font-family: var(--mono);
   font-size: 0.75rem;
+  font-weight: bold;
   line-height: 1.7;
   letter-spacing: 0.08em;
   color: var(--pencil);
@@ -148,17 +157,6 @@ h1 {
   padding: 0.6rem 0.9rem;
   margin: 0;
   background: rgba(255, 255, 255, 0.4);
-}
-nav {
-  display: flex;
-  gap: 1.1rem;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  margin-top: 1.2rem;
-  font-size: 0.8rem;
-}
-nav a {
-  color: var(--pencil);
 }
 .forest-stage {
   position: relative;
@@ -361,12 +359,30 @@ nav a {
   padding: 24px;
   display: flex;
   justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 16px;
   color: var(--pencil);
-  font-size: 0.75rem;
+  font-size: 0.8rem;
+}
+.footer-meta {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.footer-nav {
+  display: flex;
+  gap: 1.2rem;
+  flex-wrap: wrap;
 }
 .forest-footer a {
   color: var(--pencil);
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+.forest-footer a:hover {
+  color: var(--ink);
 }
 .book-panel {
   color: var(--ink);
@@ -483,6 +499,13 @@ nav a {
   color: var(--ink);
   line-height: 1.5;
   overflow-wrap: anywhere;
+}
+.ep-row-note {
+  font-size: 0.8rem;
+  color: var(--pencil);
+  margin-top: 0.25rem;
+  line-height: 1.6;
+  letter-spacing: 0.02em;
 }
 .panel-join {
   padding-top: 14px;

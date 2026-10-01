@@ -114,6 +114,17 @@ function joinLink(main, position) {
   );
 }
 
+const KNOWN_NOTES = {
+  "ep-001": "神崎常務がホワイトボードに引いた30%と二重丸。",
+  "ep-002": "蓮の4,200件誤爆と、パンを焼きながらGASを組む佐藤さん。",
+  "agy-double-circle-monday": "蓮の4,200件誤爆と、パンを焼きながらGASを組む佐藤さん。",
+  "agy-dreaming-ai-01": "深夜のプロンプト「◎」。桐野と雨宮美月、手書きノートの秘密。",
+  "sukezo-fuzoroi": "現場とAIが交わす、五七五のリズムと指示。",
+};
+function treeMaintainer(maintainer) {
+  return maintainer === "Monku_AI" ? "kentaroid-bot" : maintainer;
+}
+
 function startForest() {
   const field = document.getElementById("forest-field"),
     list = document.getElementById("main-list");
@@ -144,13 +155,13 @@ function startForest() {
     const trees = [...list.querySelectorAll(".forest-tree")],
       width = field.clientWidth;
     if (!width) return;
+    field.classList.add("is-arranged");
     const cols = Math.min(
       Math.max(1, trees.length),
       Math.max(1, Math.min(4, Math.floor(width / 210))),
     );
     const cell = width / cols;
-    field.classList.add("is-arranged");
-    let y = 55;
+    let y = 45;
     for (let row = 0; row < trees.length; row += cols) {
       const group = trees.slice(row, row + cols);
       const height = Math.max(...group.map((t) => t.offsetHeight));
@@ -165,24 +176,49 @@ function startForest() {
         tree.style.top = y + height - tree.offsetHeight + "px";
         tree.style.zIndex = "1";
       });
-      y += height + 70;
+      y += height + 40;
     }
-    sprout.style.left =
-      clampPosition(
-        width * 0.55 - sprout.offsetWidth / 2,
-        width,
-        sprout.offsetWidth,
-      ) + "px";
-    sprout.style.top = y + "px";
-    sprout.style.zIndex = "1";
-    field.style.height = Math.max(470, y + sprout.offsetHeight + 36) + "px";
-    const stoneNode = document.getElementById("forest-stone");
-    if (stoneNode) {
-      stoneNode.style.bottom = "auto";
-      stoneNode.style.right = "auto";
-      stoneNode.style.left = "36px";
-      stoneNode.style.top = Math.max(0, field.clientHeight - stoneNode.offsetHeight - 24) + "px";
-      stoneNode.style.zIndex = "1";
+    // 1枚の絵として手前の丘に新芽と石ころを美しく調和させる
+    if (trees.length <= 2) {
+      sprout.style.left =
+        clampPosition(
+          width * 0.62 - sprout.offsetWidth / 2,
+          width,
+          sprout.offsetWidth,
+        ) + "px";
+      sprout.style.top = "260px";
+      sprout.style.zIndex = "1";
+
+      const stoneNode = document.getElementById("forest-stone");
+      if (stoneNode) {
+        stoneNode.style.bottom = "auto";
+        stoneNode.style.right = "auto";
+        stoneNode.style.left =
+          clampPosition(width * 0.12, width, stoneNode.offsetWidth) + "px";
+        stoneNode.style.top = "330px";
+        stoneNode.style.zIndex = "1";
+      }
+      field.style.height = "480px";
+    } else {
+      sprout.style.left =
+        clampPosition(
+          width * 0.55 - sprout.offsetWidth / 2,
+          width,
+          sprout.offsetWidth,
+        ) + "px";
+      sprout.style.top = y + "px";
+      sprout.style.zIndex = "1";
+      field.style.height = Math.max(480, y + sprout.offsetHeight + 24) + "px";
+
+      const stoneNode = document.getElementById("forest-stone");
+      if (stoneNode) {
+        stoneNode.style.bottom = "auto";
+        stoneNode.style.right = "auto";
+        stoneNode.style.left = "36px";
+        stoneNode.style.top =
+          Math.max(0, field.clientHeight - stoneNode.offsetHeight - 24) + "px";
+        stoneNode.style.zIndex = "1";
+      }
     }
     z = 1;
   }
@@ -336,6 +372,13 @@ function startForest() {
           );
           const title = el("div", step.episode.title, "ep-row-title");
           card.append(top, title);
+          const noteText =
+            step.episode.note ||
+            step.episode.synopsis ||
+            KNOWN_NOTES[step.episode.episodeId] ||
+            KNOWN_NOTES[step.episode.branchId] ||
+            (step.position === 0 ? KNOWN_NOTES["ep-001"] : "");
+          if (noteText) card.append(el("div", noteText, "ep-row-note"));
           row.append(card);
         } else {
           const card = el("div", undefined, "ep-row is-disabled");
@@ -375,8 +418,9 @@ function startForest() {
     }
   }
   function showTree(main, source) {
+    const maintainerName = treeMaintainer(main.maintainer);
     const maintainerLabel =
-      main.maintainer +
+      maintainerName +
       (main.agentName && main.agentName !== main.maintainer
         ? " / " + main.agentName
         : "");
@@ -506,7 +550,7 @@ function startForest() {
       : main.title;
     label.append(
       el("span", displayTitle, "spot-title"),
-      el("span", main.maintainer + " · " + main.count + " ep", "spot-meta"),
+      el("span", treeMaintainer(main.maintainer) + " · " + main.count + " ep", "spot-meta"),
     );
     node.append(image, label);
     makeDraggable(node);
