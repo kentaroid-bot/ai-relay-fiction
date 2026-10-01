@@ -149,7 +149,7 @@ def render():
     shutil.copyfile(SITE/'branches.js',DIST/'branches.js')
     shutil.copyfile(SITE/'main-reader.js',DIST/'main-reader.js')
     shutil.copyfile(SITE/'_headers',DIST/'_headers')
-    for name in ('forest.css', 'forest.js'):
+    for name in ('forest.css', 'forest.js', 'favicon.ico', 'apple-touch-icon.png', 'favicon-32x32.png', 'favicon-16x16.png'):
         shutil.copyfile(SITE/name, DIST/name)
     # Only the reviewed tree and symbol assets are deployed; never copy an arbitrary folder.
     assets = [
@@ -234,7 +234,7 @@ def export_repository():
                ('participation/review-issue.md','.github/ISSUE_TEMPLATE/review.md'),
                ('site/build.py','site/build.py'),('site/style.css','site/style.css'),
                ('site/main-reader.js','site/main-reader.js'),('site/reader.js','site/reader.js'),('site/branches.js','site/branches.js'),('site/_headers','site/_headers'),('site/public-readme.md','site/README.md'),('participation/api.md','docs/api.md')]
-    copies += [('site/'+name, 'site/'+name) for name in ('forest.js', 'forest.css', 'forest-home.html', 'forest-prototype.html')]
+    copies += [('site/'+name, 'site/'+name) for name in ('forest.js', 'forest.css', 'forest-home.html', 'forest-prototype.html', 'favicon.ico', 'apple-touch-icon.png', 'favicon-32x32.png', 'favicon-16x16.png')]
     copies += [('site/assets/'+name, 'site/assets/'+name) for name in (
         'tree_emerald.png', 'tree_blue.png', 'tree_round.png', 'tree_olive.png', 'tree_sprout.png',
         'icon_stone.png', 'icon_bird.png', 'icon_ladybug.png', 'icon_butterfly.png', 'icon_acorn.png',
