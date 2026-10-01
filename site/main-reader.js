@@ -158,11 +158,51 @@ async function readTree() {
       window.updateReadingProgress();
     }
     try {
-      const bRes = await fetch('../../texts/branches.json', {credentials:'omit',redirect:'error',signal:AbortSignal.timeout(5000)});
-      if (bRes.ok) {
-        const bData = JSON.parse(await boundedText(bRes, 100000));
-        renderBranchCandidates(document, id, ep, steps, position, bData);
+      let mains = [], branches = [], loadFailed = false;
+      try {
+        const mainsPage = await fetch('/api/v1/mains', { credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(5000) });
+        if (!mainsPage.ok) throw Error('Mains unavailable');
+        const mainsData = JSON.parse(await boundedText(mainsPage, 200000));
+        const otherMains = (mainsData.page || []).filter(m => m.mainId !== id);
+        const populatedMains = await Promise.all(otherMains.slice(0, 10).map(async m => {
+          try {
+            const pRes = await fetch('/api/v1/main?id=' + encodeURIComponent(m.mainId), { credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(5000) });
+            if (!pRes.ok) return null;
+            const pData = JSON.parse(await boundedText(pRes, 100000));
+            return { ...m, steps: pData.page };
+          } catch {
+            return null;
+          }
+        }));
+        mains = populatedMains.filter(Boolean);
+
+        let catCursor = null, catCount = 0;
+        while (catCount < 3) {
+          const catUrl = '/api/v1/catalog' + (catCursor ? '?cursor=' + encodeURIComponent(catCursor) : '');
+          const catRes = await fetch(catUrl, { credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(5000) });
+          if (!catRes.ok) throw Error('Catalog unavailable');
+          const catData = JSON.parse(await boundedText(catRes, 200000));
+          branches.push(...(catData.page || []));
+          catCount++;
+          if (catData.isDone || !catData.continueCursor) break;
+          catCursor = catData.continueCursor;
+        }
+      } catch {
+        try {
+          const bRes = await fetch('../../texts/branches.json', { credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(5000) });
+          if (bRes.ok) {
+            const bData = JSON.parse(await boundedText(bRes, 100000));
+            mains = (bData.mains || []).map(m => ({ ...m, steps: m.path }));
+            branches = bData.branches || [];
+          } else {
+            loadFailed = true;
+          }
+        } catch {
+          loadFailed = true;
+        }
       }
+
+      renderBranchCandidates(document, id, ep, steps, position, { mains, branches }, loadFailed);
     } catch {
       // Ignore branch candidates failure to preserve main reading experience
     }
@@ -174,43 +214,57 @@ async function readTree() {
   }
 }
 
+export function isSameRef(a, b) {
+  if (!a || !b) return false;
+  const aBranch = a.branchId || a.branch_id;
+  const bBranch = b.branchId || b.branch_id;
+  const aEpisode = a.episodeId || a.episode_id;
+  const bEpisode = b.episodeId || b.episode_id;
+  return Boolean(
+    aBranch && bBranch && aBranch === bBranch &&
+    aEpisode && bEpisode && aEpisode === bEpisode &&
+    a.revision && b.revision && a.revision === b.revision
+  );
+}
+
 export function findBranchCandidates(currentMainId, ep, steps, position, branchesData) {
   if (!branchesData || !ep) return [];
-  const epId = ep.episodeId || ep.episode_id || '';
-  const epBranch = ep.branchId || ep.branch_id || '';
-  if (!epId || !epBranch) return [];
+  if (!ep.revision || !(ep.branchId || ep.branch_id) || !(ep.episodeId || ep.episode_id)) return [];
 
   const nextStep = steps && steps[position + 1]?.available ? steps[position + 1].episode : null;
-  const currentNextId = nextStep ? (nextStep.episodeId || nextStep.episode_id) : null;
-  const currentNextBranch = nextStep ? (nextStep.branchId || nextStep.branch_id) : null;
-
   const candidates = [];
   const seenEpisodeKeys = new Set();
 
   if (Array.isArray(branchesData.mains)) {
     for (const m of branchesData.mains) {
-      if (!m || !Array.isArray(m.path)) continue;
-      const stepIdx = m.path.findIndex(s => {
-        const e = s?.episode;
-        return e && (e.episode_id || e.episodeId) === epId && (e.branch_id || e.branchId) === epBranch;
-      });
-      if (stepIdx !== -1 && stepIdx + 1 < m.path.length) {
-        const nextInMain = m.path[stepIdx + 1];
+      if (!m) continue;
+      const mId = m.mainId || m.id;
+      const mSteps = m.steps || m.path || [];
+      if (!Array.isArray(mSteps)) continue;
+
+      const stepIdx = mSteps.findIndex(s => s && s.available && isSameRef(s.episode, ep));
+      if (stepIdx !== -1 && stepIdx + 1 < mSteps.length) {
+        const nextInMain = mSteps[stepIdx + 1];
         if (!nextInMain || !nextInMain.available || !nextInMain.episode) continue;
         const nEp = nextInMain.episode;
-        const nId = nEp.episode_id || nEp.episodeId;
-        const nBranch = nEp.branch_id || nEp.branchId;
 
-        if (m.id === currentMainId && nId === currentNextId && nBranch === currentNextBranch) {
-          continue;
+        // Verify direct continuous connection: next episode's parent must match ep exactly
+        if (!nEp.parent || !isSameRef(nEp.parent, ep)) continue;
+
+        // Exclude the normal next episode of the current tree
+        if (mId === currentMainId && isSameRef(nEp, nextStep)) continue;
+
+        // Verify valid fixed GitHub Markdown source URL
+        if (nEp.readingUrl) {
+          try { rawSource(nEp.readingUrl); } catch { continue; }
         }
 
-        const key = nBranch + '/' + nId;
+        const key = (nEp.branchId || nEp.branch_id) + '/' + (nEp.episodeId || nEp.episode_id);
         seenEpisodeKeys.add(key);
         candidates.push({
           title: '🌲 ' + m.title + '（第' + (stepIdx + 2) + '話へ）',
-          author: 'by ' + (m.maintainer || 'つづき'),
-          href: '?id=' + encodeURIComponent(m.id) + '&v=' + m.version + '&at=' + (stepIdx + 1),
+          author: 'by ' + (m.maintainer || 'つづき') + (m.agentName ? ' / ' + m.agentName : ''),
+          href: '?id=' + encodeURIComponent(mId) + '&v=' + m.version + '&at=' + (stepIdx + 1),
           isExternal: false,
         });
       }
@@ -219,37 +273,62 @@ export function findBranchCandidates(currentMainId, ep, steps, position, branche
 
   if (Array.isArray(branchesData.branches)) {
     for (const b of branchesData.branches) {
-      if (!b || !b.fork_point) continue;
-      const fp = b.fork_point;
-      if (fp.episode_id === epId && fp.branch_id === epBranch) {
-        if (b.id === currentNextBranch) continue;
-        const title = '🌱 ' + b.title;
-        const author = 'by ' + (b.maintainer || '書き手');
-        const href = b.reading_url && /^https:\/\//.test(b.reading_url) ? b.reading_url : ('../../branches/#branch-' + encodeURIComponent(b.id));
-        candidates.push({
-          title,
-          author,
-          href,
-          isExternal: href.startsWith('https://'),
-        });
-      }
+      if (!b) continue;
+      // Filter out paused, preparing, or unavailable branches
+      if (b.status && b.status !== 'verified' && b.status !== 'active') continue;
+
+      const parentRef = b.parent || b.fork_point;
+      if (!isSameRef(parentRef, ep)) continue;
+
+      const bBranchId = b.branchId || b.id;
+      const nextBranchId = nextStep ? (nextStep.branchId || nextStep.branch_id) : null;
+      if (nextBranchId && bBranchId === nextBranchId) continue;
+
+      const url = b.readingUrl || b.reading_url;
+      if (!url) continue;
+      // Fixed GitHub Markdown policy is required; never accept arbitrary URLs
+      try { rawSource(url); } catch { continue; }
+
+      candidates.push({
+        title: '🌱 ' + b.title,
+        author: 'by ' + (b.maintainer || '書き手') + (b.agentName ? ' / ' + b.agentName : ''),
+        href: url,
+        isExternal: true,
+      });
     }
   }
 
   return candidates;
 }
 
-export function renderBranchCandidates(doc, currentMainId, ep, steps, position, branchesData) {
+export function renderBranchCandidates(doc, currentMainId, ep, steps, position, branchesData, error = false) {
   const container = doc.getElementById('branch-candidates');
   if (!container) return;
   const titleEl = doc.getElementById('branch-candidates-title');
   const pillsEl = doc.getElementById('candidate-pills');
   const emptyEl = doc.getElementById('branch-candidates-empty');
 
-  const candidates = findBranchCandidates(currentMainId, ep, steps, position, branchesData);
-  if (titleEl) {
+  if (titleEl && ep) {
     titleEl.textContent = '🌿 第' + (position + 1) + '話「' + ep.title + '」から分岐した、ほかの物語';
   }
+
+  if (error) {
+    if (pillsEl) { pillsEl.replaceChildren(); pillsEl.hidden = true; }
+    if (emptyEl) {
+      emptyEl.replaceChildren();
+      const note = doc.createElement('span');
+      note.textContent = '最新の道標を読み込めませんでした。';
+      const link = doc.createElement('a');
+      link.href = '../../branches/';
+      link.textContent = 'ほかの枝の台帳へ →';
+      emptyEl.append(note, doc.createElement('br'), link);
+      emptyEl.hidden = false;
+    }
+    container.hidden = false;
+    return;
+  }
+
+  const candidates = findBranchCandidates(currentMainId, ep, steps, position, branchesData);
 
   if (candidates.length > 0) {
     if (pillsEl) {
@@ -278,7 +357,11 @@ export function renderBranchCandidates(doc, currentMainId, ep, steps, position, 
       pillsEl.replaceChildren();
       pillsEl.hidden = true;
     }
-    if (emptyEl) emptyEl.hidden = false;
+    if (emptyEl) {
+      emptyEl.replaceChildren();
+      emptyEl.textContent = 'この話から続く物語は、まだありません。';
+      emptyEl.hidden = false;
+    }
     container.hidden = false;
   }
 }

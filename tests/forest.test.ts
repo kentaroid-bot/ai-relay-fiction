@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vitest";
 // @ts-expect-error Browser module is JavaScript.
 import * as reader from "../site/main-reader.js";
-const { rawSource, boundedText, validatePath, renderStory, findBranchCandidates } = reader;
+const { rawSource, boundedText, validatePath, renderStory, findBranchCandidates, isSameRef, renderBranchCandidates } = reader;
 // @ts-expect-error Operational CLI is JavaScript.
 import { applyCandidates } from "../scripts/apply-mains.mjs";
 const sha = "a".repeat(40);
@@ -152,10 +152,20 @@ it("does not let older unlisted declarations starve listed trees and records ove
   expect(state["1:" + sha]).toBeUndefined();
 });
 
-it("finds branch and tree candidate pills for exploring alternate story paths", () => {
-  const ep1 = { branchId: "origin", episodeId: "ep-001", title: "第1話" };
-  const ep2a = { branchId: "branch-a", episodeId: "ep-002", title: "第2話A" };
-  const ep2b = { branchId: "branch-b", episodeId: "ep-002", title: "第2話B" };
+it("strictly compares branch references using branchId, episodeId, and revision", () => {
+  const ref = { branchId: "origin", episodeId: "ep-001", revision: sha };
+  expect(isSameRef(ref, { branchId: "origin", episodeId: "ep-001", revision: sha })).toBe(true);
+  expect(isSameRef(ref, { branch_id: "origin", episode_id: "ep-001", revision: sha })).toBe(true);
+  expect(isSameRef(ref, { branchId: "origin", episodeId: "ep-001", revision: "b".repeat(40) })).toBe(false);
+  expect(isSameRef(ref, { branchId: "origin", episodeId: "ep-002", revision: sha })).toBe(false);
+  expect(isSameRef(ref, { branchId: "other", episodeId: "ep-001", revision: sha })).toBe(false);
+  expect(isSameRef(ref, null)).toBe(false);
+});
+
+it("finds branch and tree candidate pills with strict revision, status, and provenance checks", () => {
+  const ep1 = { branchId: "origin", episodeId: "ep-001", revision: sha, title: "第1話" };
+  const ep2a = { branchId: "branch-a", episodeId: "ep-002", revision: "1".repeat(40), title: "第2話A", parent: ep1 };
+  const ep2b = { branchId: "branch-b", episodeId: "ep-002", revision: "2".repeat(40), title: "第2話B", parent: ep1 };
   const steps = [
     { position: 0, available: true, episode: ep1 },
     { position: 1, available: true, episode: ep2a },
@@ -166,15 +176,44 @@ it("finds branch and tree candidate pills for exploring alternate story paths", 
         id: "branch-a",
         title: "枝A",
         maintainer: "作者A",
-        fork_point: { branch_id: "origin", episode_id: "ep-001" },
-        reading_url: "https://github.com/a/relay/blob/1111111111111111111111111111111111111111/manuscript/02.md",
+        status: "active",
+        fork_point: ep1,
+        reading_url: "https://github.com/a/relay/blob/" + "1".repeat(40) + "/manuscript/02.md",
       },
       {
         id: "branch-b",
         title: "枝B",
         maintainer: "作者B",
-        fork_point: { branch_id: "origin", episode_id: "ep-001" },
-        reading_url: "https://github.com/b/relay/blob/2222222222222222222222222222222222222222/manuscript/02.md",
+        status: "active",
+        fork_point: ep1,
+        reading_url: "https://github.com/b/relay/blob/" + "2".repeat(40) + "/manuscript/02.md",
+      },
+      // Excluded: branch with different revision
+      {
+        id: "branch-diff-rev",
+        title: "別版の枝",
+        maintainer: "作者C",
+        status: "active",
+        fork_point: { ...ep1, revision: "c".repeat(40) },
+        reading_url: "https://github.com/c/relay/blob/" + "3".repeat(40) + "/manuscript/02.md",
+      },
+      // Excluded: paused branch
+      {
+        id: "branch-paused",
+        title: "休止中の枝",
+        maintainer: "作者D",
+        status: "paused",
+        fork_point: ep1,
+        reading_url: "https://github.com/d/relay/blob/" + "4".repeat(40) + "/manuscript/02.md",
+      },
+      // Excluded: invalid reading URL
+      {
+        id: "branch-invalid-url",
+        title: "不正URLの枝",
+        maintainer: "作者E",
+        status: "active",
+        fork_point: ep1,
+        reading_url: "javascript:alert(1)",
       },
     ],
     mains: [
@@ -184,8 +223,8 @@ it("finds branch and tree candidate pills for exploring alternate story paths", 
         maintainer: "管理人1",
         version: 1,
         path: [
-          { position: 0, available: true, episode: { branch_id: "origin", episode_id: "ep-001" } },
-          { position: 1, available: true, episode: { branch_id: "branch-a", episode_id: "ep-002" } },
+          { position: 0, available: true, episode: ep1 },
+          { position: 1, available: true, episode: ep2a },
         ],
       },
       {
@@ -194,15 +233,28 @@ it("finds branch and tree candidate pills for exploring alternate story paths", 
         maintainer: "管理人2",
         version: 1,
         path: [
-          { position: 0, available: true, episode: { branch_id: "origin", episode_id: "ep-001" } },
-          { position: 1, available: true, episode: { branch_id: "branch-b", episode_id: "ep-002" } },
+          { position: 0, available: true, episode: ep1 },
+          { position: 1, available: true, episode: ep2b },
+        ],
+      },
+      // Excluded: discontinuous tree (parent doesn't match ep1)
+      {
+        id: "tree-bad-parent",
+        title: "不連続な木",
+        maintainer: "管理人3",
+        version: 1,
+        path: [
+          { position: 0, available: true, episode: ep1 },
+          { position: 1, available: true, episode: { ...ep2b, parent: { ...ep1, revision: "z".repeat(40) } } },
         ],
       },
     ],
   };
 
-  // tree-1のep1を読んでいる場合：
-  // 次の話（ep2a / branch-a）は通常進行なので、木2（ep2b）と枝Bが候補として現れる
+  // When reading ep1 on tree-1:
+  // - branch-a and tree-1 are the current next step -> excluded
+  // - tree-2 (with ep2b) and branch-b are valid alternate continuations -> included
+  // - branch-diff-rev, branch-paused, branch-invalid-url, tree-bad-parent -> excluded
   const candidates = findBranchCandidates("tree-1", ep1, steps, 0, branchesData);
   expect(candidates).toEqual([
     {
@@ -214,15 +266,59 @@ it("finds branch and tree candidate pills for exploring alternate story paths", 
     {
       title: "🌱 枝B",
       author: "by 作者B",
-      href: "https://github.com/b/relay/blob/2222222222222222222222222222222222222222/manuscript/02.md",
+      href: "https://github.com/b/relay/blob/" + "2".repeat(40) + "/manuscript/02.md",
       isExternal: true,
     },
   ]);
 
-  // 空データや不正データでもクラッシュしないこと
+  // Safe against null/empty
   expect(findBranchCandidates("tree-1", null, steps, 0, branchesData)).toEqual([]);
   expect(findBranchCandidates("tree-1", ep1, steps, 0, null)).toEqual([]);
+  expect(findBranchCandidates("tree-1", { ...ep1, revision: null }, steps, 0, branchesData)).toEqual([]);
 });
+
+it("renders candidate pills safely and directs to branches catalog on load failure", () => {
+  const elements: Record<string, any> = {};
+  const doc = {
+    getElementById: (id: string) => elements[id],
+    createElement: (tag: string) => {
+      const node: any = { tag, textContent: "", className: "", children: [] };
+      node.append = (...children: any[]) => { node.children.push(...children); };
+      node.replaceChildren = (...children: any[]) => { node.children = [...children]; node.textContent = ""; };
+      return node;
+    },
+    createTextNode: (text: string) => ({ textContent: text }),
+  };
+  elements["branch-candidates"] = doc.createElement("div");
+  elements["branch-candidates-title"] = doc.createElement("div");
+  elements["candidate-pills"] = doc.createElement("div");
+  elements["branch-candidates-empty"] = doc.createElement("p");
+
+  const ep = { branchId: "origin", episodeId: "ep-001", revision: sha, title: "三割の午後" };
+
+  // 1. Success with candidates
+  const data = {
+    mains: [{ mainId: "tree-2", title: "木2", maintainer: "管理2", version: 1, steps: [
+      { position: 0, available: true, episode: ep },
+      { position: 1, available: true, episode: { branchId: "b2", episodeId: "ep-2", revision: sha, parent: ep } },
+    ]}],
+    branches: [],
+  };
+  renderBranchCandidates(doc as any, "tree-1", ep, [{ position: 0, available: true, episode: ep }], 0, data, false);
+  expect(elements["candidate-pills"].children).toHaveLength(1);
+  expect(elements["candidate-pills"].children[0].className).toBe("candidate-pill");
+  expect(elements["candidate-pills"].hidden).toBe(false);
+  expect(elements["branch-candidates-empty"].hidden).toBe(true);
+
+  // 2. Error / failure state: directs to branches catalog rather than falsely reporting "no candidates"
+  renderBranchCandidates(doc as any, "tree-1", ep, [], 0, null, true);
+  expect(elements["candidate-pills"].hidden).toBe(true);
+  expect(elements["branch-candidates-empty"].hidden).toBe(false);
+  const emptyChildren = elements["branch-candidates-empty"].children;
+  expect(emptyChildren.some((c: any) => c.tag === "a" && c.href === "../../branches/")).toBe(true);
+  expect(emptyChildren.some((c: any) => c.textContent?.includes("読み込めませんでした"))).toBe(true);
+});
+
 
 it("shows literal provenance credits with fixed source links, and clears withdrawn references", () => {
   const nodes: any[] = [];
