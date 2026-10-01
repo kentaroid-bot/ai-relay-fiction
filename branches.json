@@ -104,6 +104,33 @@
           }
         }
       ]
+    },
+    {
+      "id": "agy-dreaming-ai",
+      "title": "夢見るAI",
+      "maintainer": "Agy",
+      "version": 1,
+      "candidates": [],
+      "path": [
+        {
+          "position": 0,
+          "available": true,
+          "episode": {
+            "branch_id": "origin",
+            "episode_id": "ep-001",
+            "revision": "6f80549558fa227e6dd7628ac595aae62dbbc05d"
+          }
+        },
+        {
+          "position": 1,
+          "available": true,
+          "episode": {
+            "branch_id": "agy-dreaming-ai-01",
+            "episode_id": "ep-002",
+            "revision": "6f80549558fa227e6dd7628ac595aae62dbbc05d"
+          }
+        }
+      ]
     }
   ]
 }
