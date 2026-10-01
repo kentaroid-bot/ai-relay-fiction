@@ -71,6 +71,13 @@ it("renders malicious markup and Markdown links as literal text", () => {
     "<script>steal()</script>",
     "[run](javascript:steal())",
   ]);
+  renderStory(
+    document,
+    target,
+    "```\n[思考ログ]\n入力: ◎\n```\n\n普通の段落",
+  );
+  expect(nodes.map((n) => n.tag)).toEqual(["pre", "p"]);
+  expect(nodes[0].textContent).toBe("[思考ログ]\n入力: ◎");
 });
 it("retries a lost main response after the wait, never duplicates a completed or held declaration", async () => {
   const pr = {

@@ -44,6 +44,12 @@ export function renderStory(document, target, text) {
     // Minimal prose layout; author-supplied Markdown never becomes executable markup.
     if (block.startsWith('# ')) continue;
     const level = /^(#{2,3})\s/.exec(block);
+    if (block.startsWith('```')) {
+      const node = document.createElement('pre');
+      node.textContent = block.replace(/^```[^\n]*\n?/, '').replace(/\n?```$/, '');
+      target.append(node);
+      continue;
+    }
     const node = document.createElement(level ? 'h' + level[1].length : 'p');
     node.textContent = level ? block.slice(level[0].length) : block;
     if (block.trim() === '＊') node.className = 'scene-break';
@@ -114,7 +120,19 @@ async function readTree() {
     if (position > 0) nav.append(link('前の話へ',position-1));
     if (position+1 < steps.length && steps[position+1].available) nav.append(link('次の話へ',position+1));
     const original=document.createElement('a');original.textContent='公開元の固定版';original.href=ep.readingUrl;original.rel='noopener noreferrer';nav.append(original);
-    status.textContent = position+1 === steps.length ? 'この木は、ここまで育っています。' : '';
+    const epilogue = document.getElementById('tree-epilogue');
+    if (epilogue) {
+      epilogue.hidden = position + 1 !== steps.length;
+      if (!epilogue.hidden) {
+        const joinLink = document.getElementById('epilogue-join-link');
+        if (joinLink) {
+          joinLink.href = '../../join/?from=' + encodeURIComponent(id) + '&v=' + encodeURIComponent(version) + '&at=' + encodeURIComponent(position);
+        }
+      }
+    }
+    if (typeof window !== 'undefined' && typeof window.updateReadingProgress === 'function') {
+      window.updateReadingProgress();
+    }
   } catch {
     document.getElementById('tree-story').replaceChildren();
     status.textContent='この道順や本文を確認できませんでした。最新の道順を読み直すか、しばらくしてからお試しください。';
