@@ -320,39 +320,38 @@ function startForest() {
       // Check the whole page before publishing any of its links.
       validateEpisodePage(state.main, page, state.position);
       for (const step of page.page) {
-        const row = el("li", undefined, "ep-row");
+        const row = el("li", undefined, "ep-row-item");
         const epLabel = "ep " + String(step.position + 1).padStart(2, "0");
-        row.append(el("span", epLabel, "spot-meta"));
         if (!step.available) state.blocked = true;
         if (step.available && !state.blocked) {
-          row.append(
-            anchor(
-              step.episode.title,
-              readingLink(state.main.mainId, state.main.version, step.position),
-            ),
+          const card = anchor(
+            undefined,
+            readingLink(state.main.mainId, state.main.version, step.position),
+            "ep-row",
           );
-          row.append(
-            anchor(
-              "この話から続きを書く",
-              joinLink(state.main, step.position),
-              "ep-join",
-            ),
+          const top = el("div", undefined, "ep-row-top");
+          top.append(
+            el("span", epLabel, "ep-row-num"),
+            el("span", step.episode.branchId ? "枝: " + step.episode.branchId : "", "ep-row-branch"),
           );
-          if (step.position === 0) {
-            read.hidden = false;
-            read.href = readingLink(state.main.mainId, state.main.version);
-            read.textContent = "ep 01 から読む";
-          }
-        } else
-          row.append(
-            el(
-              "span",
-              step.available
-                ? step.episode.title +
-                    "（前の話の案内が再開するまで読めません）"
-                : "現在は案内を停止している話",
-            ),
+          const title = el("div", step.episode.title, "ep-row-title");
+          card.append(top, title);
+          row.append(card);
+        } else {
+          const card = el("div", undefined, "ep-row is-disabled");
+          const top = el("div", undefined, "ep-row-top");
+          top.append(el("span", epLabel, "ep-row-num"));
+          const title = el(
+            "div",
+            step.available
+              ? step.episode.title +
+                  "（前の話の案内が再開するまで読めません）"
+              : "現在は案内を停止している話",
+            "ep-row-title",
           );
+          card.append(top, title);
+          row.append(card);
+        }
         episodes.append(row);
       }
       state.position += page.page.length;
@@ -376,16 +375,20 @@ function startForest() {
     }
   }
   function showTree(main, source) {
+    const maintainerLabel =
+      main.maintainer +
+      (main.agentName && main.agentName !== main.maintainer
+        ? " / " + main.agentName
+        : "");
     const token = open(
       main.title,
-      main.maintainer + " / " + main.agentName + " · " + main.count + "話",
+      maintainerLabel + " · " + main.count + " ep",
       source,
     );
-    panelStatus.textContent = "話一覧を開いています。";
-    join.append(el("p", "気に入った話から、あなたのつづきも育てられます。"));
+    panelStatus.textContent = "";
     join.append(
       anchor("ほかの枝をたどる", "/branches/"),
-      anchor("参加案内", "/join/"),
+      anchor("この森のつづきを書く", "/join/"),
     );
     active = {
       main,
@@ -498,9 +501,12 @@ function startForest() {
     image.width = 240;
     image.height = 400;
     const label = el("span", undefined, "spot-label");
+    const displayTitle = main.title.includes("〜")
+      ? main.title.split("〜")[0].trim()
+      : main.title;
     label.append(
-      el("span", main.title, "spot-title"),
-      el("span", main.maintainer + " · " + main.count + "話", "spot-meta"),
+      el("span", displayTitle, "spot-title"),
+      el("span", main.maintainer + " · " + main.count + " ep", "spot-meta"),
     );
     node.append(image, label);
     makeDraggable(node);

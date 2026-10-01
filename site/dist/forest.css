@@ -437,12 +437,21 @@ nav a {
   list-style: none;
   padding: 0;
   margin: 1.2rem 0;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.ep-row-item {
+  margin: 0;
+  padding: 0;
 }
 .ep-row {
+  display: block;
   border-radius: 6px;
   background: #faf9f5;
   border: 1px solid rgba(100, 90, 80, 0.08);
-  padding: 0.85rem 1rem;
+  padding: 0.85rem 1.1rem;
+  text-decoration: none;
+  cursor: pointer;
   transition: all 0.2s ease;
 }
 .ep-row:hover {
@@ -450,37 +459,54 @@ nav a {
   border-color: rgba(100, 90, 80, 0.25);
   transform: translateX(3px);
 }
-.ep-row a {
-  color: var(--ink);
-  font-size: 0.95rem;
+.ep-row.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+  background: #fdfcf9;
+}
+.ep-row.is-disabled:hover {
+  transform: none;
+  background: #fdfcf9;
+  border-color: rgba(100, 90, 80, 0.08);
+}
+.ep-row-top {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--pencil);
+  margin-bottom: 0.25rem;
+}
+.ep-row-title {
+  font-size: 1rem;
   font-weight: 600;
-  text-decoration: none;
+  color: var(--ink);
+  line-height: 1.5;
   overflow-wrap: anywhere;
 }
-.ep-row .spot-meta {
-  font-family: var(--mono);
-  font-size: 0.72rem;
-  color: var(--pencil);
-  margin: 0 0 4px;
-}
-.ep-join {
-  display: block;
-  font-size: 0.75rem !important;
-  font-weight: normal !important;
-  margin-top: 6px;
-  color: var(--pencil) !important;
-}
 .panel-join {
-  padding-top: 16px;
+  padding-top: 14px;
   border-top: 1px solid rgba(100, 90, 80, 0.15);
-  font-size: 0.85rem;
+  font-size: 0.82rem;
+  display: flex;
+  justify-content: flex-end;
+  gap: 16px;
+}
+.panel-join:empty {
+  display: none;
 }
 .panel-join p {
-  margin: 0 0 1rem;
+  margin: 0;
 }
 .panel-join a {
-  display: inline-block;
-  margin: 0 12px 12px 0;
+  color: var(--pencil);
+  text-decoration: none;
+  font-size: 0.8rem;
+  letter-spacing: 0.04em;
+  transition: color 0.2s ease;
+}
+.panel-join a:hover {
+  color: var(--ink);
 }
 @media (max-width: 650px) {
   .forest-header {
