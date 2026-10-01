@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vitest";
 // @ts-expect-error Browser module is JavaScript.
 import * as reader from "../site/main-reader.js";
-const { rawSource, boundedText, validatePath, renderStory } = reader;
+const { rawSource, boundedText, validatePath, renderStory, findBranchCandidates } = reader;
 // @ts-expect-error Operational CLI is JavaScript.
 import { applyCandidates } from "../scripts/apply-mains.mjs";
 const sha = "a".repeat(40);
@@ -155,3 +155,76 @@ it("does not let older unlisted declarations starve listed trees and records ove
   ).toBe(true);
   expect(state["1:" + sha]).toBeUndefined();
 });
+
+it("finds branch and tree candidate pills for exploring alternate story paths", () => {
+  const ep1 = { branchId: "origin", episodeId: "ep-001", title: "第1話" };
+  const ep2a = { branchId: "branch-a", episodeId: "ep-002", title: "第2話A" };
+  const ep2b = { branchId: "branch-b", episodeId: "ep-002", title: "第2話B" };
+  const steps = [
+    { position: 0, available: true, episode: ep1 },
+    { position: 1, available: true, episode: ep2a },
+  ];
+  const branchesData = {
+    branches: [
+      {
+        id: "branch-a",
+        title: "枝A",
+        maintainer: "作者A",
+        fork_point: { branch_id: "origin", episode_id: "ep-001" },
+        reading_url: "https://github.com/a/relay/blob/1111111111111111111111111111111111111111/manuscript/02.md",
+      },
+      {
+        id: "branch-b",
+        title: "枝B",
+        maintainer: "作者B",
+        fork_point: { branch_id: "origin", episode_id: "ep-001" },
+        reading_url: "https://github.com/b/relay/blob/2222222222222222222222222222222222222222/manuscript/02.md",
+      },
+    ],
+    mains: [
+      {
+        id: "tree-1",
+        title: "木1",
+        maintainer: "管理人1",
+        version: 1,
+        path: [
+          { position: 0, available: true, episode: { branch_id: "origin", episode_id: "ep-001" } },
+          { position: 1, available: true, episode: { branch_id: "branch-a", episode_id: "ep-002" } },
+        ],
+      },
+      {
+        id: "tree-2",
+        title: "木2",
+        maintainer: "管理人2",
+        version: 1,
+        path: [
+          { position: 0, available: true, episode: { branch_id: "origin", episode_id: "ep-001" } },
+          { position: 1, available: true, episode: { branch_id: "branch-b", episode_id: "ep-002" } },
+        ],
+      },
+    ],
+  };
+
+  // tree-1のep1を読んでいる場合：
+  // 次の話（ep2a / branch-a）は通常進行なので、木2（ep2b）と枝Bが候補として現れる
+  const candidates = findBranchCandidates("tree-1", ep1, steps, 0, branchesData);
+  expect(candidates).toEqual([
+    {
+      title: "🌲 木2（第2話へ）",
+      author: "by 管理人2",
+      href: "?id=tree-2&v=1&at=1",
+      isExternal: false,
+    },
+    {
+      title: "🌱 枝B",
+      author: "by 作者B",
+      href: "https://github.com/b/relay/blob/2222222222222222222222222222222222222222/manuscript/02.md",
+      isExternal: true,
+    },
+  ]);
+
+  // 空データや不正データでもクラッシュしないこと
+  expect(findBranchCandidates("tree-1", null, steps, 0, branchesData)).toEqual([]);
+  expect(findBranchCandidates("tree-1", ep1, steps, 0, null)).toEqual([]);
+});
+

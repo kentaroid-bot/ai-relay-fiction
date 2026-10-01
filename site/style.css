@@ -854,6 +854,83 @@ body[data-theme="dark"] .spec-content code {
 .site-footer a { color: var(--ink-subtle); text-decoration: none; }
 .site-footer a:hover { color: var(--ink); text-decoration: underline; }
 
+/* 枝の他の候補リスト（道標ピルボタン群） */
+.branch-candidates {
+  margin: 2.5rem 0 2rem;
+  padding: 1.5rem;
+  background: rgba(0, 0, 0, 0.02);
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+}
+body[data-theme="dark"] .branch-candidates {
+  background: rgba(255, 255, 255, 0.02);
+}
+.branch-candidates-title {
+  font-family: var(--serif);
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 0.8rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.candidate-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+.candidate-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  padding: 0.45rem 0.9rem;
+  border-radius: 6px;
+  background: var(--paper-sheet);
+  text-decoration: none;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.candidate-pill:hover {
+  transform: translateY(-1px);
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.08);
+}
+.pill-author {
+  font-family: var(--typewriter);
+  font-size: 0.75rem;
+  color: var(--ink-subtle);
+}
+.empty-branch-note {
+  font-size: 0.88rem;
+  color: var(--ink-subtle);
+  margin: 0.4rem 0 0;
+  line-height: 1.6;
+}
+.tree-path-details summary {
+  cursor: pointer;
+  color: var(--ink-subtle);
+  font-size: 0.85rem;
+  font-family: var(--typewriter);
+  padding: 0.4rem 0;
+  user-select: none;
+}
+.tree-path-details summary:hover {
+  color: var(--ink);
+}
+.tree-path-details ol {
+  margin-top: 0.8rem;
+}
+.endnote-links {
+  margin-top: 0.8rem;
+  font-size: 0.85rem;
+  color: var(--ink-subtle);
+}
+
 /* レスポンシブ */
 @media (max-width: 700px) {
   .wrap { width: calc(100% - 32px); }

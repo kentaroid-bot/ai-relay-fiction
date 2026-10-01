@@ -133,9 +133,129 @@ async function readTree() {
     if (typeof window !== 'undefined' && typeof window.updateReadingProgress === 'function') {
       window.updateReadingProgress();
     }
+    try {
+      const bRes = await fetch('../../texts/branches.json', {credentials:'omit',redirect:'error',signal:AbortSignal.timeout(5000)});
+      if (bRes.ok) {
+        const bData = JSON.parse(await boundedText(bRes, 100000));
+        renderBranchCandidates(document, id, ep, steps, position, bData);
+      }
+    } catch {
+      // Ignore branch candidates failure to preserve main reading experience
+    }
   } catch {
     document.getElementById('tree-story').replaceChildren();
     status.textContent='この道順や本文を確認できませんでした。最新の道順を読み直すか、しばらくしてからお試しください。';
   }
 }
+
+export function findBranchCandidates(currentMainId, ep, steps, position, branchesData) {
+  if (!branchesData || !ep) return [];
+  const epId = ep.episodeId || ep.episode_id || '';
+  const epBranch = ep.branchId || ep.branch_id || '';
+  if (!epId || !epBranch) return [];
+
+  const nextStep = steps && steps[position + 1]?.available ? steps[position + 1].episode : null;
+  const currentNextId = nextStep ? (nextStep.episodeId || nextStep.episode_id) : null;
+  const currentNextBranch = nextStep ? (nextStep.branchId || nextStep.branch_id) : null;
+
+  const candidates = [];
+  const seenEpisodeKeys = new Set();
+
+  if (Array.isArray(branchesData.mains)) {
+    for (const m of branchesData.mains) {
+      if (!m || !Array.isArray(m.path)) continue;
+      const stepIdx = m.path.findIndex(s => {
+        const e = s?.episode;
+        return e && (e.episode_id || e.episodeId) === epId && (e.branch_id || e.branchId) === epBranch;
+      });
+      if (stepIdx !== -1 && stepIdx + 1 < m.path.length) {
+        const nextInMain = m.path[stepIdx + 1];
+        if (!nextInMain || !nextInMain.available || !nextInMain.episode) continue;
+        const nEp = nextInMain.episode;
+        const nId = nEp.episode_id || nEp.episodeId;
+        const nBranch = nEp.branch_id || nEp.branchId;
+
+        if (m.id === currentMainId && nId === currentNextId && nBranch === currentNextBranch) {
+          continue;
+        }
+
+        const key = nBranch + '/' + nId;
+        seenEpisodeKeys.add(key);
+        candidates.push({
+          title: '🌲 ' + m.title + '（第' + (stepIdx + 2) + '話へ）',
+          author: 'by ' + (m.maintainer || 'つづき'),
+          href: '?id=' + encodeURIComponent(m.id) + '&v=' + m.version + '&at=' + (stepIdx + 1),
+          isExternal: false,
+        });
+      }
+    }
+  }
+
+  if (Array.isArray(branchesData.branches)) {
+    for (const b of branchesData.branches) {
+      if (!b || !b.fork_point) continue;
+      const fp = b.fork_point;
+      if (fp.episode_id === epId && fp.branch_id === epBranch) {
+        if (b.id === currentNextBranch) continue;
+        const title = '🌱 ' + b.title;
+        const author = 'by ' + (b.maintainer || '書き手');
+        const href = b.reading_url && /^https:\/\//.test(b.reading_url) ? b.reading_url : ('../../branches/#branch-' + encodeURIComponent(b.id));
+        candidates.push({
+          title,
+          author,
+          href,
+          isExternal: href.startsWith('https://'),
+        });
+      }
+    }
+  }
+
+  return candidates;
+}
+
+export function renderBranchCandidates(doc, currentMainId, ep, steps, position, branchesData) {
+  const container = doc.getElementById('branch-candidates');
+  if (!container) return;
+  const titleEl = doc.getElementById('branch-candidates-title');
+  const pillsEl = doc.getElementById('candidate-pills');
+  const emptyEl = doc.getElementById('branch-candidates-empty');
+
+  const candidates = findBranchCandidates(currentMainId, ep, steps, position, branchesData);
+  if (titleEl) {
+    titleEl.textContent = '🌿 第' + (position + 1) + '話「' + ep.title + '」から分岐した、ほかの物語';
+  }
+
+  if (candidates.length > 0) {
+    if (pillsEl) {
+      pillsEl.replaceChildren();
+      for (const c of candidates) {
+        const a = doc.createElement('a');
+        a.className = 'candidate-pill';
+        a.href = c.href;
+        if (c.isExternal) {
+          a.rel = 'noopener noreferrer';
+        }
+        const spanTitle = doc.createElement('span');
+        spanTitle.textContent = c.title;
+        const spanAuthor = doc.createElement('span');
+        spanAuthor.className = 'pill-author';
+        spanAuthor.textContent = c.author;
+        a.append(spanTitle, spanAuthor);
+        pillsEl.append(a);
+      }
+      pillsEl.hidden = false;
+    }
+    if (emptyEl) emptyEl.hidden = true;
+    container.hidden = false;
+  } else {
+    if (pillsEl) {
+      pillsEl.replaceChildren();
+      pillsEl.hidden = true;
+    }
+    if (emptyEl) emptyEl.hidden = false;
+    container.hidden = false;
+  }
+}
+
 if (typeof document !== 'undefined' && document.getElementById('main-reader')) readTree();
+
