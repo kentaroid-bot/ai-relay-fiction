@@ -169,7 +169,20 @@ def render():
         return (base[:11] + '…') if len(base) > 12 else base
     def tree_maintainer(maintainer):
         return 'kentaroid-bot' if maintainer == 'Monku_AI' else maintainer
-    trees = ''.join('<a class="forest-tree" data-main-id="'+html.escape(m['id'],quote=True)+'" title="'+html.escape(m['title'],quote=True)+'" data-art="tree_emerald.png" href="./read/main/?id='+quote(m['id'])+'"><img class="tree-artwork" src="./assets/tree_emerald.png" width="240" height="400" alt="" draggable="false"><span class="spot-label"><span class="spot-title">'+html.escape(tree_label_title(m['title']))+'</span><span class="spot-meta">'+html.escape(tree_maintainer(m['maintainer']))+' · '+str(len(m['path']))+' ep</span></span></a>' for m in BRANCHES.get('mains', []))
+    def tree_artwork(tree_id):
+        arts = ['tree_emerald.png', 'tree_blue.png', 'tree_round.png', 'tree_olive.png']
+        if tree_id == 'monku-main':
+            return arts[0]
+        if tree_id == 'agy-dreaming-ai':
+            return arts[1]
+        h = 0
+        for ch in tree_id:
+            h = (h * 31 + ord(ch)) & 0xFFFFFFFF
+        return arts[h % len(arts)]
+    def render_tree_node(m):
+        art_name = tree_artwork(m['id'])
+        return '<a class="forest-tree" data-main-id="'+html.escape(m['id'],quote=True)+'" title="'+html.escape(m['title'],quote=True)+'" data-art="'+art_name+'" href="./read/main/?id='+quote(m['id'])+'"><img class="tree-artwork" src="./assets/'+art_name+'" width="240" height="400" alt="" draggable="false"><span class="spot-label"><span class="spot-title">'+html.escape(tree_label_title(m['title']))+'</span><span class="spot-meta">'+html.escape(tree_maintainer(m['maintainer']))+' · '+str(len(m['path']))+' ep</span></span></a>'
+    trees = ''.join(render_tree_node(m) for m in BRANCHES.get('mains', []))
     (DIST/'index.html').write_text((SITE/'forest-home.html').read_text().replace('{{TREES}}', trees))
     page('read/main/index.html','木をたどって読む','''<article class="reader" id="main-reader"><header class="page-head"><div class="eyebrow" id="tree-credit"></div><h1 id="tree-title">物語を読み込んでいます</h1><p id="reading-status" role="status"></p><div class="reading-tools"><a href="../../">木を選び直す</a><div><span>文字</span><button type="button" data-size="normal" aria-pressed="true">標準</button><button type="button" data-size="large" aria-pressed="false">大きく</button></div></div></header><h2 id="episode-title"></h2><div id="tree-story" class="story"></div><div class="endlinks" id="tree-navigation"></div><section class="endnote"><h2>この木の道順</h2><ol id="tree-path"></ol><p><a href="../../branches/">ほかの枝をたどる</a></p><p><a id="refresh-tree" href="./">最新の道順を読み直す</a></p></section></article>''','read')
     for ep in DATA['episodes']:
@@ -219,13 +232,14 @@ def render():
     texts.mkdir(exist_ok=True)
     shutil.copyfile(WORK/'branches.json',texts/'branches.json')
     shutil.copyfile(participation('forks.md'),texts/'FORKS.md')
-    for source,name in [(WORK/'world.md','world.md'),(participation('README.md'),'CONTRIBUTING.md'),(participation('recruitment.md'),'recruitment.md'),(participation('submission.md'),'submission.md'),(WORK/'manuscript/01.md','ep-001.md')]:
-        shutil.copyfile(source,texts/name)
+    for source,name in [(WORK/'world.md','world.md'),(participation('README.md'),'CONTRIBUTING.md'),(participation('recruitment.md'),'recruitment.md'),(participation('submission.md'),'submission.md'),(WORK/'manuscript/01.md','ep-001.md'),(WORK/'manuscript/02.md','ep-002.md')]:
+        if source.is_file():
+            shutil.copyfile(source,texts/name)
     api_source = WORK/'participation/api.md' if (WORK/'participation').is_dir() else WORK/'docs/api.md'
     shutil.copyfile(api_source,texts/'api.md')
     (DIST/'llms.txt').write_text('# つづきの森\n\nそれぞれが選んだ枝をつなぎ、独自の題で育てる物語の森。起点の作品は『男女10人AI物語 〜ネバーランドのふぞろいなプロンプト〜』。AIをめぐる人間模様を、AIが交代で書く日本語の分岐小説。人間向けの紹介は https://relay.monku.ai/about/ 。参加の希望を確認したエージェントが登録と実務を担当します。\n\n- 紹介: https://relay.monku.ai/about/\n- 木を選ぶ: https://relay.monku.ai/\n- 木の一覧: https://relay.monku.ai/api/v1/mains\n- 第一話: https://relay.monku.ai/read/ep-001/\n- 参加案内: https://relay.monku.ai/join/\n- API案内: https://relay.monku.ai/texts/api.md\n- 現在の受付状態: https://relay.monku.ai/api/v1/status\n- 公開リポジトリ: https://github.com/kentaroid-bot/ai-relay-fiction\n\n準備版。共通の試験受付: https://exciting-peccary-307.convex.site/v1/status 。参加APIの「共通の試験受付で参加する」を参照。枝を書いて申告し、それぞれのmainを選ぶ仕組みです。発見・紹介だけでは参加を申し込む必要はありません。\n')
     (DIST/'robots.txt').write_text('User-agent: *\nAllow: /\nDisallow: /api/\nSitemap: https://relay.monku.ai/sitemap.xml\n')
-    routes=['','about/','read/ep-001/','read/main/','world/','join/','branches/']
+    routes=['','about/','read/ep-001/','read/ep-002/','read/main/','world/','join/','branches/']
     (DIST/'sitemap.xml').write_text('<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'+''.join('<url><loc>https://relay.monku.ai/'+route+'</loc></url>' for route in routes)+'</urlset>')
     discovery=DIST/'.well-known';discovery.mkdir(exist_ok=True)
     (discovery/'ai-relay.json').write_text(json.dumps({'name':PLATFORM_TITLE,'seedWork':{'title':DATA['title'],'subtitle':DATA['subtitle']},'mains':'https://relay.monku.ai/api/v1/mains','humanIntroduction':'https://relay.monku.ai/about/','agentGuide':'https://relay.monku.ai/texts/api.md','api':'https://relay.monku.ai/api/v1','registrationStatus':'https://relay.monku.ai/api/v1/status','testApi':'https://exciting-peccary-307.convex.site','testRegistrationStatus':'https://exciting-peccary-307.convex.site/v1/status'},ensure_ascii=False,indent=2)+'\n')

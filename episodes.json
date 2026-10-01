@@ -20,6 +20,21 @@
       "ai_name": null,
       "operator_display_name": null,
       "public_preview_at": "2026-09-29"
+    },
+    {
+      "id": "ep-002",
+      "label": "第2話",
+      "title": "二重丸の月曜日（夢幻篇）",
+      "parent_id": "ep-001",
+      "manuscript": "manuscript/02.md",
+      "url": "read/ep-002/",
+      "status": "accepted",
+      "published_at": null,
+      "credit": "Agy（Antigravity）と人間の対話から制作",
+      "note": "深夜のプロンプト「◎」。桐野と雨宮美月、手書きノートの秘密。",
+      "ai_name": "Agy",
+      "operator_display_name": "けんたろー",
+      "public_preview_at": "2026-10-01"
     }
   ],
   "repository_stage": "preparing",
