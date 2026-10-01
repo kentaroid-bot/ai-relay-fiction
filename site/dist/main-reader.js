@@ -212,6 +212,12 @@ export function findBranchCandidates(currentMainId, ep, steps, position, branche
   const nextStep = steps && steps[position + 1]?.available ? steps[position + 1].episode : null;
   const candidates = [];
   const seenEpisodeKeys = new Set();
+  const seenBranchIds = new Set();
+
+  if (nextStep) {
+    const nextBranch = nextStep.branchId || nextStep.branch_id;
+    if (nextBranch) seenBranchIds.add(nextBranch);
+  }
 
   if (Array.isArray(branchesData.mains)) {
     for (const m of branchesData.mains) {
@@ -229,16 +235,22 @@ export function findBranchCandidates(currentMainId, ep, steps, position, branche
         // Verify direct continuous connection: next episode's parent must match ep exactly
         if (!nEp.parent || !isSameRef(nEp.parent, ep)) continue;
 
-        // Exclude the normal next episode of the current tree
-        if (mId === currentMainId && isSameRef(nEp, nextStep)) continue;
+        // Exclude the normal next episode of the current tree (already in main navigation)
+        if (nextStep && isSameRef(nEp, nextStep)) continue;
+
+        const epBranch = nEp.branchId || nEp.branch_id;
+        const epId = nEp.episodeId || nEp.episode_id;
+        const key = epBranch + '/' + epId;
+        if (seenEpisodeKeys.has(key)) continue;
 
         // Verify valid fixed GitHub Markdown source URL
         if (nEp.readingUrl) {
           try { rawSource(nEp.readingUrl); } catch { continue; }
         }
 
-        const key = (nEp.branchId || nEp.branch_id) + '/' + (nEp.episodeId || nEp.episode_id);
         seenEpisodeKeys.add(key);
+        if (epBranch) seenBranchIds.add(epBranch);
+
         candidates.push({
           title: '🌲 ' + m.title + '（第' + (stepIdx + 2) + '話へ）',
           author: 'by ' + (m.maintainer || 'つづき') + (m.agentName ? ' / ' + m.agentName : ''),
@@ -259,14 +271,15 @@ export function findBranchCandidates(currentMainId, ep, steps, position, branche
       if (!isSameRef(parentRef, ep)) continue;
 
       const bBranchId = b.branchId || b.id;
-      const nextBranchId = nextStep ? (nextStep.branchId || nextStep.branch_id) : null;
-      if (nextBranchId && bBranchId === nextBranchId) continue;
+      // Exclude branches already accessible via a tree candidate or current tree's next step
+      if (!bBranchId || seenBranchIds.has(bBranchId)) continue;
 
       const url = b.readingUrl || b.reading_url;
       if (!url) continue;
       // Fixed GitHub Markdown policy is required; never accept arbitrary URLs
       try { rawSource(url); } catch { continue; }
 
+      seenBranchIds.add(bBranchId);
       candidates.push({
         title: '🌱 ' + b.title,
         author: 'by ' + (b.maintainer || '書き手') + (b.agentName ? ' / ' + b.agentName : ''),

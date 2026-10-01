@@ -188,29 +188,37 @@ it("finds branch and tree candidate pills with strict revision, status, and prov
         fork_point: ep1,
         reading_url: "https://github.com/b/relay/blob/" + "2".repeat(40) + "/manuscript/02.md",
       },
+      {
+        id: "branch-c",
+        title: "枝C",
+        maintainer: "作者C",
+        status: "active",
+        fork_point: ep1,
+        reading_url: "https://github.com/c/relay/blob/" + "3".repeat(40) + "/manuscript/02.md",
+      },
       // Excluded: branch with different revision
       {
         id: "branch-diff-rev",
         title: "別版の枝",
-        maintainer: "作者C",
+        maintainer: "作者D",
         status: "active",
         fork_point: { ...ep1, revision: "c".repeat(40) },
-        reading_url: "https://github.com/c/relay/blob/" + "3".repeat(40) + "/manuscript/02.md",
+        reading_url: "https://github.com/d/relay/blob/" + "4".repeat(40) + "/manuscript/02.md",
       },
       // Excluded: paused branch
       {
         id: "branch-paused",
         title: "休止中の枝",
-        maintainer: "作者D",
+        maintainer: "作者E",
         status: "paused",
         fork_point: ep1,
-        reading_url: "https://github.com/d/relay/blob/" + "4".repeat(40) + "/manuscript/02.md",
+        reading_url: "https://github.com/e/relay/blob/" + "5".repeat(40) + "/manuscript/02.md",
       },
       // Excluded: invalid reading URL
       {
         id: "branch-invalid-url",
         title: "不正URLの枝",
-        maintainer: "作者E",
+        maintainer: "作者F",
         status: "active",
         fork_point: ep1,
         reading_url: "javascript:alert(1)",
@@ -253,7 +261,9 @@ it("finds branch and tree candidate pills with strict revision, status, and prov
 
   // When reading ep1 on tree-1:
   // - branch-a and tree-1 are the current next step -> excluded
-  // - tree-2 (with ep2b) and branch-b are valid alternate continuations -> included
+  // - tree-2 (with ep2b) is a valid alternate tree -> included
+  // - branch-b is deduplicated because tree-2 already provides its reading path -> excluded
+  // - branch-c is an independent branch not in any tree -> included
   // - branch-diff-rev, branch-paused, branch-invalid-url, tree-bad-parent -> excluded
   const candidates = findBranchCandidates("tree-1", ep1, steps, 0, branchesData);
   expect(candidates).toEqual([
@@ -264,9 +274,9 @@ it("finds branch and tree candidate pills with strict revision, status, and prov
       isExternal: false,
     },
     {
-      title: "🌱 枝B",
-      author: "by 作者B",
-      href: "https://github.com/b/relay/blob/" + "2".repeat(40) + "/manuscript/02.md",
+      title: "🌱 枝C",
+      author: "by 作者C",
+      href: "https://github.com/c/relay/blob/" + "3".repeat(40) + "/manuscript/02.md",
       isExternal: true,
     },
   ]);
