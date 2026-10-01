@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vitest";
 // @ts-expect-error Browser module is JavaScript.
 import * as reader from "../site/main-reader.js";
-const { rawSource, boundedText, validatePath, renderStory, findBranchCandidates, isSameRef, renderBranchCandidates } = reader;
+const { rawSource, boundedText, validatePath, renderStory, findBranchCandidates, isSameRef, renderBranchCandidates, fetchLiveCandidates } = reader;
 // @ts-expect-error Operational CLI is JavaScript.
 import { applyCandidates } from "../scripts/apply-mains.mjs";
 const sha = "a".repeat(40);
@@ -304,20 +304,89 @@ it("renders candidate pills safely and directs to branches catalog on load failu
     ]}],
     branches: [],
   };
-  renderBranchCandidates(doc as any, "tree-1", ep, [{ position: 0, available: true, episode: ep }], 0, data, false);
+  renderBranchCandidates(doc as any, "tree-1", ep, [{ position: 0, available: true, episode: ep }], 0, { ok: true, candidates: [{ title: "木2", author: "by 管理2", href: "?id=tree-2" }] });
   expect(elements["candidate-pills"].children).toHaveLength(1);
   expect(elements["candidate-pills"].children[0].className).toBe("candidate-pill");
   expect(elements["candidate-pills"].hidden).toBe(false);
   expect(elements["branch-candidates-empty"].hidden).toBe(true);
 
   // 2. Error / failure state: directs to branches catalog rather than falsely reporting "no candidates"
-  renderBranchCandidates(doc as any, "tree-1", ep, [], 0, null, true);
+  renderBranchCandidates(doc as any, "tree-1", ep, [], 0, { ok: false, error: "Network failed" });
   expect(elements["candidate-pills"].hidden).toBe(true);
   expect(elements["branch-candidates-empty"].hidden).toBe(false);
   const emptyChildren = elements["branch-candidates-empty"].children;
   expect(emptyChildren.some((c: any) => c.tag === "a" && c.href === "../../branches/")).toBe(true);
   expect(emptyChildren.some((c: any) => c.textContent?.includes("読み込めませんでした"))).toBe(true);
 });
+
+it("handles live API fetch with strict error isolation, pagination, and version checking", async () => {
+  const ep = { branchId: "origin", episodeId: "ep-001", revision: sha, title: "第1話" };
+  const epNext = { branchId: "tree-b-branch", episodeId: "ep-002", revision: "b".repeat(40), parent: ep };
+
+  const validMains = { isDone: true, page: [
+    { mainId: "tree-a", title: "木A", version: 1, count: 1 },
+    { mainId: "tree-b", title: "木B", version: 2, count: 2, maintainer: "作者B", agentName: "AI-B" },
+  ]};
+  const validTreeBPath = { version: 2, isDone: true, page: [
+    { position: 0, available: true, episode: ep },
+    { position: 1, available: true, episode: epNext },
+  ]};
+  const validCatalog = { isDone: true, page: [
+    { branchId: "branch-x", title: "枝X", maintainer: "作者X", parent: ep, status: "verified", readingUrl: "https://github.com/x/r/blob/" + sha + "/manuscript/02.md" },
+  ]};
+
+  // 1. /mains returns 503 -> fails closed (ok: false)
+  const fetchMains503 = async (url: string) => {
+    if (url.startsWith("/api/v1/mains")) return new Response("Service Unavailable", { status: 503 });
+    return Response.json({ page: [], isDone: true });
+  };
+  const res1 = await fetchLiveCandidates(fetchMains503, "tree-a", ep, [{ episode: ep }], 0);
+  expect(res1.ok).toBe(false);
+
+  // 2. Individual /main?id=tree-b returns 503 -> fails closed (ok: false)
+  const fetchMain503 = async (url: string) => {
+    if (url.startsWith("/api/v1/mains")) return Response.json(validMains);
+    if (url.startsWith("/api/v1/main?id=tree-b")) return new Response("Unavailable", { status: 503 });
+    if (url.startsWith("/api/v1/catalog")) return Response.json(validCatalog);
+    return new Response("Not found", { status: 404 });
+  };
+  const res2 = await fetchLiveCandidates(fetchMain503, "tree-a", ep, [{ episode: ep }], 0);
+  expect(res2.ok).toBe(false);
+
+  // 3. /catalog incomplete pagination (page limit exceeded while isDone: false) -> fails closed
+  const fetchIncompleteCatalog = async (url: string) => {
+    if (url.startsWith("/api/v1/mains")) return Response.json(validMains);
+    if (url.startsWith("/api/v1/main?id=tree-b")) return Response.json(validTreeBPath);
+    if (url.startsWith("/api/v1/catalog")) return Response.json({ page: [{ branchId: "b" }], isDone: false, continueCursor: "next" });
+    return new Response("Not found", { status: 404 });
+  };
+  const res3 = await fetchLiveCandidates(fetchIncompleteCatalog, "tree-a", ep, [{ episode: ep }], 0, { maxCatalogPages: 2 });
+  expect(res3.ok).toBe(false);
+
+  // 4. Version mismatch: mains has version 1, path returns version 2 -> fails closed
+  const fetchVersionMismatch = async (url: string) => {
+    if (url.startsWith("/api/v1/mains")) return Response.json({ isDone: true, page: [{ mainId: "tree-b", version: 1 }] });
+    if (url.startsWith("/api/v1/main?id=tree-b")) return Response.json({ version: 2, isDone: true, page: [] });
+    if (url.startsWith("/api/v1/catalog")) return Response.json({ page: [], isDone: true });
+    return new Response("Not found", { status: 404 });
+  };
+  const res4 = await fetchLiveCandidates(fetchVersionMismatch, "tree-a", ep, [{ episode: ep }], 0);
+  expect(res4.ok).toBe(false);
+
+  // 5. Successful live fetch with all pages complete -> ok: true and valid candidate pills
+  const fetchSuccess = async (url: string) => {
+    if (url.startsWith("/api/v1/mains")) return Response.json(validMains);
+    if (url.startsWith("/api/v1/main?id=tree-b")) return Response.json(validTreeBPath);
+    if (url.startsWith("/api/v1/catalog")) return Response.json(validCatalog);
+    return new Response("Not found", { status: 404 });
+  };
+  const res5 = await fetchLiveCandidates(fetchSuccess, "tree-a", ep, [{ episode: ep }], 0);
+  expect(res5.ok).toBe(true);
+  expect(res5.candidates).toHaveLength(2);
+  expect(res5.candidates[0]).toMatchObject({ title: "🌲 木B（第2話へ）", href: "?id=tree-b&v=2&at=1" });
+  expect(res5.candidates[1]).toMatchObject({ title: "🌱 枝X", href: validCatalog.page[0].readingUrl });
+});
+
 
 
 it("shows literal provenance credits with fixed source links, and clears withdrawn references", () => {

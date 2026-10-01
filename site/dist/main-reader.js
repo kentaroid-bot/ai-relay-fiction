@@ -158,51 +158,29 @@ async function readTree() {
       window.updateReadingProgress();
     }
     try {
-      let mains = [], branches = [], loadFailed = false;
-      try {
-        const mainsPage = await fetch('/api/v1/mains', { credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(5000) });
-        if (!mainsPage.ok) throw Error('Mains unavailable');
-        const mainsData = JSON.parse(await boundedText(mainsPage, 200000));
-        const otherMains = (mainsData.page || []).filter(m => m.mainId !== id);
-        const populatedMains = await Promise.all(otherMains.slice(0, 10).map(async m => {
-          try {
-            const pRes = await fetch('/api/v1/main?id=' + encodeURIComponent(m.mainId), { credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(5000) });
-            if (!pRes.ok) return null;
-            const pData = JSON.parse(await boundedText(pRes, 100000));
-            return { ...m, steps: pData.page };
-          } catch {
-            return null;
-          }
-        }));
-        mains = populatedMains.filter(Boolean);
-
-        let catCursor = null, catCount = 0;
-        while (catCount < 3) {
-          const catUrl = '/api/v1/catalog' + (catCursor ? '?cursor=' + encodeURIComponent(catCursor) : '');
-          const catRes = await fetch(catUrl, { credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(5000) });
-          if (!catRes.ok) throw Error('Catalog unavailable');
-          const catData = JSON.parse(await boundedText(catRes, 200000));
-          branches.push(...(catData.page || []));
-          catCount++;
-          if (catData.isDone || !catData.continueCursor) break;
-          catCursor = catData.continueCursor;
-        }
-      } catch {
+      let result;
+      if (typeof location !== 'undefined' && location.protocol === 'file:') {
         try {
           const bRes = await fetch('../../texts/branches.json', { credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(5000) });
           if (bRes.ok) {
             const bData = JSON.parse(await boundedText(bRes, 100000));
-            mains = (bData.mains || []).map(m => ({ ...m, steps: m.path }));
-            branches = bData.branches || [];
+            const c = findBranchCandidates(id, ep, steps, position, {
+              mains: (bData.mains || []).map(m => ({ ...m, steps: m.path })),
+              branches: bData.branches || []
+            });
+            result = { ok: true, candidates: c, isPreview: true };
           } else {
-            loadFailed = true;
+            result = { ok: false, error: 'Local file unavailable' };
           }
         } catch {
-          loadFailed = true;
+          result = { ok: false, error: 'Local file error' };
         }
+      } else {
+        const fetcher = (url, init) => fetch(url, init);
+        result = await fetchLiveCandidates(fetcher, id, ep, steps, position);
       }
 
-      renderBranchCandidates(document, id, ep, steps, position, { mains, branches }, loadFailed);
+      renderBranchCandidates(document, id, ep, steps, position, result);
     } catch {
       // Ignore branch candidates failure to preserve main reading experience
     }
@@ -301,7 +279,122 @@ export function findBranchCandidates(currentMainId, ep, steps, position, branche
   return candidates;
 }
 
-export function renderBranchCandidates(doc, currentMainId, ep, steps, position, branchesData, error = false) {
+export async function fetchLiveCandidates(fetcher, currentMainId, ep, steps, position, options = {}) {
+  const timeoutMs = options.timeoutMs || 5000;
+  const maxMains = options.maxMains || 50;
+  const maxCatalogPages = options.maxCatalogPages || 20;
+
+  try {
+    if (!ep || !ep.revision || !(ep.branchId || ep.branch_id) || !(ep.episodeId || ep.episode_id)) {
+      return { ok: true, candidates: [] };
+    }
+
+    // 1. Fetch live mains with cursor pagination to completion
+    const mains = [];
+    let mainsCursor = null;
+    const mainsSeen = new Set();
+    let mainsDone = false;
+
+    while (!mainsDone) {
+      if (mainsCursor && mainsSeen.has(mainsCursor)) throw Error('Mains cursor cycle');
+      if (mainsCursor) mainsSeen.add(mainsCursor);
+
+      const url = '/api/v1/mains' + (mainsCursor ? '?cursor=' + encodeURIComponent(mainsCursor) : '');
+      const res = await fetcher(url, { credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(timeoutMs) });
+      if (!res.ok) throw Error('Mains fetch failed');
+      const data = JSON.parse(await boundedText(res, 200000));
+      if (!Array.isArray(data.page)) throw Error('Invalid mains response');
+
+      mains.push(...data.page);
+      if (data.isDone || !data.continueCursor) {
+        mainsDone = true;
+        break;
+      }
+      if (mains.length >= maxMains) {
+        throw Error('Mains limit exceeded');
+      }
+      mainsCursor = data.continueCursor;
+    }
+
+    // 2. Fetch path for all other mains, strictly validating versions and completeness
+    const otherMains = mains.filter(m => (m.mainId || m.id) !== currentMainId);
+    const populatedMains = [];
+
+    for (const m of otherMains) {
+      const mId = m.mainId || m.id;
+      const mSteps = [];
+      let stepCursor = null;
+      const stepSeen = new Set();
+      let stepDone = false;
+
+      while (!stepDone) {
+        if (stepCursor && stepSeen.has(stepCursor)) throw Error('Step cursor cycle');
+        if (stepCursor) stepSeen.add(stepCursor);
+
+        const url = '/api/v1/main?id=' + encodeURIComponent(mId) + (stepCursor ? '&cursor=' + encodeURIComponent(stepCursor) : '');
+        const res = await fetcher(url, { credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(timeoutMs) });
+        if (!res.ok) throw Error('Main path fetch failed: ' + mId);
+        const data = JSON.parse(await boundedText(res, 200000));
+        if (!Array.isArray(data.page)) throw Error('Invalid main path response');
+
+        // Verify version alignment between catalog listing and path route
+        if (typeof data.version === 'number' && typeof m.version === 'number' && data.version !== m.version) {
+          throw Error('Version mismatch for ' + mId);
+        }
+
+        mSteps.push(...data.page);
+        if (data.isDone || !data.continueCursor) {
+          stepDone = true;
+          break;
+        }
+        if (mSteps.length >= 200) throw Error('Steps limit exceeded');
+        stepCursor = data.continueCursor;
+      }
+
+      populatedMains.push({
+        ...m,
+        steps: mSteps,
+        version: typeof m.version === 'number' ? m.version : 1,
+      });
+    }
+
+    // 3. Fetch full catalog of branches with cursor pagination to completion
+    const branches = [];
+    let catCursor = null;
+    const catSeen = new Set();
+    let catDone = false;
+    let catPages = 0;
+
+    while (!catDone) {
+      if (catCursor && catSeen.has(catCursor)) throw Error('Catalog cursor cycle');
+      if (catCursor) catSeen.add(catCursor);
+
+      const url = '/api/v1/catalog' + (catCursor ? '?cursor=' + encodeURIComponent(catCursor) : '');
+      const res = await fetcher(url, { credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(timeoutMs) });
+      if (!res.ok) throw Error('Catalog fetch failed');
+      const data = JSON.parse(await boundedText(res, 200000));
+      if (!Array.isArray(data.page)) throw Error('Invalid catalog response');
+
+      branches.push(...data.page);
+      catPages++;
+      if (data.isDone || !data.continueCursor) {
+        catDone = true;
+        break;
+      }
+      if (catPages >= maxCatalogPages) {
+        throw Error('Catalog page limit exceeded');
+      }
+      catCursor = data.continueCursor;
+    }
+
+    const candidates = findBranchCandidates(currentMainId, ep, steps, position, { mains: populatedMains, branches });
+    return { ok: true, candidates };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export function renderBranchCandidates(doc, currentMainId, ep, steps, position, result) {
   const container = doc.getElementById('branch-candidates');
   if (!container) return;
   const titleEl = doc.getElementById('branch-candidates-title');
@@ -312,7 +405,19 @@ export function renderBranchCandidates(doc, currentMainId, ep, steps, position, 
     titleEl.textContent = '🌿 第' + (position + 1) + '話「' + ep.title + '」から分岐した、ほかの物語';
   }
 
-  if (error) {
+  let ok = true, candidates = [];
+  if (result && typeof result.ok === 'boolean') {
+    ok = result.ok;
+    candidates = result.candidates || [];
+  } else if (result && (result.mains || result.branches)) {
+    candidates = findBranchCandidates(currentMainId, ep, steps, position, result);
+  } else if (Array.isArray(result)) {
+    candidates = result;
+  } else if (result === null || result === undefined) {
+    ok = false;
+  }
+
+  if (!ok) {
     if (pillsEl) { pillsEl.replaceChildren(); pillsEl.hidden = true; }
     if (emptyEl) {
       emptyEl.replaceChildren();
@@ -327,8 +432,6 @@ export function renderBranchCandidates(doc, currentMainId, ep, steps, position, 
     container.hidden = false;
     return;
   }
-
-  const candidates = findBranchCandidates(currentMainId, ep, steps, position, branchesData);
 
   if (candidates.length > 0) {
     if (pillsEl) {
