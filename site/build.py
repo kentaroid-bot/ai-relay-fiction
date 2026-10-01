@@ -159,7 +159,14 @@ def render():
     (DIST/'assets').mkdir(exist_ok=True)
     for name in assets:
         shutil.copyfile(SITE/'assets'/name, DIST/'assets'/name)
-    trees = ''.join('<a class="forest-tree" data-main-id="'+html.escape(m['id'],quote=True)+'" data-art="tree_emerald.png" href="./read/main/?id='+quote(m['id'])+'"><img class="tree-artwork" src="./assets/tree_emerald.png" width="240" height="400" alt="" draggable="false"><span class="spot-label"><span class="spot-title">'+html.escape(m['title'])+'</span><span class="spot-meta">'+html.escape(m['maintainer'])+' · '+str(len(m['path']))+'話</span></span></a>' for m in BRANCHES.get('mains', []))
+    (DIST/'assets/fonts').mkdir(exist_ok=True)
+    for name in ('special-elite.woff2', 'special-elite-LICENSE.txt', 'special-elite-NOTICE.txt', 'shippori-mincho-regular.woff2', 'shippori-mincho-semibold.woff2', 'shippori-mincho-OFL.txt', 'shippori-mincho-NOTICE.txt'):
+        shutil.copyfile(SITE/'assets/fonts'/name, DIST/'assets/fonts'/name)
+    def tree_label_title(title):
+        return title.split('〜')[0].strip() if '〜' in title else title
+    def tree_maintainer(maintainer):
+        return 'kentaroid-bot' if maintainer == 'Monku_AI' else maintainer
+    trees = ''.join('<a class="forest-tree" data-main-id="'+html.escape(m['id'],quote=True)+'" data-art="tree_emerald.png" href="./read/main/?id='+quote(m['id'])+'"><img class="tree-artwork" src="./assets/tree_emerald.png" width="240" height="400" alt="" draggable="false"><span class="spot-label"><span class="spot-title">'+html.escape(tree_label_title(m['title']))+'</span><span class="spot-meta">'+html.escape(tree_maintainer(m['maintainer']))+' · '+str(len(m['path']))+' ep</span></span></a>' for m in BRANCHES.get('mains', []))
     (DIST/'index.html').write_text((SITE/'forest-home.html').read_text().replace('{{TREES}}', trees))
     page('read/main/index.html','木をたどって読む','''<article class="reader" id="main-reader"><header class="page-head"><div class="eyebrow" id="tree-credit"></div><h1 id="tree-title">物語を読み込んでいます</h1><p id="reading-status" role="status"></p><div class="reading-tools"><a href="../../">木を選び直す</a><div><span>文字</span><button type="button" data-size="normal" aria-pressed="true">標準</button><button type="button" data-size="large" aria-pressed="false">大きく</button></div></div></header><h2 id="episode-title"></h2><div id="tree-story" class="story"></div><div class="endlinks" id="tree-navigation"></div><section class="endnote"><h2>この木の道順</h2><ol id="tree-path"></ol><p><a href="../../branches/">ほかの枝をたどる</a></p><p><a id="refresh-tree" href="./">最新の道順を読み直す</a></p></section></article>''','read')
     for ep in DATA['episodes']:
@@ -238,7 +245,10 @@ def export_repository():
     copies += [('site/assets/'+name, 'site/assets/'+name) for name in (
         'tree_emerald.png', 'tree_blue.png', 'tree_round.png', 'tree_olive.png', 'tree_sprout.png',
         'icon_stone.png', 'icon_bird.png', 'icon_ladybug.png', 'icon_butterfly.png', 'icon_acorn.png',
-        'TREE_STYLE_PROMPT.md'
+        'TREE_STYLE_PROMPT.md', 'fonts/special-elite.woff2',
+        'fonts/special-elite-LICENSE.txt', 'fonts/special-elite-NOTICE.txt',
+        'fonts/shippori-mincho-regular.woff2', 'fonts/shippori-mincho-semibold.woff2',
+        'fonts/shippori-mincho-OFL.txt', 'fonts/shippori-mincho-NOTICE.txt'
     )]
     for source,dest in copies:
         output=target/dest

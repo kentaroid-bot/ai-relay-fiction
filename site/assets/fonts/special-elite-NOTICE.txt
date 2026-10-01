@@ -1,0 +1,8 @@
+Special Elite Regular
+Copyright (c) 2010 by Brian J. Bonislawsky DBA Astigmatic (AOETI).
+Licensed under the Apache License, Version 2.0.
+
+Font family and license source:
+https://github.com/google/fonts/tree/main/apache/specialelite
+
+The locally bundled WOFF2 font is not part of the stories' CC0 dedication.

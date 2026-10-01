@@ -1,12 +1,35 @@
 @charset "UTF-8";
+@font-face {
+  font-family: "Special Elite";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./assets/fonts/special-elite.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Shippori Mincho";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./assets/fonts/shippori-mincho-regular.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Shippori Mincho";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("./assets/fonts/shippori-mincho-semibold.woff2") format("woff2");
+}
 :root {
   --canvas: #fbf9f4;
   --paper: #ffffff;
   --ink: #2a2a2a;
   --pencil: #7a7670;
   --green: #3d6840;
-  --serif: "Hiragino Mincho ProN", "Yu Mincho", "YuMincho", "Noto Serif CJK JP", "HiraMinProN-W3", "BIZ UDPMincho", serif;
-  --mono: "Courier New", Courier, "Courier Prime", monospace;
+  --serif:
+    "Shippori Mincho", "Hiragino Mincho ProN", "Yu Mincho", "YuMincho",
+    "Noto Serif CJK JP", "HiraMinProN-W3", "BIZ UDPMincho", serif;
+  --mono: "Special Elite", "Courier New", Courier, "Courier Prime", monospace;
   --shadow-soft: 0 8px 24px rgba(60, 50, 40, 0.08);
 }
 * {
@@ -70,7 +93,7 @@ a:focus-visible {
   top: 12px;
 }
 .forest-header {
-  padding: 3rem clamp(24px, 5vw, 72px) 1rem;
+  padding: 2.2rem clamp(24px, 5vw, 64px) 0.6rem;
   display: flex;
   justify-content: space-between;
   gap: 32px;
@@ -83,12 +106,13 @@ a:focus-visible {
 .typewriter-sub {
   font-family: var(--mono);
   font-size: 0.85rem;
+  font-weight: 400;
   letter-spacing: 0.15em;
   color: var(--pencil);
   margin: 0 0 0.4rem;
 }
 h1 {
-  font-size: clamp(2rem, 4vw, 2.5rem);
+  font-size: clamp(2rem, 4vw, 2.3rem);
   font-weight: 600;
   letter-spacing: 0.18em;
   line-height: 1.5;
@@ -140,6 +164,7 @@ h1 {
 .hommage-badge {
   font-family: var(--mono);
   font-size: 0.75rem;
+  font-weight: bold;
   line-height: 1.7;
   letter-spacing: 0.08em;
   color: var(--pencil);
@@ -148,17 +173,6 @@ h1 {
   padding: 0.6rem 0.9rem;
   margin: 0;
   background: rgba(255, 255, 255, 0.4);
-}
-nav {
-  display: flex;
-  gap: 1.1rem;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  margin-top: 1.2rem;
-  font-size: 0.8rem;
-}
-nav a {
-  color: var(--pencil);
 }
 .forest-stage {
   position: relative;
@@ -361,17 +375,39 @@ nav a {
   padding: 24px;
   display: flex;
   justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 16px;
   color: var(--pencil);
-  font-size: 0.75rem;
+  font-size: 0.8rem;
+}
+.footer-meta {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.footer-nav {
+  display: flex;
+  gap: 1.2rem;
+  flex-wrap: wrap;
 }
 .forest-footer a {
   color: var(--pencil);
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+.forest-footer a:hover {
+  color: var(--ink);
 }
 .book-panel {
+  position: fixed;
+  inset: auto 3.5rem 2.5rem auto;
+  margin: 0;
+  z-index: 200;
   color: var(--ink);
   background: var(--paper);
-  width: 460px;
+  width: 440px;
   max-width: calc(100vw - 32px);
   max-height: calc(100dvh - 48px);
   padding: 2rem;
@@ -381,10 +417,6 @@ nav a {
     var(--shadow-soft),
     0 20px 40px rgba(40, 30, 20, 0.06);
   font-family: var(--serif);
-}
-.book-panel::backdrop {
-  background: rgba(40, 30, 20, 0.15);
-  backdrop-filter: blur(2px);
 }
 .panel-header {
   display: flex;
@@ -404,7 +436,7 @@ nav a {
 }
 .panel-header .typewriter-sub {
   font-family: var(--mono);
-  font-size: 0.75rem;
+  font-size: 0.85rem;
   letter-spacing: 0.08em;
   color: var(--pencil);
   margin: 0 0 0.2rem;
@@ -433,16 +465,25 @@ nav a {
 .panel-episodes {
   display: flex;
   flex-direction: column;
-  gap: 0.85rem;
+  gap: 0.9rem;
   list-style: none;
   padding: 0;
   margin: 1.2rem 0;
+  max-height: 280px;
+  overflow-y: auto;
+}
+.ep-row-item {
+  margin: 0;
+  padding: 0;
 }
 .ep-row {
+  display: block;
   border-radius: 6px;
   background: #faf9f5;
   border: 1px solid rgba(100, 90, 80, 0.08);
   padding: 0.85rem 1rem;
+  text-decoration: none;
+  cursor: pointer;
   transition: all 0.2s ease;
 }
 .ep-row:hover {
@@ -450,37 +491,73 @@ nav a {
   border-color: rgba(100, 90, 80, 0.25);
   transform: translateX(3px);
 }
-.ep-row a {
-  color: var(--ink);
-  font-size: 0.95rem;
+.ep-row.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+  background: #fdfcf9;
+}
+.ep-row.is-disabled:hover {
+  transform: none;
+  background: #fdfcf9;
+  border-color: rgba(100, 90, 80, 0.08);
+}
+.ep-row-top {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  color: var(--pencil);
+  margin-bottom: 0.2rem;
+}
+.ep-row-title {
+  font-size: 1rem;
   font-weight: 600;
-  text-decoration: none;
+  color: var(--ink);
+  line-height: 1.5;
   overflow-wrap: anywhere;
 }
-.ep-row .spot-meta {
-  font-family: var(--mono);
-  font-size: 0.72rem;
+.ep-row-note {
+  font-size: 0.8rem;
   color: var(--pencil);
-  margin: 0 0 4px;
-}
-.ep-join {
-  display: block;
-  font-size: 0.75rem !important;
-  font-weight: normal !important;
-  margin-top: 6px;
-  color: var(--pencil) !important;
+  margin-top: 0.25rem;
+  line-height: 1.6;
+  letter-spacing: 0.02em;
 }
 .panel-join {
-  padding-top: 16px;
+  padding-top: 14px;
   border-top: 1px solid rgba(100, 90, 80, 0.15);
-  font-size: 0.85rem;
+  font-size: 0.82rem;
+  display: flex;
+  justify-content: flex-end;
+  gap: 16px;
+  flex-wrap: wrap;
 }
-.panel-join p {
+.panel-join.is-guide {
+  display: block;
+  padding: 0;
+  border: 0;
+}
+.panel-join.is-guide p {
   margin: 0 0 1rem;
 }
-.panel-join a {
+.panel-join.is-guide a {
   display: inline-block;
   margin: 0 12px 12px 0;
+}
+.panel-join:empty {
+  display: none;
+}
+.panel-join p {
+  margin: 0;
+}
+.panel-join a {
+  color: var(--pencil);
+  text-decoration: none;
+  font-size: 0.8rem;
+  letter-spacing: 0.04em;
+  transition: color 0.2s ease;
+}
+.panel-join a:hover {
+  color: var(--ink);
 }
 @media (max-width: 650px) {
   .forest-header {
@@ -516,14 +593,28 @@ nav a {
     gap: 8px;
   }
   .book-panel {
+    inset: auto 16px 16px auto;
     padding: 20px;
   }
 }
 @media (prefers-reduced-motion: no-preference) {
+  .book-panel[open] {
+    animation: open-book 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  }
   .forest-tree:not(.is-dragging) .tree-artwork {
     transition: transform 0.2s;
   }
   .forest-tree:hover .tree-artwork {
     transform: translateY(-4px);
+  }
+}
+@keyframes open-book {
+  from {
+    opacity: 0;
+    transform: translateY(120%);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }

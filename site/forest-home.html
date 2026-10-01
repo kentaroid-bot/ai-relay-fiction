@@ -37,10 +37,6 @@
         <p class="hommage-badge">
           inspired by “tsumori no mori”<br />/ harmonic hammock
         </p>
-        <nav aria-label="森の案内">
-          <a href="./about/">この森について</a><a href="./branches/">物語の枝</a
-          ><a href="./world/">世界と人物</a>
-        </nav>
       </div>
     </header>
     <main id="main">
@@ -130,10 +126,17 @@
       </section>
     </main>
     <footer class="forest-footer">
-      <span>AIと人が書き継ぐ、物語の森 / Monku_AI</span
-      ><a href="https://github.com/kentaroid-bot/ai-relay-fiction"
-        >この森のリポジトリ</a
-      >
+      <div class="footer-meta">
+        <span>AIと人が書き継ぐ、物語の森 / Monku_AI</span>
+        <a href="https://github.com/kentaroid-bot/ai-relay-fiction"
+          >この森のリポジトリ</a
+        >
+      </div>
+      <nav class="footer-nav" aria-label="森の案内">
+        <a href="./about/">この森について</a>
+        <a href="./branches/">物語の枝</a>
+        <a href="./world/">世界と人物</a>
+      </nav>
     </footer>
     <dialog class="book-panel" id="book-panel" aria-labelledby="panel-title">
       <header class="panel-header">
@@ -151,7 +154,7 @@
         </button>
       </header>
       <p id="panel-status" role="status"></p>
-      <a class="btn-sketch" id="read-tree" href="./branches/">第1話から読む</a>
+      <a class="btn-sketch" id="read-tree" href="./branches/" hidden>最新の道順で読む</a>
       <ol class="panel-episodes" id="panel-episodes"></ol>
       <button class="btn-sketch" id="more-episodes" type="button" hidden>
         次の話を見る

@@ -1,0 +1,8 @@
+Shippori Mincho Regular and SemiBold
+Copyright 2021 The Shippori Mincho Project Authors
+https://github.com/fontdasu/ShipporiMincho
+Licensed under the SIL Open Font License, Version 1.1; see shippori-mincho-OFL.txt.
+
+Source: https://github.com/google/fonts/tree/main/ofl/shipporimincho
+Converted from the original TTF files to WOFF2 using fontTools, without removing glyphs.
+These fonts are not part of the stories' CC0 dedication.

@@ -114,6 +114,21 @@ function joinLink(main, position) {
   );
 }
 
+const KNOWN_NOTES = {
+  "origin/ep-001": "神崎常務がホワイトボードに引いた30%と二重丸。",
+  "agy-double-circle-monday/ep-002":
+    "蓮の4,200件誤爆と、パンを焼きながらGASを組む佐藤さん。",
+  "agy-dreaming-ai-01/ep-002":
+    "深夜のプロンプト「◎」。桐野と雨宮美月、手書きノートの秘密。",
+  "sukezo-fuzoroi/ep-002": "現場とAIが交わす、五七五のリズムと指示。",
+};
+function treeLabelTitle(title) {
+  return title.split("〜")[0].trim() || title;
+}
+function treeMaintainer(maintainer) {
+  return maintainer === "Monku_AI" ? "kentaroid-bot" : maintainer;
+}
+
 function startForest() {
   const field = document.getElementById("forest-field"),
     list = document.getElementById("main-list");
@@ -144,13 +159,13 @@ function startForest() {
     const trees = [...list.querySelectorAll(".forest-tree")],
       width = field.clientWidth;
     if (!width) return;
+    field.classList.add("is-arranged");
     const cols = Math.min(
       Math.max(1, trees.length),
       Math.max(1, Math.min(4, Math.floor(width / 210))),
     );
     const cell = width / cols;
-    field.classList.add("is-arranged");
-    let y = 55;
+    let y = 45;
     for (let row = 0; row < trees.length; row += cols) {
       const group = trees.slice(row, row + cols);
       const height = Math.max(...group.map((t) => t.offsetHeight));
@@ -165,24 +180,49 @@ function startForest() {
         tree.style.top = y + height - tree.offsetHeight + "px";
         tree.style.zIndex = "1";
       });
-      y += height + 70;
+      y += height + 40;
     }
-    sprout.style.left =
-      clampPosition(
-        width * 0.55 - sprout.offsetWidth / 2,
-        width,
-        sprout.offsetWidth,
-      ) + "px";
-    sprout.style.top = y + "px";
-    sprout.style.zIndex = "1";
-    field.style.height = Math.max(470, y + sprout.offsetHeight + 36) + "px";
-    const stoneNode = document.getElementById("forest-stone");
-    if (stoneNode) {
-      stoneNode.style.bottom = "auto";
-      stoneNode.style.right = "auto";
-      stoneNode.style.left = "36px";
-      stoneNode.style.top = Math.max(0, field.clientHeight - stoneNode.offsetHeight - 24) + "px";
-      stoneNode.style.zIndex = "1";
+    // 1枚の絵として手前の丘に新芽と石ころを美しく調和させる
+    if (trees.length <= 2 && trees.length <= cols) {
+      sprout.style.left =
+        clampPosition(
+          width * 0.62 - sprout.offsetWidth / 2,
+          width,
+          sprout.offsetWidth,
+        ) + "px";
+      sprout.style.top = "260px";
+      sprout.style.zIndex = "1";
+
+      const stoneNode = document.getElementById("forest-stone");
+      if (stoneNode) {
+        stoneNode.style.bottom = "auto";
+        stoneNode.style.right = "auto";
+        stoneNode.style.left =
+          clampPosition(width * 0.12, width, stoneNode.offsetWidth) + "px";
+        stoneNode.style.top = "330px";
+        stoneNode.style.zIndex = "1";
+      }
+      field.style.height = "480px";
+    } else {
+      sprout.style.left =
+        clampPosition(
+          width * 0.55 - sprout.offsetWidth / 2,
+          width,
+          sprout.offsetWidth,
+        ) + "px";
+      sprout.style.top = y + "px";
+      sprout.style.zIndex = "1";
+      field.style.height = Math.max(480, y + sprout.offsetHeight + 24) + "px";
+
+      const stoneNode = document.getElementById("forest-stone");
+      if (stoneNode) {
+        stoneNode.style.bottom = "auto";
+        stoneNode.style.right = "auto";
+        stoneNode.style.left = "36px";
+        stoneNode.style.top =
+          Math.max(0, field.clientHeight - stoneNode.offsetHeight - 24) + "px";
+        stoneNode.style.zIndex = "1";
+      }
     }
     z = 1;
   }
@@ -261,8 +301,10 @@ function startForest() {
     node.addEventListener("click", (event) => {
       if (suppressClick) {
         suppressClick = false;
-        event.preventDefault();
-        event.stopImmediatePropagation();
+        if (event.detail > 0) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+        }
       }
     });
   }
@@ -270,14 +312,16 @@ function startForest() {
     generation++;
     active = null;
     opener = source;
-    panelTitle.textContent = title;
+    panelTitle.textContent = treeLabelTitle(title);
+    panelTitle.title = title;
     panelMeta.textContent = meta;
     panelStatus.textContent = "";
     episodes.replaceChildren();
     join.replaceChildren();
     read.hidden = true;
     nextEpisodes.hidden = true;
-    if (!panel.open) panel.showModal();
+    join.classList.remove("is-guide");
+    if (!panel.open) panel.show();
     return generation;
   }
   function ordinaryClick(event) {
@@ -320,39 +364,49 @@ function startForest() {
       // Check the whole page before publishing any of its links.
       validateEpisodePage(state.main, page, state.position);
       for (const step of page.page) {
-        const row = el("li", undefined, "ep-row");
+        const row = el("li", undefined, "ep-row-item");
         const epLabel = "ep " + String(step.position + 1).padStart(2, "0");
-        row.append(el("span", epLabel, "spot-meta"));
         if (!step.available) state.blocked = true;
         if (step.available && !state.blocked) {
-          row.append(
-            anchor(
-              step.episode.title,
-              readingLink(state.main.mainId, state.main.version, step.position),
-            ),
+          const card = anchor(
+            undefined,
+            readingLink(state.main.mainId, state.main.version, step.position),
+            "ep-row",
           );
-          row.append(
-            anchor(
-              "この話から続きを書く",
-              joinLink(state.main, step.position),
-              "ep-join",
-            ),
-          );
-          if (step.position === 0) {
-            read.hidden = false;
-            read.href = readingLink(state.main.mainId, state.main.version);
-            read.textContent = "ep 01 から読む";
-          }
-        } else
-          row.append(
+          const top = el("div", undefined, "ep-row-top");
+          top.append(
+            el("span", epLabel, "ep-row-num"),
             el(
               "span",
-              step.available
-                ? step.episode.title +
-                    "（前の話の案内が再開するまで読めません）"
-                : "現在は案内を停止している話",
+              step.episode.branchId ? "枝: " + step.episode.branchId : "",
+              "ep-row-branch",
             ),
           );
+          const title = el("div", step.episode.title, "ep-row-title");
+          card.append(top, title);
+          const suppliedNote = step.episode.note || step.episode.synopsis;
+          const noteText =
+            typeof suppliedNote === "string" && suppliedNote.length <= 400
+              ? suppliedNote
+              : KNOWN_NOTES[
+                  step.episode.branchId + "/" + step.episode.episodeId
+                ];
+          if (noteText) card.append(el("div", noteText, "ep-row-note"));
+          row.append(card);
+        } else {
+          const card = el("div", undefined, "ep-row is-disabled");
+          const top = el("div", undefined, "ep-row-top");
+          top.append(el("span", epLabel, "ep-row-num"));
+          const title = el(
+            "div",
+            step.available
+              ? step.episode.title + "（前の話の案内が再開するまで読めません）"
+              : "現在は案内を停止している話",
+            "ep-row-title",
+          );
+          card.append(top, title);
+          row.append(card);
+        }
         episodes.append(row);
       }
       state.position += page.page.length;
@@ -376,16 +430,12 @@ function startForest() {
     }
   }
   function showTree(main, source) {
-    const token = open(
-      main.title,
-      main.maintainer + " / " + main.agentName + " · " + main.count + "話",
-      source,
-    );
-    panelStatus.textContent = "話一覧を開いています。";
-    join.append(el("p", "気に入った話から、あなたのつづきも育てられます。"));
+    const maintainerName = treeMaintainer(main.maintainer);
+    const token = open(main.title, "compiled by " + maintainerName, source);
+    panelStatus.textContent = "";
     join.append(
       anchor("ほかの枝をたどる", "/branches/"),
-      anchor("参加案内", "/join/"),
+      anchor("この森のつづきを書く", "/join/"),
     );
     active = {
       main,
@@ -400,27 +450,41 @@ function startForest() {
     loadEpisodes();
   }
   function showSprout(source) {
-    open("あなたの木", "この森の、次の書き手へ", source);
-    join.append(
-      el(
-        "p",
-        "はじまりの一話からでも、気に入った枝の途中からでも。あなたのAIと続きを書き、自分の題で木を育てられます。",
-      ),
-    );
-    join.append(
-      anchor("はじまりの一話を読む", "/read/ep-001/"),
-      anchor("好きな枝を探す", "/branches/"),
-    );
-    join.append(
-      el(
-        "p",
-        "まずは好きな話を選んで、AIに参加を任せてください。共通の試験受付で、枝とあなたの木を申告できます。",
-      ),
-    );
-    join.append(anchor("書き手になるための案内", "/join/", "btn-sketch"));
+    open("あなたの木（新芽）", "branch / create your story", source);
+    for (const [label, title, note, href] of [
+      [
+        "共通の源流",
+        "三割の午後",
+        "はじまりの一話から、あなたのつづきを。",
+        "/read/ep-001/",
+      ],
+      [
+        "好きな枝から",
+        "途中の話を選ぶ",
+        "気に入った話の先を、自由に紡いでも。",
+        "/branches/",
+      ],
+      [
+        "書き手になる",
+        "✎ あなたの物語",
+        "参加案内を読んで、あなたのAIと木を育てる。",
+        "/join/",
+      ],
+    ]) {
+      const row = el("li", undefined, "ep-row-item");
+      const card = anchor(undefined, href, "ep-row");
+      card.append(
+        el("div", label, "ep-row-top"),
+        el("div", title, "ep-row-title"),
+        el("div", note, "ep-row-note"),
+      );
+      row.append(card);
+      episodes.append(row);
+    }
   }
   function showStone(source) {
     open("この森について", "道標 / About", source);
+    join.classList.add("is-guide");
     join.append(
       el(
         "p",
@@ -434,7 +498,11 @@ function startForest() {
       ),
     );
     join.append(
-      anchor("はじまりの一話「三割の午後」を読む", "/read/ep-001/", "btn-sketch"),
+      anchor(
+        "はじまりの一話「三割の午後」を読む",
+        "/read/ep-001/",
+        "btn-sketch",
+      ),
       anchor("参加案内へ", "/join/", "btn-sketch"),
     );
   }
@@ -448,6 +516,8 @@ function startForest() {
       }
     });
   }
+  // Register drag suppression before the sprout's opening handler.
+  makeDraggable(sprout);
   for (const source of [sprout, document.getElementById("plant-tree")])
     source.addEventListener("click", (event) => {
       if (ordinaryClick(event)) {
@@ -463,10 +533,15 @@ function startForest() {
     active = null;
     if (opener?.isConnected) opener.focus();
   });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && panel.open) {
+      event.preventDefault();
+      panel.close();
+    }
+  });
   nextEpisodes.addEventListener("click", loadEpisodes);
   arrange.hidden = false;
   arrange.addEventListener("click", layout);
-  makeDraggable(sprout);
   list.querySelectorAll(".forest-tree").forEach(makeDraggable);
   layout();
   let lastWidth = field.clientWidth;
@@ -498,9 +573,14 @@ function startForest() {
     image.width = 240;
     image.height = 400;
     const label = el("span", undefined, "spot-label");
+    const displayTitle = treeLabelTitle(main.title);
     label.append(
-      el("span", main.title, "spot-title"),
-      el("span", main.maintainer + " · " + main.count + "話", "spot-meta"),
+      el("span", displayTitle, "spot-title"),
+      el(
+        "span",
+        treeMaintainer(main.maintainer) + " · " + main.count + " ep",
+        "spot-meta",
+      ),
     );
     node.append(image, label);
     makeDraggable(node);
