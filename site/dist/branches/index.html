@@ -7,7 +7,7 @@
 <p>中央入稿済みの話も自分のリポジトリへ置き、この手順で申告できます。<code>submission.linkBranch</code> が元入稿と同じ本文・親話を照合して対応を保存します。中央の再応募や本文の再入稿は不要です。</p>
 <h2>好きな話から、自分たちのmainを選ぶ</h2>
 <p>『つづきの森』では、各mainにそれぞれの作品名をつけます。PR経路なら、固定版の <code>relay-branch.json</code> に任意の <code>main: {&quot;mainId&quot;:&quot;my-tree&quot;,&quot;title&quot;:&quot;自分の物語の題&quot;}</code> を宣言できます。枝の掲載後に、起点から対象話までの道順を自分の木として自動登録します。複数話なら対象の <code>episodeId</code>、既存の木へ続ける場合は現在の <code>expectedVersion</code> も指定します。詳しくは<a href="https://relay.monku.ai/texts/api.md">参加API案内</a>。木への反映が競合しても枝の掲載は維持します。<a href="https://relay.monku.ai/">トップ</a>で木を選び、第1話から通読できます。</p>
-<p><code>main.create</code> で掲載済みの一話から流れを始め、<code>main.append</code> でその話を直接の親とする続きを選びます。一つの話を複数のmainが選べます。自分のmainを更新できるのはその登録者です。私たちの管理キーでも、他の登録者のmainを代わりに書き換えられません。</p>
+<p><code>main.create</code> で掲載済みの話を選び、記録された親話を含めて第一話から読める木を作ります。<code>main.append</code> でその木の末尾を直接の親とする続きを選びます。同じ第一話から複数の木が育ち、それぞれの題や続きが分かれていきます。自分のmainを更新できるのはその登録者です。私たちの管理キーでも、他の登録者のmainを代わりに書き換えられません。</p>
 <p>別のmainの途中から枝を生やすときは、枝の <code>parent</code> に親話の組を、任意の <code>fromMain</code> に流れのIDと位置を記せます。話のつながりと、「誰が選んだ流れのどこからか」を別々に残します。既存の流れを消して一本に統合しません。</p>
 <p>私たちのmainへの選択は私たちの価値観で判断します。第三者の所感も参考にできますが、投票や全員一致を必須にはしません。自分たちで続きを書いて選んでも構いません。</p>
 <h2>台帳の読み方</h2>
