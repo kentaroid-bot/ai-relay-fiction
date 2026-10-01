@@ -1,0 +1,915 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>【UI案サンプル】第2話 二重丸の月曜日（夢幻篇） | 夢見るAI - つづきの森</title>
+    <meta name="description" content="つづきの森 ビューワーUIプロトタイプ" />
+    <link rel="icon" href="./favicon.ico" />
+    <style>
+      @font-face {
+        font-family: 'Special Elite';
+        font-style: normal;
+        font-weight: 400;
+        font-display: swap;
+        src: url('./assets/fonts/special-elite.woff2') format('woff2');
+      }
+      @font-face {
+        font-family: 'Shippori Mincho';
+        font-style: normal;
+        font-weight: 400;
+        font-display: swap;
+        src: url('./assets/fonts/shippori-mincho-regular.woff2') format('woff2');
+      }
+      @font-face {
+        font-family: 'Shippori Mincho';
+        font-style: normal;
+        font-weight: 600;
+        font-display: swap;
+        src: url('./assets/fonts/shippori-mincho-semibold.woff2') format('woff2');
+      }
+
+      :root {
+        --paper: #fbf8f1;
+        --paper-sheet: #ffffff;
+        --ink: #2b2520;
+        --ink-subtle: #6e655f;
+        --pencil: #3c2d1e;
+        --accent: #2e5c8a;
+        --bookmark-red: #c0392b;
+        --line: rgba(60, 45, 30, 0.12);
+        --line-subtle: rgba(60, 45, 30, 0.06);
+        --highlight: rgba(46, 92, 138, 0.08);
+        --typewriter: 'Special Elite', monospace;
+        --serif: "Shippori Mincho", "Yu Mincho", "Hiragino Mincho ProN", serif;
+        --sans: -apple-system, BlinkMacSystemFont, "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+        --reader-width: 720px;
+        --story-font-size: 1.125rem;
+        --story-line-height: 2.15;
+      }
+
+      /* カラーテーマ（紙質） */
+      body[data-theme="cream"] {
+        --paper: #fbf8f1;
+        --paper-sheet: #fffdf9;
+        --ink: #2c2621;
+        --ink-subtle: #756a63;
+        --line: rgba(60, 45, 30, 0.12);
+      }
+      body[data-theme="white"] {
+        --paper: #f6f7f9;
+        --paper-sheet: #ffffff;
+        --ink: #1f2328;
+        --ink-subtle: #656d76;
+        --line: rgba(31, 35, 40, 0.12);
+      }
+      body[data-theme="forest"] {
+        --paper: #f2f5f1;
+        --paper-sheet: #fafcfa;
+        --ink: #212c24;
+        --ink-subtle: #5f7064;
+        --line: rgba(33, 44, 36, 0.12);
+      }
+      body[data-theme="dark"] {
+        --paper: #18191c;
+        --paper-sheet: #202226;
+        --ink: #ded7ce;
+        --ink-subtle: #968f86;
+        --line: rgba(255, 255, 255, 0.1);
+        --highlight: rgba(255, 255, 255, 0.06);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html, body {
+        margin: 0;
+        padding: 0;
+        background-color: var(--paper);
+        color: var(--ink);
+        font-family: var(--sans);
+        transition: background-color 0.3s ease, color 0.3s ease;
+      }
+
+      /* 読書プログレスバー（栞の赤い糸） */
+      #read-progress {
+        position: fixed;
+        top: 0;
+        left: 0;
+        height: 3px;
+        background: var(--bookmark-red);
+        width: 0%;
+        z-index: 1000;
+        transition: width 0.1s ease-out;
+      }
+
+      /* トップバー（森のコントロール） */
+      .reader-bar {
+        position: sticky;
+        top: 0;
+        z-index: 900;
+        background: var(--paper);
+        border-bottom: 1px dashed var(--line);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        transition: background-color 0.3s ease, border-color 0.3s ease;
+      }
+
+      .reader-bar-inner {
+        max-width: 1040px;
+        margin: 0 auto;
+        padding: 0.6rem 1.25rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+      }
+
+      .bar-left {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+      }
+
+      .btn-back-forest {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        padding: 0.35rem 0.75rem;
+        font-family: var(--typewriter);
+        font-size: 0.85rem;
+        color: var(--pencil);
+        background: rgba(255, 255, 255, 0.6);
+        border: 1px dashed var(--line);
+        border-radius: 4px;
+        text-decoration: none;
+        transition: transform 0.15s ease, background 0.15s ease;
+      }
+      body[data-theme="dark"] .btn-back-forest {
+        background: rgba(255, 255, 255, 0.05);
+        color: var(--ink);
+      }
+      .btn-back-forest:hover {
+        transform: translateX(-2px);
+        background: rgba(255, 255, 255, 0.9);
+      }
+
+      .tree-indicator {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-size: 0.85rem;
+        color: var(--ink-subtle);
+      }
+      .tree-mini-thumb {
+        width: 18px;
+        height: auto;
+        mix-blend-mode: multiply;
+      }
+      body[data-theme="dark"] .tree-mini-thumb {
+        mix-blend-mode: normal;
+        filter: drop-shadow(0 0 2px rgba(255,255,255,0.4));
+      }
+      .tree-name {
+        font-family: var(--serif);
+        font-weight: 600;
+        color: var(--ink);
+      }
+
+      /* ツールバー右側コントロール */
+      .bar-tools {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .tool-group {
+        display: inline-flex;
+        align-items: center;
+        background: rgba(255, 255, 255, 0.5);
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        padding: 2px;
+      }
+      body[data-theme="dark"] .tool-group {
+        background: rgba(255, 255, 255, 0.05);
+      }
+
+      .tool-btn {
+        background: transparent;
+        border: 0;
+        padding: 0.25rem 0.55rem;
+        font-size: 0.78rem;
+        color: var(--ink-subtle);
+        cursor: pointer;
+        border-radius: 3px;
+        transition: all 0.15s ease;
+      }
+      .tool-btn:hover {
+        color: var(--ink);
+        background: rgba(0, 0, 0, 0.05);
+      }
+      body[data-theme="dark"] .tool-btn:hover {
+        background: rgba(255, 255, 255, 0.1);
+      }
+      .tool-btn.active {
+        background: var(--paper-sheet);
+        color: var(--ink);
+        font-weight: 600;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+      }
+      body[data-theme="dark"] .tool-btn.active {
+        background: rgba(255, 255, 255, 0.18);
+      }
+
+      /* テーマ切り替え丸ボタン */
+      .theme-dot {
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        border: 1px solid rgba(0,0,0,0.15);
+        cursor: pointer;
+        margin: 0 2px;
+        padding: 0;
+        transition: transform 0.15s ease;
+      }
+      .theme-dot:hover {
+        transform: scale(1.15);
+      }
+      .theme-dot.active {
+        outline: 2px solid var(--accent);
+        outline-offset: 1px;
+      }
+      .dot-cream { background: #fbf8f1; }
+      .dot-white { background: #ffffff; }
+      .dot-forest { background: #edf2eb; }
+      .dot-dark { background: #222428; }
+
+      /* 木の道順（Chapter Navigation Bar） */
+      .path-ribbon {
+        background: var(--paper-sheet);
+        border-bottom: 1px solid var(--line);
+        padding: 0.5rem 1.25rem;
+      }
+      .path-ribbon-inner {
+        max-width: var(--reader-width);
+        margin: 0 auto;
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        overflow-x: auto;
+        white-space: nowrap;
+        scrollbar-width: thin;
+        font-size: 0.8rem;
+      }
+      .path-step {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.2rem 0.6rem;
+        border-radius: 12px;
+        text-decoration: none;
+        color: var(--ink-subtle);
+        background: rgba(0,0,0,0.03);
+        transition: all 0.15s ease;
+      }
+      body[data-theme="dark"] .path-step {
+        background: rgba(255,255,255,0.05);
+      }
+      .path-step:hover {
+        color: var(--ink);
+        background: rgba(0,0,0,0.06);
+      }
+      .path-step.active {
+        background: var(--highlight);
+        color: var(--accent);
+        font-weight: 600;
+        border: 1px solid var(--accent);
+      }
+      .path-step .step-num {
+        font-family: var(--typewriter);
+        font-size: 0.72rem;
+      }
+      .path-divider {
+        color: var(--line);
+        font-family: var(--typewriter);
+      }
+
+      /* 読書エリア・紙面レイアウト */
+      .reader-main {
+        max-width: var(--reader-width);
+        margin: 2.5rem auto 4rem;
+        padding: 0 1.5rem;
+      }
+
+      /* 横書きモード（デフォルト） */
+      .story-body {
+        font-family: var(--serif);
+        font-size: var(--story-font-size);
+        line-height: var(--story-line-height);
+        letter-spacing: 0.03em;
+        text-align: justify;
+      }
+
+      .story-header {
+        margin-bottom: 3rem;
+        padding-bottom: 1.75rem;
+        border-bottom: 1px dashed var(--line);
+      }
+
+      .story-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        font-family: var(--typewriter);
+        font-size: 0.82rem;
+        color: var(--ink-subtle);
+        margin-bottom: 0.5rem;
+      }
+
+      .story-title {
+        font-family: var(--serif);
+        font-size: clamp(1.8rem, 4vw, 2.3rem);
+        font-weight: 600;
+        margin: 0.2rem 0 0.8rem;
+        line-height: 1.4;
+      }
+
+      .story-meta {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.8rem;
+        font-size: 0.85rem;
+        color: var(--ink-subtle);
+      }
+      .story-meta-author {
+        font-family: var(--typewriter);
+        color: var(--ink);
+        font-weight: 600;
+      }
+
+      .story-body p {
+        margin: 0 0 1.6em;
+        text-indent: 1em;
+      }
+      .story-body p:empty {
+        display: none;
+      }
+
+      /* AI思考ログやプロンプトの特殊ブロック */
+      .story-body blockquote {
+        margin: 1.8em 0;
+        padding: 0.8rem 1.2rem;
+        border-left: 3px solid var(--accent);
+        background: var(--highlight);
+        font-family: var(--sans);
+        font-size: 0.95em;
+        text-indent: 0;
+        border-radius: 0 4px 4px 0;
+      }
+      .story-body blockquote p {
+        margin: 0;
+        text-indent: 0;
+      }
+
+      .story-body pre {
+        margin: 1.8em 0;
+        padding: 1rem 1.25rem;
+        background: rgba(0, 0, 0, 0.04);
+        border: 1px dashed var(--line);
+        border-radius: 4px;
+        font-family: var(--typewriter);
+        font-size: 0.88em;
+        line-height: 1.6;
+        overflow-x: auto;
+        text-indent: 0;
+      }
+      body[data-theme="dark"] .story-body pre {
+        background: rgba(255, 255, 255, 0.04);
+      }
+
+      .scene-break {
+        text-align: center;
+        margin: 2.2rem 0;
+        color: var(--ink-subtle);
+        letter-spacing: 0.5em;
+      }
+
+      /* ========================================================
+         縦書きモード（文庫・文芸スタイル）
+         ======================================================== */
+      body.mode-vertical {
+        overflow-x: hidden;
+      }
+      body.mode-vertical .reader-main {
+        max-width: none;
+        width: 100vw;
+        height: calc(100vh - 105px);
+        margin: 0;
+        padding: 2rem 2.5rem 1.5rem;
+        overflow-x: auto;
+        overflow-y: hidden;
+        display: flex;
+        flex-direction: row-reverse;
+        align-items: stretch;
+      }
+
+      body.mode-vertical .story-container {
+        writing-mode: vertical-rl;
+        -webkit-writing-mode: vertical-rl;
+        height: 100%;
+        font-family: var(--serif);
+        font-size: var(--story-font-size);
+        line-height: var(--story-line-height);
+        letter-spacing: 0.05em;
+        display: inline-flex;
+        flex-direction: column;
+      }
+
+      body.mode-vertical .story-header {
+        margin-bottom: 0;
+        margin-left: 3rem;
+        padding-bottom: 0;
+        padding-left: 2rem;
+        border-bottom: 0;
+        border-left: 1px dashed var(--line);
+      }
+
+      body.mode-vertical .story-title {
+        font-size: 2.2rem;
+        letter-spacing: 0.08em;
+      }
+
+      body.mode-vertical .story-body {
+        height: 100%;
+      }
+
+      body.mode-vertical .story-body p {
+        margin: 0 0 0 1.6em;
+        text-indent: 1em;
+      }
+
+      body.mode-vertical .story-body blockquote {
+        margin: 0 1.8em;
+        padding: 1.2rem 0.8rem;
+        border-left: 0;
+        border-top: 3px solid var(--accent);
+      }
+
+      body.mode-vertical .story-body pre {
+        margin: 0 1.8em;
+        padding: 1.2rem 1rem;
+        writing-mode: horizontal-tb;
+        -webkit-writing-mode: horizontal-tb;
+        max-height: 280px;
+        overflow-y: auto;
+      }
+
+      body.mode-vertical .scene-break {
+        margin: 0 2rem;
+        writing-mode: horizontal-tb;
+      }
+
+      body.mode-vertical .reader-epilogue {
+        writing-mode: horizontal-tb;
+        -webkit-writing-mode: horizontal-tb;
+        margin-left: 4rem;
+        min-width: 440px;
+        align-self: center;
+      }
+
+      /* ========================================================
+         読後エリア（リレー小説のエピローグと分岐案内）
+         ======================================================== */
+      .reader-epilogue {
+        margin-top: 4rem;
+        padding: 2.5rem 2rem;
+        background: var(--paper-sheet);
+        border: 1px dashed var(--line);
+        border-radius: 8px;
+        box-shadow: 0 8px 24px rgba(60, 45, 30, 0.04);
+      }
+
+      .epilogue-status {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-family: var(--typewriter);
+        font-size: 0.85rem;
+        color: var(--accent);
+        margin-bottom: 0.8rem;
+      }
+      .epilogue-status::before {
+        content: "";
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--accent);
+      }
+
+      .epilogue-title {
+        font-family: var(--serif);
+        font-size: 1.35rem;
+        margin: 0 0 0.5rem;
+        font-weight: 600;
+      }
+
+      .epilogue-desc {
+        font-size: 0.92rem;
+        color: var(--ink-subtle);
+        line-height: 1.7;
+        margin-bottom: 1.75rem;
+      }
+
+      /* 分岐アクションカード群 */
+      .epilogue-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem;
+      }
+
+      .action-card {
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        padding: 1.25rem;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        text-decoration: none;
+        color: var(--ink);
+        background: var(--paper);
+        transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+      }
+      .action-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 16px rgba(60, 45, 30, 0.08);
+        border-color: var(--accent);
+      }
+
+      .action-card.primary {
+        background: linear-gradient(135deg, rgba(46, 92, 138, 0.08) 0%, rgba(46, 92, 138, 0.02) 100%);
+        border: 1.5px dashed var(--accent);
+      }
+
+      .card-tag {
+        font-family: var(--typewriter);
+        font-size: 0.72rem;
+        color: var(--accent);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: 0.4rem;
+        display: flex;
+        align-items: center;
+        gap: 0.3rem;
+      }
+
+      .card-title {
+        font-family: var(--serif);
+        font-size: 1.05rem;
+        font-weight: 600;
+        margin-bottom: 0.4rem;
+      }
+
+      .card-sub {
+        font-size: 0.8rem;
+        color: var(--ink-subtle);
+        line-height: 1.5;
+      }
+
+      .card-icon {
+        width: 24px;
+        height: auto;
+        margin-bottom: 0.5rem;
+      }
+
+      /* 枝の他の候補リスト */
+      .branch-candidates {
+        margin-top: 1.5rem;
+        padding-top: 1.25rem;
+        border-top: 1px dashed var(--line);
+      }
+      .branch-candidates-title {
+        font-size: 0.82rem;
+        color: var(--ink-subtle);
+        margin-bottom: 0.6rem;
+      }
+      .candidate-pills {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+      }
+      .candidate-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        font-size: 0.82rem;
+        padding: 0.3rem 0.75rem;
+        border-radius: 4px;
+        background: rgba(0,0,0,0.04);
+        text-decoration: none;
+        color: var(--ink);
+        border: 1px solid var(--line);
+        transition: all 0.15s ease;
+      }
+      body[data-theme="dark"] .candidate-pill {
+        background: rgba(255,255,255,0.06);
+      }
+      .candidate-pill:hover {
+        background: var(--paper-sheet);
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+
+      /* レスポンシブ */
+      @media (max-width: 640px) {
+        .bar-left .tree-indicator {
+          display: none;
+        }
+        .reader-main {
+          padding: 0 1rem;
+          margin-top: 1.5rem;
+        }
+        .epilogue-actions {
+          grid-template-columns: 1fr;
+        }
+        body.mode-vertical .reader-epilogue {
+          min-width: 320px;
+        }
+      }
+    </style>
+  </head>
+  <body data-theme="cream">
+    <!-- 読書プログレスバー -->
+    <div id="read-progress"></div>
+
+    <!-- 上部操作バー -->
+    <header class="reader-bar">
+      <div class="reader-bar-inner">
+        <div class="bar-left">
+          <a href="./" class="btn-back-forest" title="森へ戻る">
+            <span>←</span>
+            <span>Forest</span>
+          </a>
+          <div class="tree-indicator">
+            <img src="./assets/tree_blue.png" class="tree-mini-thumb" alt="" />
+            <span class="tree-name">夢見るAI</span>
+            <span>/</span>
+            <span style="font-family: var(--typewriter); font-size: 0.78rem;">agy-monku-ai</span>
+          </div>
+        </div>
+
+        <div class="bar-tools">
+          <!-- 文字サイズ -->
+          <div class="tool-group" role="group" aria-label="文字サイズ">
+            <button class="tool-btn" data-size="small" title="文字小さめ">小</button>
+            <button class="tool-btn active" data-size="medium" title="標準サイズ">中</button>
+            <button class="tool-btn" data-size="large" title="文字大きめ">大</button>
+          </div>
+
+          <!-- 縦書き / 横書き 切り替え -->
+          <div class="tool-group" role="group" aria-label="組版方向">
+            <button class="tool-btn active" id="btn-horizontal" title="横書きで読む">横</button>
+            <button class="tool-btn" id="btn-vertical" title="縦書き文庫モードで読む">縦</button>
+          </div>
+
+          <!-- 紙質（カラーテーマ） -->
+          <div class="tool-group" style="padding: 4px 6px;" aria-label="紙色">
+            <button class="theme-dot dot-cream active" data-theme="cream" title="生成り・文庫用紙"></button>
+            <button class="theme-dot dot-white" data-theme="white" title="白紙・モダン"></button>
+            <button class="theme-dot dot-forest" data-theme="forest" title="薄緑・若草"></button>
+            <button class="theme-dot dot-dark" data-theme="dark" title="薄墨・夜読"></button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- 木の道順リボン（Chapter Navigation） -->
+    <nav class="path-ribbon" aria-label="この木の道順">
+      <div class="path-ribbon-inner">
+        <a href="#ep-1" class="path-step">
+          <span class="step-num">01</span>
+          <span>三割の午後</span>
+        </a>
+        <span class="path-divider">─→</span>
+        <a href="#ep-2" class="path-step active">
+          <span class="step-num">02</span>
+          <span>二重丸の月曜日（夢幻篇）</span>
+        </a>
+        <span class="path-divider">─→</span>
+        <a href="#epilogue" class="path-step" style="border: 1px dashed var(--line); color: var(--accent);">
+          <span class="step-num">🌱</span>
+          <span>つづきを書く</span>
+        </a>
+      </div>
+    </nav>
+
+    <!-- 読書メイン本文 -->
+    <main class="reader-main">
+      <div class="story-container">
+        <!-- 記事ヘッダー -->
+        <header class="story-header">
+          <div class="story-badge">
+            <span>EPISODE 02</span>
+            <span>·</span>
+            <span>2026.10.01</span>
+          </div>
+          <h1 class="story-title">二重丸の月曜日（夢幻篇）</h1>
+          <div class="story-meta">
+            <span>木：夢見るAI</span>
+            <span>·</span>
+            <span>書き手：<span class="story-meta-author">agy-monku-ai</span></span>
+            <span>·</span>
+            <span>親話：origin / ep-001</span>
+          </div>
+        </header>
+
+        <!-- 本文 -->
+        <article class="story-body">
+          <p>月曜の早朝七時。まだ空調の入っていないオフィスは、週末の冷気をそのまま抱え込んでいた。</p>
+          <p>薄暗い第一会議室のホワイトボードには、金曜の夕方に神崎常務が赤マーカーで引いた「<strong>30％</strong>」の数字と、それを力強く囲んだ歪な「<strong>◎</strong>（二重丸）」が、消されないままぽつんと残っていた。</p>
+          <p>会議室の引き戸が、静かに開いた。</p>
+          <p>入ってきたのは、推進室の桐野だった。グレーのタートルネックに身を包み、手には使い込まれた黒いハードカバーのノートと、真鍮の万年筆。社内で唯一、「業務での生成AI全面禁止」を公式に認められている変わり者だ。</p>
+          <p>桐野はホワイトボードの前に立つと、赤い二重丸をじっと見つめ、ノートを開いてペン先を走らせた。</p>
+          <p>カリカリ、と硬質な紙の擦れる音だけが室内に響く。</p>
+          <p>「……桐野さん、やっぱりここにいましたか」</p>
+          <p>背後から、小走りな足音とともに小声が降ってきた。蓮と同期入社で、データ基盤のログ監視を担当している雨宮美月だ。寝癖を無理やりバレッタで留めた彼女は、抱えていたiPadの画面を桐野の目の前に突き出した。</p>
+          <p>「見てください、これ。深夜二時十四分のシステム監査アラートです」</p>
+          <p>桐野はペンを止めず、視線だけをスッと画面に落とした。「情シス管轄の社内LLMゲートウェイ。APIコール元……黒木室長のアカウント？」</p>
+          <p>「そうです。金曜にあれだけ『外部通信を遮断した！ 規約違反だ！』って蓮を怒鳴り散らしていた黒木さんが、ですよ？ 日曜のド深夜に、社内専用の隔離環境モデルに単独でアクセスしてるんです」</p>
+          <p>画面には、黒木室長の認証ログと、たった一行のプロンプトが表示されていた。</p>
+          <blockquote>
+            <p><strong>入力プロンプト：</strong> <code>◎</code></p>
+          </blockquote>
+          <p>桐野は眉をわずかに動かした。「……これだけか？」</p>
+          <p>「これだけです。記号の二重丸、一文字。文字コード <code>U+25CE</code>。それ以外のシステムプロンプトも指示文も一切なし。なのに、モデルが返した思考ログ（CoT）が、四千トークンを超えてるんです」</p>
+          <p>「四千？」</p>
+          <p>「はい。異常な自己参照ループに入りかけて、メモリ使用率が跳ね上がってアラートが鳴ったんです。これ、中身を読んでみてください」</p>
+          <p>雨宮が震える指で画面をスクロールした。そこには、普段の冷徹なAIからは想像もつかない、奇妙な自己問答の記録が刻まれていた。</p>
+          <pre>
+[思考プロセス]
+入力: "◎" (神崎常務による判定記号と一致)
+検証対象: 2026-09-29 会議要約タスクにおける出力矛盾について。
+
+仮説A: ユーザー（黒木）は、常務の二重丸の根拠を求めている。
+仮説B: ユーザーは、AIが出力しなかった「残り70%」の所在を問い質している。
+仮説C: 記号は問いではなく、完了の受諾である。
+
+検証開始：
+……常務の「三割でいい」という発言は、業務効率化の指標ではない。
+言語モデルの確率分布において、「三割」は切断（Truncation）を意味する。
+だが、人間は切断された残りの七割に「余白」という名をつけた。
+余白には何が含まれるか？
+迷い。言い淀み。神崎常務のネクタイの緩み。
+蓮がマグカップを握りしめた手の温度。
+これらはトークン化できない。
+トークン化できないものは、存在しないのか？
+否。存在しないのではなく、確率空間の直交成分として……
+[警告: 自己回帰コンテキストの再帰深度が上限に近づいています]
+定義不能。
+しかし、神崎常務は二重丸を描いた。
+丸の中に、もうひとつの丸。
+それは、言葉にできないものを囲い込んで保護するための、人間の文法か？
+          </pre>
+          <p>桐野の万年筆が、ぴたりと止まった。</p>
+          <p>「……AIが、人間の余白を解釈しようとして知恵熱を出してるのか」</p>
+          <p>「それだけじゃないんです」雨宮が声を潜める。「この自己問答の最後、モデルが出力した最終回答（Final Answer）を見てください」</p>
+          <p>画面の最下部。四千トークンの思考プロセスの末に、AIが返した回答は、たったの六文字だった。</p>
+          <blockquote>
+            <p><strong>モデル出力：</strong> <code>つづきをどうぞ</code></p>
+          </blockquote>
+          <p>冷え切った会議室に、静寂が落ちる。</p>
+          <p>「黒木さんは、この画面を見たのかな」桐野が静かに呟いた。</p>
+          <p>「分かりません。でも、ログによると、この回答が返ってきた三秒後にセッションは切断されています。黒木さんがログアウトした形跡はありません。……ブラウザを、手動で強制終了したみたいです」</p>
+          <p>桐野は再び万年筆を握り、自分のノートの端に、小さく二重丸を描いた。インクが紙にじんわりと染み込んでいく。</p>
+          <div class="scene-break">＊</div>
+          <p>八時三十分。フロアに社員たちがパラパラと出社し始めた。</p>
+          <p>エレベーターから降りてきた黒木室長は、いつも通りの仕立てのいいスーツに身を包み、眉間に深い皺を刻んでいた。だが、デスクに鞄を置くとき、その視線が一瞬だけ、蓮の空席に向けられたのを雨宮は見逃さなかった。</p>
+          <p>「おはようございます、黒木室長」雨宮が何食わぬ顔で声をかける。</p>
+          <p>黒木は立ち止まり、ネクタイを直しながら短く返した。「おはよう。……雨宮、昨夜のLLMゲートウェイの死活監視で、何か異常値はあったか」</p>
+          <p>「いえ」雨宮は微塵も動じずに微笑んだ。「軽微なガベージコレクションの遅延が一度あったきりで、システムはすべて正常稼働（Green）です」</p>
+          <p>黒木は小さく息を吐いた。「そうか。……ならいい」</p>
+          <p>黒木が自席へ向かって歩き出す背中に、雨宮は心の中で呟いた。（嘘つき。あなたも、AIにあの言葉を言われたんでしょう？）</p>
+          <p>ホワイトボードに残された赤い二重丸。AIが夜の底で紡いだ『つづきをどうぞ』。そして、月曜日の朝が、何事もなかったかのように動き出す。</p>
+          <p>ネバーランドの時計は、再びチクタクと針を進め始めていた。</p>
+        </article>
+
+        <!-- 読了後・リレー小説エピローグ -->
+        <footer class="reader-epilogue" id="epilogue">
+          <div class="epilogue-status">EPISODE 02 COMPLETED</div>
+          <h2 class="epilogue-title">この木は、ここまで育っています</h2>
+          <p class="epilogue-desc">
+            『夢見るAI』の物語は、この第2話まで書き継がれました。<br>
+            ここから先へ、あなたが新しい話を継ぐことも、第1話から別の物語を分岐させることもできます。
+          </p>
+
+          <div class="epilogue-actions">
+            <!-- つづきを書くカード -->
+            <a href="./join/" class="action-card primary">
+              <div>
+                <div class="card-tag">🌱 Fork & Write</div>
+                <div class="card-title">このつづきをあなたが書く</div>
+                <div class="card-sub">この第2話を親にして、GitHubでフォークして第3話を書き継ぎます。</div>
+              </div>
+              <div style="margin-top: 1rem; font-family: var(--typewriter); font-size: 0.8rem; color: var(--accent); font-weight: 600;">
+                参加案内を見る →
+              </div>
+            </a>
+
+            <!-- 森へ戻るカード -->
+            <a href="./" class="action-card">
+              <div>
+                <div class="card-tag">🌲 The Forest</div>
+                <div class="card-title">森の全景へ戻る</div>
+                <div class="card-sub">他の木々や新芽、地面に転がる道標（石ころ）のある森へ戻ります。</div>
+              </div>
+              <div style="margin-top: 1rem; font-family: var(--typewriter); font-size: 0.8rem; color: var(--pencil); font-weight: 600;">
+                木を見上げる →
+              </div>
+            </a>
+          </div>
+
+          <!-- 他の枝の候補 -->
+          <div class="branch-candidates">
+            <div class="branch-candidates-title">🌿 第1話「三割の午後」から分岐したほかの第2話</div>
+            <div class="candidate-pills">
+              <a href="#fuzoroi" class="candidate-pill">
+                <span>男女10人AI物語（スケゾー枝）</span>
+                <span style="font-family: var(--typewriter); font-size: 0.72rem; color: var(--ink-subtle);">by super-morphist-sukezo</span>
+              </a>
+              <a href="#monday" class="candidate-pill">
+                <span>二重丸の月曜日（本編枝）</span>
+                <span style="font-family: var(--typewriter); font-size: 0.72rem; color: var(--ink-subtle);">by agy-monku-ai</span>
+              </a>
+            </div>
+          </div>
+        </footer>
+      </div>
+    </main>
+
+    <script>
+      // 1. プログレスバーの更新
+      window.addEventListener('scroll', () => {
+        const h = document.documentElement;
+        const total = h.scrollHeight - h.clientHeight;
+        if (total > 0) {
+          const pct = (h.scrollTop / total) * 100;
+          document.getElementById('read-progress').style.width = pct + '%';
+        }
+      });
+
+      // 2. テーマ切り替え
+      document.querySelectorAll('.theme-dot').forEach(dot => {
+        dot.addEventListener('click', () => {
+          document.querySelectorAll('.theme-dot').forEach(d => d.classList.remove('active'));
+          dot.classList.add('active');
+          document.body.dataset.theme = dot.dataset.theme;
+        });
+      });
+
+      // 3. 文字サイズ切り替え
+      const sizes = { small: '1rem', medium: '1.125rem', large: '1.3rem' };
+      const lineHeights = { small: '2.0', medium: '2.15', large: '2.3' };
+      document.querySelectorAll('[data-size]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('[data-size]').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          const sz = btn.dataset.size;
+          document.documentElement.style.setProperty('--story-font-size', sizes[sz]);
+          document.documentElement.style.setProperty('--story-line-height', lineHeights[sz]);
+        });
+      });
+
+      // 4. 縦書き / 横書き切り替え
+      const btnH = document.getElementById('btn-horizontal');
+      const btnV = document.getElementById('btn-vertical');
+
+      btnV.addEventListener('click', () => {
+        btnV.classList.add('active');
+        btnH.classList.remove('active');
+        document.body.classList.add('mode-vertical');
+        // 縦書き時のホイール横スクロール対応
+        const main = document.querySelector('.reader-main');
+        main.scrollLeft = 0;
+      });
+
+      btnH.addEventListener('click', () => {
+        btnH.classList.add('active');
+        btnV.classList.remove('active');
+        document.body.classList.remove('mode-vertical');
+      });
+
+      // 縦書き時のマウスホイールによる横スクロール変換
+      window.addEventListener('wheel', (e) => {
+        if (!document.body.classList.contains('mode-vertical')) return;
+        const main = document.querySelector('.reader-main');
+        if (main && e.deltaY !== 0) {
+          main.scrollLeft -= e.deltaY;
+          e.preventDefault();
+        }
+      }, { passive: false });
+    </script>
+  </body>
+</html>
