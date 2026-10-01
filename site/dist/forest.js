@@ -176,6 +176,14 @@ function startForest() {
     sprout.style.top = y + "px";
     sprout.style.zIndex = "1";
     field.style.height = Math.max(470, y + sprout.offsetHeight + 36) + "px";
+    const stoneNode = document.getElementById("forest-stone");
+    if (stoneNode) {
+      stoneNode.style.bottom = "auto";
+      stoneNode.style.right = "auto";
+      stoneNode.style.left = "36px";
+      stoneNode.style.top = Math.max(0, field.clientHeight - stoneNode.offsetHeight - 24) + "px";
+      stoneNode.style.zIndex = "1";
+    }
     z = 1;
   }
   function makeDraggable(node) {
@@ -196,6 +204,8 @@ function startForest() {
         event.shiftKey
       )
         return;
+      node.style.bottom = "auto";
+      node.style.right = "auto";
       const treeRect = node.getBoundingClientRect();
       const fieldRect = field.getBoundingClientRect();
       down = {
