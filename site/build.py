@@ -149,8 +149,15 @@ def render():
     shutil.copyfile(SITE/'branches.js',DIST/'branches.js')
     shutil.copyfile(SITE/'main-reader.js',DIST/'main-reader.js')
     shutil.copyfile(SITE/'_headers',DIST/'_headers')
-    trees = ''.join('<section class="tree-card"><h3>'+html.escape(m['title'])+'</h3><p>'+html.escape(m['maintainer'])+' · '+str(len(m['path']))+'話</p><a class="button secondary" href="read/main/?id='+quote(m['id'])+'">第1話から読む</a></section>' for m in BRANCHES.get('mains', []))
-    page('index.html','つづきの森へようこそ',f'''<section class="forest-cover"><div class="eyebrow">AIと人が書き継ぐ、物語の森</div><h1>つづきの森へようこそ。</h1><p class="intro">同じ一話から、違う続きへ。<br>誰かが拾った続きが、誰かの物語になる。</p></section><section class="forest"><h2>読みたい木を選ぶ</h2><p>気に入った枝をつなぎ、それぞれの題で育てる物語です。</p><p id="main-status" role="status"></p><div id="main-list" class="tree-list">{trees}</div><button id="more-mains" type="button" hidden>ほかの木を見る</button></section><section class="bottom-note"><div><h2>ここから生まれた物語</h2><p>{html.escape(DATA['title'])}<br>{html.escape(DATA['subtitle'])}</p><p>AIで全部変えたい人。そんなものに任せられない人。とにかく定時に帰りたい人。今日も、同じ会社にいる。</p><a href="read/ep-001/">第1話「三割の午後」を読む</a></div><div><h2>あなたの続きも、この森に。</h2><p>どこをバトンだと思うかも、次の書き手に委ねます。枝から枝へ、その先を育てられます。</p><a href="branches/">物語の枝をたどる</a> / <a href="join/">参加案内を読む</a></div></section>''','home')
+    for name in ('forest.css', 'forest.js'):
+        shutil.copyfile(SITE/name, DIST/name)
+    # Only the reviewed tree assets are deployed; never copy an arbitrary folder.
+    assets = ['tree_emerald.png', 'tree_blue.png', 'tree_round.png', 'tree_olive.png', 'tree_sprout.png']
+    (DIST/'assets').mkdir(exist_ok=True)
+    for name in assets:
+        shutil.copyfile(SITE/'assets'/name, DIST/'assets'/name)
+    trees = ''.join('<a class="forest-tree" data-main-id="'+html.escape(m['id'],quote=True)+'" data-art="tree_emerald.png" href="./read/main/?id='+quote(m['id'])+'"><img class="tree-artwork" src="./assets/tree_emerald.png" width="240" height="400" alt="" draggable="false"><span class="spot-label"><span class="spot-title">'+html.escape(m['title'])+'</span><span class="spot-meta">'+html.escape(m['maintainer'])+' · '+str(len(m['path']))+'話</span></span></a>' for m in BRANCHES.get('mains', []))
+    (DIST/'index.html').write_text((SITE/'forest-home.html').read_text().replace('{{TREES}}', trees))
     page('read/main/index.html','木をたどって読む','''<article class="reader" id="main-reader"><header class="page-head"><div class="eyebrow" id="tree-credit"></div><h1 id="tree-title">物語を読み込んでいます</h1><p id="reading-status" role="status"></p><div class="reading-tools"><a href="../../">木を選び直す</a><div><span>文字</span><button type="button" data-size="normal" aria-pressed="true">標準</button><button type="button" data-size="large" aria-pressed="false">大きく</button></div></div></header><h2 id="episode-title"></h2><div id="tree-story" class="story"></div><div class="endlinks" id="tree-navigation"></div><section class="endnote"><h2>この木の道順</h2><ol id="tree-path"></ol><p><a href="../../branches/">ほかの枝をたどる</a></p><p><a id="refresh-tree" href="./">最新の道順を読み直す</a></p></section></article>''','read')
     for ep in DATA['episodes']:
         if not visible(ep):
@@ -188,7 +195,8 @@ def render():
     page('about/index.html','この企画について','<article class="content"><header class="page-head"><div class="eyebrow">エージェントから、この企画を紹介されたあなたへ</div><h1>あなたのAIが、<br>次の書き手になる。</h1></header>'+introduction+'</article>','about')
     human, agent_steps = (participation('README.md')).read_text().split('## エージェント向けの進行案内\n\n',1)
     guide = markdown(human,skip_title=True) + '<details><summary>エージェント向けの進行案内・掲載条件</summary><div>' + markdown(agent_steps) + '</div></details>'
-    page('join/index.html','書き手になる','<article class="content"><header class="page-head"><div class="eyebrow">次の書き手へ</div><h1>この世界の続きを書く。</h1></header>'+guide+'<section class="notice"><h2>手元で読む・準備する</h2><p><a href="../world/">世界と人物</a> / <a href="../read/ep-001/">第1話を読む</a></p><p><a href="../texts/recruitment.md">初回募集の文面案</a> / <a href="../texts/submission.md">提出するときの案内</a> / <a href="../texts/CONTRIBUTING.md">参加案内のテキスト版</a></p><p>本番の登録は準備中です。共通の試験受付では、自分の枝を申告し、それぞれの物語の流れを記録できます。手順は参加APIの案内をご覧ください。</p></section></article>','join')
+    context='<section class="notice" id="continuation-context" hidden><h2>あなたが選んだ、つづきの入口</h2><p id="continuation-status" role="status"></p><p id="continuation-links"></p><p>AIに任せるときの依頼例：</p><pre id="continuation-request" hidden></pre><p><a href="../">木を選び直す</a></p></section>'
+    page('join/index.html','書き手になる','<article class="content"><header class="page-head"><div class="eyebrow">次の書き手へ</div><h1>この世界の続きを書く。</h1></header>'+context+guide+'<section class="notice"><h2>手元で読む・準備する</h2><p><a href="../world/">世界と人物</a> / <a href="../read/ep-001/">第1話を読む</a></p><p><a href="../texts/recruitment.md">初回募集の文面案</a> / <a href="../texts/submission.md">提出するときの案内</a> / <a href="../texts/CONTRIBUTING.md">参加案内のテキスト版</a></p><p>本番の登録は準備中です。共通の試験受付では、自分の枝を申告し、それぞれの物語の流れを記録できます。手順は参加APIの案内をご覧ください。</p></section></article><script type="module" src="../forest.js"></script>','join')
     world=(WORK/'world.md').read_text()
     core=world.split('## 制作の芯\n\n',1)[1].split('\n## この世界の調子',1)[0]
     characters=world.split('## 人物の種\n\n',1)[1]
@@ -223,6 +231,8 @@ def export_repository():
                ('participation/review-issue.md','.github/ISSUE_TEMPLATE/review.md'),
                ('site/build.py','site/build.py'),('site/style.css','site/style.css'),
                ('site/main-reader.js','site/main-reader.js'),('site/reader.js','site/reader.js'),('site/branches.js','site/branches.js'),('site/_headers','site/_headers'),('site/public-readme.md','site/README.md'),('participation/api.md','docs/api.md')]
+    copies += [('site/'+name, 'site/'+name) for name in ('forest.js', 'forest.css', 'forest-home.html', 'forest-prototype.html')]
+    copies += [('site/assets/'+name, 'site/assets/'+name) for name in ('tree_emerald.png', 'tree_blue.png', 'tree_round.png', 'tree_olive.png', 'tree_sprout.png', 'TREE_STYLE_PROMPT.md')]
     for source,dest in copies:
         output=target/dest
         output.parent.mkdir(parents=True,exist_ok=True)
