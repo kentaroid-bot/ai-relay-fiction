@@ -1533,6 +1533,229 @@ it("renames only the owner's main, keeping its path and retry receipt intact", a
   expect(selected.page).toHaveLength(1);
   expect(selected.page[0].episode).toMatchObject(parent);
 });
+it("includes fixed ancestors when an API tree starts at a continuation, with idempotent creation", async () => {
+  const t = await setup();
+  await register(t);
+  const second = await listedBranch(t, writerKey, "second", repository);
+  const third = await listedBranch(t, writerKey, "third", repository, second);
+  const input = { mainId: "my-tree", title: "My tree", start: third };
+  const result = await command(
+    t,
+    writerKey,
+    "main.create",
+    input,
+    "create-deep-tree",
+  );
+  expect(result.status).toBe(200);
+  expect(
+    (await command(t, writerKey, "main.create", input, "create-deep-tree"))
+      .data,
+  ).toEqual(result.data);
+  const route: any = await (await t.fetch("/v1/main?id=my-tree")).json();
+  expect(route.count).toBe(3);
+  expect(
+    route.page.map((s: any) => ({ position: s.position, ...s.episode })),
+  ).toMatchObject([
+    { position: 0, ...parent },
+    { position: 1, ...second },
+    { position: 2, ...third },
+  ]);
+  const fourth = await listedBranch(t, writerKey, "fourth", repository, third);
+  expect(
+    (
+      await command(t, writerKey, "main.append", {
+        mainId: "my-tree",
+        expectedVersion: 1,
+        episode: fourth,
+      })
+    ).status,
+  ).toBe(200);
+  expect(
+    (await t.query(internal.forest.publicMain, { id: "my-tree" })).count,
+  ).toBe(4);
+});
+
+it("rejects missing, unlisted, unrooted or cyclic ancestry without storing a partial API tree", async () => {
+  for (const kind of ["missing", "unlisted", "unrooted", "cycle"]) {
+    const t = await setup();
+    await register(t);
+    const second = await listedBranch(t, writerKey, "second", repository);
+    const third = await listedBranch(t, writerKey, "third", repository, second);
+    await t.run(async (ctx) => {
+      const ep = await ctx.db
+        .query("episodes")
+        .withIndex("reference", (q) =>
+          q
+            .eq("branchId", second.branchId)
+            .eq("episodeId", second.episodeId)
+            .eq("revision", second.revision),
+        )
+        .unique();
+      if (kind === "missing") await ctx.db.delete(ep!._id);
+      else if (kind === "unlisted")
+        await ctx.db.patch(ep!._id, { listed: false });
+      else
+        await ctx.db.patch(ep!._id, {
+          parent: kind === "cycle" ? third : undefined,
+        });
+    });
+    const result = await command(t, writerKey, "main.create", {
+      mainId: "bad-tree",
+      title: "Bad tree",
+      start: third,
+    });
+    expect(result.data.error).toBe(
+      kind === "unrooted"
+        ? "MAIN_ROOT_REQUIRED"
+        : kind === "cycle"
+          ? "MAIN_PATH_LIMIT"
+          : "PARENT_EPISODE_NOT_VERIFIED",
+    );
+    expect(await t.run((ctx) => ctx.db.query("mains").collect())).toHaveLength(
+      0,
+    );
+    expect(
+      await t.run((ctx) => ctx.db.query("mainSteps").collect()),
+    ).toHaveLength(0);
+  }
+});
+
+it("repairs only the missing prefix of a legacy tree, preserving its owner, title, head and selected order", async () => {
+  const t = await setup();
+  const owner = await register(t);
+  const second = await listedBranch(t, writerKey, "second", repository);
+  const third = await listedBranch(t, writerKey, "third", repository, second);
+  const mainId = await t.run(async (ctx) => {
+    const id = await ctx.db.insert("mains", {
+      mainId: "legacy-tree",
+      title: "Legacy tree",
+      owner: owner as any,
+      head: third,
+      count: 2,
+      version: 7,
+    });
+    for (const [position, ref] of [second, third].entries())
+      await ctx.db.insert("mainSteps", {
+        mainId: "legacy-tree",
+        position,
+        episode: ref,
+        selectedAt: 123,
+      });
+    return id;
+  });
+  const repair = { mainId: "legacy-tree", expectedVersion: 7 };
+  await expect(
+    t.mutation(internal.forest.repairMainAncestry, {
+      ...repair,
+      expectedVersion: 6,
+    }),
+  ).rejects.toThrow("VERSION_CONFLICT");
+  const preview = await t.mutation(internal.forest.repairMainAncestry, {
+    ...repair,
+    dryRun: true,
+  });
+  expect(preview).toMatchObject({
+    outcome: "would_prepend",
+    count: 3,
+    added: [parent],
+  });
+  expect((await t.run((ctx) => ctx.db.get(mainId)))?.version).toBe(7);
+  expect(
+    await t.mutation(internal.forest.repairMainAncestry, repair),
+  ).toMatchObject({
+    outcome: "prepended",
+    count: 3,
+    version: 8,
+    added: [parent],
+  });
+  expect(await t.run((ctx) => ctx.db.get(mainId))).toMatchObject({
+    title: "Legacy tree",
+    owner,
+    head: third,
+    version: 8,
+  });
+  const steps = await t.run((ctx) =>
+    ctx.db
+      .query("mainSteps")
+      .withIndex("path", (q) => q.eq("mainId", "legacy-tree"))
+      .collect(),
+  );
+  expect(steps.map((s) => s.episode)).toEqual([parent, second, third]);
+  expect(steps.slice(1).map((s) => s.selectedAt)).toEqual([123, 123]);
+  expect(
+    await t.mutation(internal.forest.repairMainAncestry, {
+      ...repair,
+      expectedVersion: 8,
+    }),
+  ).toMatchObject({ outcome: "already_rooted", version: 8 });
+  expect(
+    (
+      await command(t, editorKey, "main.append", {
+        mainId: "legacy-tree",
+        expectedVersion: 8,
+        episode: third,
+      })
+    ).data.error,
+  ).toBe("FORBIDDEN");
+  expect(
+    (await command(t, writerKey, "main.ancestryRepair", repair)).data.error,
+  ).toBe("UNKNOWN_OPERATION");
+});
+
+it("holds legacy repair if old fork positions or a discontinuous selection would change meaning", async () => {
+  const t = await setup();
+  const owner = await register(t);
+  const second = await listedBranch(t, writerKey, "second", repository);
+  const sibling = await listedBranch(t, writerKey, "sibling", repository);
+  await t.run(async (ctx) => {
+    await ctx.db.insert("mains", {
+      mainId: "legacy-tree",
+      title: "Legacy tree",
+      owner: owner as any,
+      head: second,
+      count: 1,
+      version: 1,
+    });
+    await ctx.db.insert("mainSteps", {
+      mainId: "legacy-tree",
+      position: 0,
+      episode: second,
+      selectedAt: 123,
+    });
+    const b = await ctx.db
+      .query("branches")
+      .withIndex("branchId", (q) => q.eq("branchId", sibling.branchId))
+      .unique();
+    await ctx.db.patch(b!._id, {
+      fromMain: { mainId: "legacy-tree", position: 0 },
+    });
+  });
+  const repair = { mainId: "legacy-tree", expectedVersion: 1 };
+  await expect(
+    t.mutation(internal.forest.repairMainAncestry, repair),
+  ).rejects.toThrow("MAIN_FORK_REFERENCES_REQUIRE_REPAIR");
+  await t.run(async (ctx) => {
+    const b = await ctx.db
+      .query("branches")
+      .withIndex("branchId", (q) => q.eq("branchId", sibling.branchId))
+      .unique();
+    await ctx.db.patch(b!._id, { fromMain: undefined });
+    const m = await ctx.db.query("mains").first();
+    await ctx.db.patch(m!._id, { count: 2, head: sibling });
+    await ctx.db.insert("mainSteps", {
+      mainId: "legacy-tree",
+      position: 1,
+      episode: sibling,
+      selectedAt: 123,
+    });
+  });
+  await expect(
+    t.mutation(internal.forest.repairMainAncestry, repair),
+  ).rejects.toThrow("MAIN_CONTINUITY_REQUIRED");
+  expect((await t.run((ctx) => ctx.db.query("mains").first()))?.version).toBe(
+    1,
+  );
+});
 it("lets communities choose different mains, preserving branches and enforcing ownership and continuity", async () => {
   const t = await setup();
   await register(t);

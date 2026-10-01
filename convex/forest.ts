@@ -1,4 +1,4 @@
-import { internalQuery } from "./_generated/server";
+import { internalMutation, internalQuery } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { v } from "convex/values";
@@ -46,6 +46,29 @@ async function visible(ctx: QueryCtx | MutationCtx, ref: Ref) {
         readingUrl: branch.repository + "/blob/" + ref.revision + "/" + ep.path,
       }
     : null;
+}
+// Both API and PR trees include the fixed ancestry of the chosen episode.
+// Only recorded, listed references are followed; never fetch or guess a route.
+async function ancestry(ctx: MutationCtx, target: Ref, stop?: Ref) {
+  const path: Ref[] = [],
+    seen = new Set<string>();
+  let current: Ref | null = target;
+  let connected = false;
+  while (current) {
+    if (stop && same(current, stop)) {
+      connected = true;
+      break;
+    }
+    const fingerprint = JSON.stringify(current);
+    if (seen.has(fingerprint) || path.length >= 200) fail("MAIN_PATH_LIMIT");
+    seen.add(fingerprint);
+    const ref = await parent(ctx, current);
+    path.push(ref);
+    current = (await episode(ctx, ref))?.parent || null;
+  }
+  path.reverse();
+  if (!stop && path[0]?.branchId !== "origin") fail("MAIN_ROOT_REQUIRED");
+  return { path, connected };
 }
 export async function validateFromMain(ctx: MutationCtx, value: any, ref: Ref) {
   if (value === undefined) return undefined;
@@ -133,20 +156,22 @@ export async function forestCommand(
       .take(21);
     if (owned.length >= 20) fail("MAIN_COUNT_LIMIT");
     const start = await parent(ctx, body.start);
+    const { path } = await ancestry(ctx, start);
     await ctx.db.insert("mains", {
       mainId,
       title: text(body.title, 200, "TITLE"),
       owner: agent._id,
       head: start,
-      count: 1,
+      count: path.length,
       version: 1,
     });
-    await ctx.db.insert("mainSteps", {
-      mainId,
-      position: 0,
-      episode: start,
-      selectedAt: Date.now(),
-    });
+    for (const [position, ref] of path.entries())
+      await ctx.db.insert("mainSteps", {
+        mainId,
+        position,
+        episode: ref,
+        selectedAt: Date.now(),
+      });
     await audit(ctx, agent._id, operation, mainId, 1);
     return { mainId, version: 1, head: start };
   }
@@ -241,23 +266,7 @@ export async function applyDeclaredMain(
     if (selected.some((s) => same(s.episode, target)))
       return { mainId, version: main.version, outcome: "already_applied" };
   }
-  // Resolve only verified, listed references. Do not invent routes or skip gaps.
-  const path: Ref[] = [],
-    seen = new Set<string>();
-  let current: Ref | null = target;
-  let connected = false;
-  while (current) {
-    if (main && same(current, main.head)) {
-      connected = true;
-      break;
-    }
-    const fingerprint = JSON.stringify(current);
-    if (seen.has(fingerprint) || path.length >= 200) fail("MAIN_PATH_LIMIT");
-    seen.add(fingerprint);
-    const ref = await parent(ctx, current);
-    path.push(ref);
-    current = (await episode(ctx, ref))?.parent || null;
-  }
+  const { path, connected } = await ancestry(ctx, target, main?.head);
   const expected = declaration.expectedVersion ?? 0;
   if (
     !Number.isSafeInteger(expected) ||
@@ -272,12 +281,8 @@ export async function applyDeclaredMain(
       .withIndex("owner", (q) => q.eq("owner", branch.owner))
       .take(21);
     if (owned.length >= 20) fail("MAIN_COUNT_LIMIT");
-    // Every new tree starts at the project's origin, even when the route branches.
-    if (path[path.length - 1]?.branchId !== "origin")
-      fail("MAIN_ROOT_REQUIRED");
   }
   if ((main?.count ?? 0) + path.length > 1000) fail("MAIN_PATH_LIMIT");
-  path.reverse();
   const version = (main?.version ?? 0) + 1;
   const count = (main?.count ?? 0) + path.length;
   if (main) await ctx.db.patch(main._id, { head: target, count, version });
@@ -306,6 +311,95 @@ export async function applyDeclaredMain(
     outcome: main ? "appended" : "created",
   };
 }
+
+// Operator-only repair of legacy API trees that omitted their first episode's
+// ancestors. No public endpoint calls this. It cannot choose a new head, title,
+// owner or alternative episode, and refuses broken paths or version conflicts.
+export const repairMainAncestry = internalMutation({
+  args: {
+    mainId: v.string(),
+    expectedVersion: v.number(),
+    dryRun: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { mainId, expectedVersion, dryRun }) => {
+    const main = await ctx.db
+      .query("mains")
+      .withIndex("mainId", (q) => q.eq("mainId", mainId))
+      .unique();
+    if (!main || (await ctx.db.get(main.owner))?.status !== "active")
+      fail("MAIN_NOT_FOUND");
+    if (main.version !== expectedVersion) fail("VERSION_CONFLICT");
+    const steps = await ctx.db
+      .query("mainSteps")
+      .withIndex("path", (q) => q.eq("mainId", mainId))
+      .take(1001);
+    if (
+      !steps.length ||
+      steps.length !== main.count ||
+      main.count > 1000 ||
+      !same(steps[steps.length - 1].episode, main.head)
+    )
+      fail("MAIN_CONTINUITY_REQUIRED");
+    for (const [i, step] of steps.entries()) {
+      if (step.position !== i) fail("MAIN_CONTINUITY_REQUIRED");
+      const ref = await parent(ctx, step.episode);
+      if (i && !same((await episode(ctx, ref))?.parent, steps[i - 1].episode))
+        fail("MAIN_CONTINUITY_REQUIRED");
+    }
+    const { path } = await ancestry(ctx, steps[0].episode);
+    const prefix = path.slice(0, -1);
+    if (!prefix.length)
+      return {
+        mainId,
+        version: main.version,
+        count: main.count,
+        outcome: "already_rooted",
+        added: [],
+      };
+    if (prefix.length + main.count > 1000) fail("MAIN_PATH_LIMIT");
+    // Old fork positions would otherwise silently point at a different episode.
+    const fork = await ctx.db
+      .query("branches")
+      .filter((q) => q.eq(q.field("fromMain.mainId"), mainId))
+      .first();
+    if (fork) fail("MAIN_FORK_REFERENCES_REQUIRE_REPAIR");
+    if (dryRun)
+      return {
+        mainId,
+        version: main.version,
+        count: main.count + prefix.length,
+        outcome: "would_prepend",
+        added: prefix,
+      };
+    for (const step of steps)
+      await ctx.db.patch(step._id, { position: step.position + prefix.length });
+    for (const [position, ref] of prefix.entries())
+      await ctx.db.insert("mainSteps", {
+        mainId,
+        position,
+        episode: ref,
+        selectedAt: Date.now(),
+      });
+    await ctx.db.patch(main._id, {
+      count: main.count + prefix.length,
+      version: main.version + 1,
+    });
+    await audit(
+      ctx,
+      "system:main-ancestry-repair",
+      "main.ancestryRepair",
+      mainId,
+      main.version + 1,
+    );
+    return {
+      mainId,
+      version: main.version + 1,
+      count: main.count + prefix.length,
+      outcome: "prepended",
+      added: prefix,
+    };
+  },
+});
 export const publicMains = internalQuery({
   args: { cursor: v.optional(v.string()) },
   handler: async (ctx, { cursor }) => {
