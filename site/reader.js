@@ -50,7 +50,7 @@ function updateProgress() {
         progress.style.width = pct + '%';
         return;
       }
-      progress.style.width = '100%';
+      progress.style.width = '0%';
       return;
     }
   }
@@ -99,14 +99,28 @@ if (btnV && btnH) {
     updateProgress();
   });
 
-  // 縦書き時のホイール横スクロール（本文 .story をスクロール）
+  // 縦書き時のホイール横スクロール（本文 .story 上でのみ横スクロールへ変換）
   window.addEventListener('wheel', (e) => {
     if (!document.body.classList.contains('mode-vertical')) return;
-    const story = document.querySelector('.story');
-    if (story && e.deltaY !== 0) {
-      story.scrollLeft -= e.deltaY;
-      updateProgress();
-      e.preventDefault();
+    const story = e.target.closest ? e.target.closest('.story') : null;
+    if (!story || e.deltaY === 0) return; // 本文外でのホイールは通常の縦スクロールを妨げない
+
+    const maxScroll = story.scrollWidth - story.clientWidth;
+    if (maxScroll <= 0) return; // スクロール不要な場合は通常スクロールへ
+
+    const current = Math.abs(story.scrollLeft);
+
+    // 下方向スクロール（次へ進む）：すでに終端に達しているなら通常の縦スクロールを許可（読了カードへ進める）
+    if (e.deltaY > 0 && current >= maxScroll - 2) {
+      return;
     }
+    // 上方向スクロール（前へ戻る）：すでに先頭に達しているなら通常の縦スクロールを許可（上部へ戻れる）
+    if (e.deltaY < 0 && current <= 2) {
+      return;
+    }
+
+    story.scrollLeft -= e.deltaY;
+    updateProgress();
+    e.preventDefault();
   }, { passive: false });
 }

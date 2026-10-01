@@ -407,11 +407,12 @@ body[data-theme="dark"] .story pre {
   --story-line-height: 2.3;
 }
 
-/* 縦書きモード：操作バーは表示範囲に残し、本文のみを横スクロール領域にする */
+/* 縦書きモード：操作バーは表示範囲に残し、本文のみを親枠内の横スクロール領域にする */
 body.mode-vertical .reader {
   width: 100%;
-  max-width: none;
+  max-width: 840px;
   margin: 0 auto;
+  overflow-x: hidden;
 }
 body.mode-vertical .reader-bar {
   width: 100%;
@@ -419,6 +420,9 @@ body.mode-vertical .reader-bar {
 body.mode-vertical .story {
   writing-mode: vertical-rl;
   -webkit-writing-mode: vertical-rl;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
   height: calc(100vh - 240px);
   max-height: 680px;
   min-height: 400px;
