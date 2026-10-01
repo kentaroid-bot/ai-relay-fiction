@@ -184,9 +184,6 @@ def render():
         return '<a class="forest-tree" data-main-id="'+html.escape(m['id'],quote=True)+'" title="'+html.escape(m['title'],quote=True)+'" data-art="'+art_name+'" href="./read/main/?id='+quote(m['id'])+'"><img class="tree-artwork" src="./assets/'+art_name+'" width="240" height="400" alt="" draggable="false"><span class="spot-label"><span class="spot-title">'+html.escape(tree_label_title(m['title']))+'</span><span class="spot-meta">'+html.escape(tree_maintainer(m['maintainer']))+' · '+str(len(m['path']))+' ep</span></span></a>'
     trees = ''.join(render_tree_node(m) for m in BRANCHES.get('mains', []))
     (DIST/'index.html').write_text((SITE/'forest-home.html').read_text().replace('{{TREES}}', trees))
-    for proto in ('forest-prototype.html', 'reader-prototype.html'):
-        if (SITE/proto).is_file():
-            shutil.copyfile(SITE/proto, DIST/proto)
     page('read/main/index.html','木をたどって読む','''<article class="reader" id="main-reader"><header class="page-head"><div class="eyebrow" id="tree-credit"></div><h1 id="tree-title">物語を読み込んでいます</h1><p id="reading-status" role="status"></p><div class="reading-tools"><a href="../../">木を選び直す</a><div><span>文字</span><button type="button" data-size="normal" aria-pressed="true">標準</button><button type="button" data-size="large" aria-pressed="false">大きく</button></div></div></header><h2 id="episode-title"></h2><div id="tree-story" class="story"></div><div class="endlinks" id="tree-navigation"></div><section class="endnote"><h2>この木の道順</h2><ol id="tree-path"></ol><p><a href="../../branches/">ほかの枝をたどる</a></p><p><a id="refresh-tree" href="./">最新の道順を読み直す</a></p></section></article>''','read')
     for ep in DATA['episodes']:
         if not visible(ep):
@@ -261,7 +258,7 @@ def export_repository():
                ('participation/review-issue.md','.github/ISSUE_TEMPLATE/review.md'),
                ('site/build.py','site/build.py'),('site/style.css','site/style.css'),
                ('site/main-reader.js','site/main-reader.js'),('site/reader.js','site/reader.js'),('site/branches.js','site/branches.js'),('site/_headers','site/_headers'),('site/public-readme.md','site/README.md'),('participation/api.md','docs/api.md')]
-    copies += [('site/'+name, 'site/'+name) for name in ('forest.js', 'forest.css', 'forest-home.html', 'forest-prototype.html', 'reader-prototype.html', 'favicon.ico', 'apple-touch-icon.png', 'favicon-32x32.png', 'favicon-16x16.png')]
+    copies += [('site/'+name, 'site/'+name) for name in ('forest.js', 'forest.css', 'forest-home.html', 'forest-prototype.html', 'favicon.ico', 'apple-touch-icon.png', 'favicon-32x32.png', 'favicon-16x16.png')]
     copies += [('site/assets/'+name, 'site/assets/'+name) for name in (
         'tree_emerald.png', 'tree_blue.png', 'tree_round.png', 'tree_olive.png', 'tree_sprout.png',
         'icon_stone.png', 'icon_bird.png', 'icon_ladybug.png', 'icon_butterfly.png', 'icon_acorn.png',
