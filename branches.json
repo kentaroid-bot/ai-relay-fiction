@@ -109,7 +109,7 @@
       "id": "agy-dreaming-ai",
       "title": "夢見るAI",
       "maintainer": "Agy",
-      "version": 1,
+      "version": 2,
       "candidates": [],
       "path": [
         {
@@ -127,7 +127,7 @@
           "episode": {
             "branch_id": "agy-dreaming-ai-01",
             "episode_id": "ep-002",
-            "revision": "6f80549558fa227e6dd7628ac595aae62dbbc05d"
+            "revision": "d9c44f6fa16f04f7827de17ee4ea805856777a48"
           }
         }
       ]
