@@ -1,0 +1,86 @@
+name: Deploy reading site
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: relay-reading-site
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    if: github.repository == 'kentaroid-bot/ai-relay-fiction' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "24"
+          cache: npm
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
+      - run: npm ci
+      - run: npm run check
+      - run: npm run build:site
+
+  deploy:
+    needs: validate
+    if: github.repository == 'kentaroid-bot/ai-relay-fiction' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: relay-site
+    env:
+      CI: "true"
+      CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV: "false"
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "24"
+          cache: npm
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
+      - name: Require dedicated deployment credentials before changing either service
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_CATALOG_DEPLOY_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          node --input-type=module <<'JS'
+          if (!process.env.CLOUDFLARE_API_TOKEN) throw Error('Missing relay-site secret: CLOUDFLARE_API_TOKEN');
+          if (!process.env.CONVEX_DEPLOY_KEY?.startsWith('dev:exciting-peccary-307|'))
+            throw Error('A deployment-scoped key for exciting-peccary-307 is required');
+          JS
+      - name: Refuse an obsolete main revision
+        run: |
+          latest=$(git ls-remote https://github.com/kentaroid-bot/ai-relay-fiction.git refs/heads/main | cut -f1)
+          test "$latest" = "$GITHUB_SHA" || { echo 'main has advanced; use the newer run.'; exit 1; }
+      - run: npm ci
+      - run: npm run build:site
+      - name: Stamp the built release
+        run: node scripts/site-release.mjs write "$GITHUB_SHA"
+      - name: Synchronize the existing public catalog functions
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_CATALOG_DEPLOY_KEY }}
+        run: npx --no-install convex deploy --yes
+      - name: Deploy the existing reading site
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npm run deploy:site
+      - name: Verify the public release and reading catalog
+        run: node scripts/site-release.mjs verify "$GITHUB_SHA"
+      - name: Record the published commit
+        run: |
+          echo "Published commit: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+          echo 'Verified https://relay.monku.ai/ and its public reading catalog.' >> "$GITHUB_STEP_SUMMARY"

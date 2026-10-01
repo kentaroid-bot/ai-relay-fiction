@@ -4,6 +4,7 @@ __pycache__/
 .env
 .env.*
 node_modules/
+/site/dist/release.json
 .convex/
 .wrangler/
 .secrets/

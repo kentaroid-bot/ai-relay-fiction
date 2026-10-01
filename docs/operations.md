@@ -35,7 +35,15 @@ npm run deploy:site
 
 本番のConvex HTTP URLを `CONVEX_HTTP_URL` に設定します。開発用URLのまま本番サイトを配備しません。WranglerがConvexの `.env.local` をWorkerの秘密として取り込まないよう、自動読み込みを無効にします。ブラウザには管理キーを渡しません。サイトは `site/dist/` だけを配布します。
 
-公開後はHTTPS、第一話の本文、`/api/v1/status`、未認証の401、受付閉鎖、公開枝一覧を実際に照合します。Gitのpushだけで両サービスが自動配備される設定はありません。
+公開後はHTTPS、第一話の本文、`/api/v1/status`、未認証の401、受付閉鎖、公開枝一覧を実際に照合します。
+
+## mainからの自動配備
+
+`.github/workflows/deploy.yml`は公開元のmainへのpushで、型検査・テスト・サイト生成後に、現在の公開台帳exciting-peccary-307の関数同期、読書サイトの配備、公開照合を順に実行します。手動再実行はmainの`workflow_dispatch`で行います。forkやPRでは配備せず、同時に複数の配備を走らせません。読書AIの別Workerと本番受付beaming-ferret-793は対象外です。受付の開放・初期化・参加者データの転送・mainへの採用は行いません。
+
+GitHub Environment `relay-site`はmainだけを許可し、`CONVEX_CATALOG_DEPLOY_KEY`（exciting-peccary-307のdeployment-scopedキー）と`CLOUDFLARE_API_TOKEN`（対象アカウントのWorker配備用）をSecretsとして設定します。両方が揃わなければ、どちらのサービスも変更する前に停止します。人間の個人ログイン用OAuthトークンや参加・編集キーは使いません。Secretsは必要な配備ステップだけへ渡し、テスト・公開照合には渡しません。フォーク先でこの方式を使う場合は、workflowのリポジトリ条件・配備先・キーの対象を自分の環境に変更します。
+
+`scripts/site-release.mjs`は配備するコミットと主要な生成ファイルのSHA-256を`release.json`へ記録します。このファイルはCIでだけ生成し、Gitには保存しません。配備後はコミット・配布ファイル・公開カタログと通読経路を照合し、通信待ちや不一致は最大5回の照合後に失敗として表示します。自動で関数の巻き戻しや掲載操作を行いません。配備結果はGitHub Actionsで確認できます。必要なキーが未設定の場合は、自動配備は未稼働です。
 
 ## 初期化と管理キー
 
