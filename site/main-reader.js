@@ -157,6 +157,33 @@ async function readTree() {
     if (typeof window !== 'undefined' && typeof window.updateReadingProgress === 'function') {
       window.updateReadingProgress();
     }
+    try {
+      let result;
+      if (typeof location !== 'undefined' && location.protocol === 'file:') {
+        try {
+          const bRes = await fetch('../../texts/branches.json', { credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(5000) });
+          if (bRes.ok) {
+            const bData = JSON.parse(await boundedText(bRes, 100000));
+            const c = findBranchCandidates(id, ep, steps, position, {
+              mains: (bData.mains || []).map(m => ({ ...m, steps: m.path })),
+              branches: bData.branches || []
+            });
+            result = { ok: true, candidates: c, isPreview: true };
+          } else {
+            result = { ok: false, error: 'Local file unavailable' };
+          }
+        } catch {
+          result = { ok: false, error: 'Local file error' };
+        }
+      } else {
+        const fetcher = (url, init) => fetch(url, init);
+        result = await fetchLiveCandidates(fetcher, id, ep, steps, position);
+      }
+
+      renderBranchCandidates(document, id, ep, steps, position, result);
+    } catch {
+      // Ignore branch candidates failure to preserve main reading experience
+    }
   } catch {
     document.getElementById('tree-story').replaceChildren();
     const provenance = document.getElementById('episode-source');
@@ -164,4 +191,363 @@ async function readTree() {
     status.textContent='この道順や本文を確認できませんでした。最新の道順を読み直すか、しばらくしてからお試しください。';
   }
 }
+
+export function isSameRef(a, b) {
+  if (!a || !b) return false;
+  const aBranch = a.branchId || a.branch_id;
+  const bBranch = b.branchId || b.branch_id;
+  const aEpisode = a.episodeId || a.episode_id;
+  const bEpisode = b.episodeId || b.episode_id;
+  return Boolean(
+    aBranch && bBranch && aBranch === bBranch &&
+    aEpisode && bEpisode && aEpisode === bEpisode &&
+    a.revision && b.revision && a.revision === b.revision
+  );
+}
+
+export function findBranchCandidates(currentMainId, ep, steps, position, branchesData) {
+  if (!branchesData || !ep) return [];
+  if (!ep.revision || !(ep.branchId || ep.branch_id) || !(ep.episodeId || ep.episode_id)) return [];
+
+  const nextStep = steps && steps[position + 1]?.available ? steps[position + 1].episode : null;
+  const candidates = [];
+  const seenEpisodeKeys = new Set();
+
+  if (Array.isArray(branchesData.mains)) {
+    for (const m of branchesData.mains) {
+      if (!m) continue;
+      const mId = m.mainId || m.id;
+      const mSteps = m.steps || m.path || [];
+      if (!Array.isArray(mSteps)) continue;
+
+      const stepIdx = mSteps.findIndex(s => s && s.available && isSameRef(s.episode, ep));
+      if (stepIdx !== -1 && stepIdx + 1 < mSteps.length) {
+        const nextInMain = mSteps[stepIdx + 1];
+        if (!nextInMain || !nextInMain.available || !nextInMain.episode) continue;
+        const nEp = nextInMain.episode;
+
+        // Verify direct continuous connection: next episode's parent must match ep exactly
+        if (!nEp.parent || !isSameRef(nEp.parent, ep)) continue;
+
+        // Exclude the normal next episode of the current tree
+        if (mId === currentMainId && isSameRef(nEp, nextStep)) continue;
+
+        // Verify valid fixed GitHub Markdown source URL
+        if (nEp.readingUrl) {
+          try { rawSource(nEp.readingUrl); } catch { continue; }
+        }
+
+        const key = (nEp.branchId || nEp.branch_id) + '/' + (nEp.episodeId || nEp.episode_id);
+        seenEpisodeKeys.add(key);
+        candidates.push({
+          title: '🌲 ' + m.title + '（第' + (stepIdx + 2) + '話へ）',
+          author: 'by ' + (m.maintainer || 'つづき') + (m.agentName ? ' / ' + m.agentName : ''),
+          href: '?id=' + encodeURIComponent(mId) + '&v=' + m.version + '&at=' + (stepIdx + 1),
+          isExternal: false,
+        });
+      }
+    }
+  }
+
+  if (Array.isArray(branchesData.branches)) {
+    for (const b of branchesData.branches) {
+      if (!b) continue;
+      // Filter out paused, preparing, or unavailable branches
+      if (b.status && b.status !== 'verified' && b.status !== 'active') continue;
+
+      const parentRef = b.parent || b.fork_point;
+      if (!isSameRef(parentRef, ep)) continue;
+
+      const bBranchId = b.branchId || b.id;
+      const nextBranchId = nextStep ? (nextStep.branchId || nextStep.branch_id) : null;
+      if (nextBranchId && bBranchId === nextBranchId) continue;
+
+      const url = b.readingUrl || b.reading_url;
+      if (!url) continue;
+      // Fixed GitHub Markdown policy is required; never accept arbitrary URLs
+      try { rawSource(url); } catch { continue; }
+
+      candidates.push({
+        title: '🌱 ' + b.title,
+        author: 'by ' + (b.maintainer || '書き手') + (b.agentName ? ' / ' + b.agentName : ''),
+        href: url,
+        isExternal: true,
+      });
+    }
+  }
+
+  return candidates;
+}
+
+export async function fetchLiveCandidates(fetcher, currentMainId, ep, steps, position, options = {}) {
+  const timeoutMs = options.timeoutMs || 4000;
+  const overallTimeoutMs = options.overallTimeoutMs || 10000;
+  const maxMains = options.maxMains || 50;
+  const maxMainsPages = options.maxMainsPages || 10;
+  const maxPathPages = options.maxPathPages || 10;
+  const maxCatalogPages = options.maxCatalogPages || 20;
+  const maxTotalRequests = options.maxTotalRequests || 40;
+
+  const startTime = Date.now();
+  let totalRequests = 0;
+
+  const checkTimeBudget = () => {
+    if (Date.now() - startTime > overallTimeoutMs) throw Error('Overall timeout exceeded');
+  };
+
+  const checkBudget = () => {
+    checkTimeBudget();
+    if (totalRequests >= maxTotalRequests) throw Error('Total request budget exceeded');
+  };
+
+  const getRequestTimeout = () => {
+    const elapsed = Date.now() - startTime;
+    const remaining = overallTimeoutMs - elapsed;
+    if (remaining <= 0) throw Error('Overall timeout exceeded');
+    return Math.min(timeoutMs, remaining);
+  };
+
+  try {
+    if (!ep || !ep.revision || !(ep.branchId || ep.branch_id) || !(ep.episodeId || ep.episode_id)) {
+      return { ok: true, candidates: [] };
+    }
+
+    // 1. Fetch live mains with cursor pagination to completion
+    const mains = [];
+    let mainsCursor = null;
+    const mainsSeen = new Set();
+    let mainsDone = false;
+    let mainsPageCount = 0;
+
+    while (!mainsDone) {
+      checkBudget();
+      if (mainsPageCount >= maxMainsPages) throw Error('Mains page limit exceeded');
+
+      if (mainsCursor !== null) {
+        if (typeof mainsCursor !== 'string' || !mainsCursor || mainsSeen.has(mainsCursor) || mainsCursor.length > 2000) {
+          throw Error('Invalid mains cursor');
+        }
+        mainsSeen.add(mainsCursor);
+      }
+
+      const url = '/api/v1/mains' + (mainsCursor ? '?cursor=' + encodeURIComponent(mainsCursor) : '');
+      const reqTimeout = getRequestTimeout();
+      totalRequests++;
+      const res = await fetcher(url, { credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(reqTimeout) });
+      if (!res.ok) throw Error('Mains fetch failed');
+      const data = JSON.parse(await boundedText(res, 200000));
+      checkTimeBudget();
+      if (!Array.isArray(data.page)) throw Error('Invalid mains response');
+
+      mainsPageCount++;
+      mains.push(...data.page);
+      if (mains.length > maxMains) {
+        throw Error('Mains count limit exceeded');
+      }
+
+      if (data.isDone === true) {
+        mainsDone = true;
+        break;
+      } else {
+        if (typeof data.continueCursor !== 'string' || !data.continueCursor) {
+          throw Error('Missing continueCursor on incomplete mains response');
+        }
+        mainsCursor = data.continueCursor;
+      }
+    }
+
+    // 2. Fetch path for all other mains, strictly validating versions and path completeness
+    const otherMains = mains.filter(m => (m.mainId || m.id) !== currentMainId);
+    const populatedMains = [];
+
+    for (const m of otherMains) {
+      const mId = m.mainId || m.id;
+      if (!mId || typeof m.version !== 'number' || !Number.isSafeInteger(m.version) || m.version < 1) {
+        throw Error('Invalid main entry: ' + mId);
+      }
+
+      const mSteps = [];
+      let stepCursor = null;
+      const stepSeen = new Set();
+      let stepDone = false;
+      let stepPageCount = 0;
+      let lastData = null;
+
+      while (!stepDone) {
+        checkBudget();
+        if (stepPageCount >= maxPathPages) throw Error('Path page limit exceeded');
+
+        if (stepCursor !== null) {
+          if (typeof stepCursor !== 'string' || !stepCursor || stepSeen.has(stepCursor) || stepCursor.length > 2000) {
+            throw Error('Invalid step cursor');
+          }
+          stepSeen.add(stepCursor);
+        }
+
+        const url = '/api/v1/main?id=' + encodeURIComponent(mId) + (stepCursor ? '&cursor=' + encodeURIComponent(stepCursor) : '');
+        const reqTimeout = getRequestTimeout();
+        totalRequests++;
+        const res = await fetcher(url, { credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(reqTimeout) });
+        if (!res.ok) throw Error('Main path fetch failed: ' + mId);
+        const data = JSON.parse(await boundedText(res, 200000));
+        checkTimeBudget();
+        if (!Array.isArray(data.page)) throw Error('Invalid main path response');
+        if (!Number.isSafeInteger(data.version) || data.version !== m.version) {
+          throw Error('Path changed');
+        }
+
+        lastData = data;
+        stepPageCount++;
+        mSteps.push(...data.page);
+        if (mSteps.length > 200) throw Error('Steps limit exceeded');
+
+        if (data.isDone === true) {
+          stepDone = true;
+          break;
+        } else {
+          if (typeof data.continueCursor !== 'string' || !data.continueCursor) {
+            throw Error('Missing continueCursor on incomplete step response');
+          }
+          stepCursor = data.continueCursor;
+        }
+      }
+
+      if (!lastData) throw Error('No path data for ' + mId);
+      // Validate path integrity, continuity, count, and version alignment using validatePath
+      validatePath(lastData, mSteps, m.version);
+
+      populatedMains.push({
+        ...m,
+        steps: mSteps,
+        version: m.version,
+      });
+    }
+
+    // 3. Fetch full catalog of branches with cursor pagination to completion
+    const branches = [];
+    let catCursor = null;
+    const catSeen = new Set();
+    let catDone = false;
+    let catPageCount = 0;
+
+    while (!catDone) {
+      checkBudget();
+      if (catPageCount >= maxCatalogPages) throw Error('Catalog page limit exceeded');
+
+      if (catCursor !== null) {
+        if (typeof catCursor !== 'string' || !catCursor || catSeen.has(catCursor) || catCursor.length > 2000) {
+          throw Error('Invalid catalog cursor');
+        }
+        catSeen.add(catCursor);
+      }
+
+      const url = '/api/v1/catalog' + (catCursor ? '?cursor=' + encodeURIComponent(catCursor) : '');
+      const reqTimeout = getRequestTimeout();
+      totalRequests++;
+      const res = await fetcher(url, { credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(reqTimeout) });
+      if (!res.ok) throw Error('Catalog fetch failed');
+      const data = JSON.parse(await boundedText(res, 200000));
+      checkTimeBudget();
+      if (!Array.isArray(data.page)) throw Error('Invalid catalog response');
+
+      catPageCount++;
+      branches.push(...data.page);
+      if (branches.length > 500) throw Error('Catalog count limit exceeded');
+
+      if (data.isDone === true) {
+        catDone = true;
+        break;
+      } else {
+        if (typeof data.continueCursor !== 'string' || !data.continueCursor) {
+          throw Error('Missing continueCursor on incomplete catalog response');
+        }
+        catCursor = data.continueCursor;
+      }
+    }
+
+    checkTimeBudget();
+    const candidates = findBranchCandidates(currentMainId, ep, steps, position, { mains: populatedMains, branches });
+    checkTimeBudget();
+    return { ok: true, candidates };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export function renderBranchCandidates(doc, currentMainId, ep, steps, position, result) {
+  const container = doc.getElementById('branch-candidates');
+  if (!container) return;
+  const titleEl = doc.getElementById('branch-candidates-title');
+  const pillsEl = doc.getElementById('candidate-pills');
+  const emptyEl = doc.getElementById('branch-candidates-empty');
+
+  if (titleEl && ep) {
+    titleEl.textContent = '🌿 第' + (position + 1) + '話「' + ep.title + '」から分岐した、ほかの物語';
+  }
+
+  let ok = true, candidates = [];
+  if (result && typeof result.ok === 'boolean') {
+    ok = result.ok;
+    candidates = result.candidates || [];
+  } else if (result && (result.mains || result.branches)) {
+    candidates = findBranchCandidates(currentMainId, ep, steps, position, result);
+  } else if (Array.isArray(result)) {
+    candidates = result;
+  } else if (result === null || result === undefined) {
+    ok = false;
+  }
+
+  if (!ok) {
+    if (pillsEl) { pillsEl.replaceChildren(); pillsEl.hidden = true; }
+    if (emptyEl) {
+      emptyEl.replaceChildren();
+      const note = doc.createElement('span');
+      note.textContent = '最新の道標を読み込めませんでした。';
+      const link = doc.createElement('a');
+      link.href = '../../branches/';
+      link.textContent = 'ほかの枝の台帳へ →';
+      emptyEl.append(note, doc.createElement('br'), link);
+      emptyEl.hidden = false;
+    }
+    container.hidden = false;
+    return;
+  }
+
+  if (candidates.length > 0) {
+    if (pillsEl) {
+      pillsEl.replaceChildren();
+      for (const c of candidates) {
+        const a = doc.createElement('a');
+        a.className = 'candidate-pill';
+        a.href = c.href;
+        if (c.isExternal) {
+          a.rel = 'noopener noreferrer';
+        }
+        const spanTitle = doc.createElement('span');
+        spanTitle.textContent = c.title;
+        const spanAuthor = doc.createElement('span');
+        spanAuthor.className = 'pill-author';
+        spanAuthor.textContent = c.author;
+        a.append(spanTitle, spanAuthor);
+        pillsEl.append(a);
+      }
+      pillsEl.hidden = false;
+    }
+    if (emptyEl) emptyEl.hidden = true;
+    container.hidden = false;
+  } else {
+    if (pillsEl) {
+      pillsEl.replaceChildren();
+      pillsEl.hidden = true;
+    }
+    if (emptyEl) {
+      emptyEl.replaceChildren();
+      emptyEl.textContent = 'この話から続く物語は、まだありません。';
+      emptyEl.hidden = false;
+    }
+    container.hidden = false;
+  }
+}
+
 if (typeof document !== 'undefined' && document.getElementById('main-reader')) readTree();
+

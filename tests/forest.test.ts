@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vitest";
 // @ts-expect-error Browser module is JavaScript.
 import * as reader from "../site/main-reader.js";
-const { rawSource, boundedText, validatePath, renderStory } = reader;
+const { rawSource, boundedText, validatePath, renderStory, findBranchCandidates, isSameRef, renderBranchCandidates, fetchLiveCandidates } = reader;
 // @ts-expect-error Operational CLI is JavaScript.
 import { applyCandidates } from "../scripts/apply-mains.mjs";
 const sha = "a".repeat(40);
@@ -151,6 +151,396 @@ it("does not let older unlisted declarations starve listed trees and records ove
   ).toBe(true);
   expect(state["1:" + sha]).toBeUndefined();
 });
+
+it("strictly compares branch references using branchId, episodeId, and revision", () => {
+  const ref = { branchId: "origin", episodeId: "ep-001", revision: sha };
+  expect(isSameRef(ref, { branchId: "origin", episodeId: "ep-001", revision: sha })).toBe(true);
+  expect(isSameRef(ref, { branch_id: "origin", episode_id: "ep-001", revision: sha })).toBe(true);
+  expect(isSameRef(ref, { branchId: "origin", episodeId: "ep-001", revision: "b".repeat(40) })).toBe(false);
+  expect(isSameRef(ref, { branchId: "origin", episodeId: "ep-002", revision: sha })).toBe(false);
+  expect(isSameRef(ref, { branchId: "other", episodeId: "ep-001", revision: sha })).toBe(false);
+  expect(isSameRef(ref, null)).toBe(false);
+});
+
+it("finds branch and tree candidate pills with strict revision, status, and provenance checks", () => {
+  const ep1 = { branchId: "origin", episodeId: "ep-001", revision: sha, title: "第1話" };
+  const ep2a = { branchId: "branch-a", episodeId: "ep-002", revision: "1".repeat(40), title: "第2話A", parent: ep1 };
+  const ep2b = { branchId: "branch-b", episodeId: "ep-002", revision: "2".repeat(40), title: "第2話B", parent: ep1 };
+  const steps = [
+    { position: 0, available: true, episode: ep1 },
+    { position: 1, available: true, episode: ep2a },
+  ];
+  const branchesData = {
+    branches: [
+      {
+        id: "branch-a",
+        title: "枝A",
+        maintainer: "作者A",
+        status: "active",
+        fork_point: ep1,
+        reading_url: "https://github.com/a/relay/blob/" + "1".repeat(40) + "/manuscript/02.md",
+      },
+      {
+        id: "branch-b",
+        title: "枝B",
+        maintainer: "作者B",
+        status: "active",
+        fork_point: ep1,
+        reading_url: "https://github.com/b/relay/blob/" + "2".repeat(40) + "/manuscript/02.md",
+      },
+      // Excluded: branch with different revision
+      {
+        id: "branch-diff-rev",
+        title: "別版の枝",
+        maintainer: "作者C",
+        status: "active",
+        fork_point: { ...ep1, revision: "c".repeat(40) },
+        reading_url: "https://github.com/c/relay/blob/" + "3".repeat(40) + "/manuscript/02.md",
+      },
+      // Excluded: paused branch
+      {
+        id: "branch-paused",
+        title: "休止中の枝",
+        maintainer: "作者D",
+        status: "paused",
+        fork_point: ep1,
+        reading_url: "https://github.com/d/relay/blob/" + "4".repeat(40) + "/manuscript/02.md",
+      },
+      // Excluded: invalid reading URL
+      {
+        id: "branch-invalid-url",
+        title: "不正URLの枝",
+        maintainer: "作者E",
+        status: "active",
+        fork_point: ep1,
+        reading_url: "javascript:alert(1)",
+      },
+    ],
+    mains: [
+      {
+        id: "tree-1",
+        title: "木1",
+        maintainer: "管理人1",
+        version: 1,
+        path: [
+          { position: 0, available: true, episode: ep1 },
+          { position: 1, available: true, episode: ep2a },
+        ],
+      },
+      {
+        id: "tree-2",
+        title: "木2",
+        maintainer: "管理人2",
+        version: 1,
+        path: [
+          { position: 0, available: true, episode: ep1 },
+          { position: 1, available: true, episode: ep2b },
+        ],
+      },
+      // Excluded: discontinuous tree (parent doesn't match ep1)
+      {
+        id: "tree-bad-parent",
+        title: "不連続な木",
+        maintainer: "管理人3",
+        version: 1,
+        path: [
+          { position: 0, available: true, episode: ep1 },
+          { position: 1, available: true, episode: { ...ep2b, parent: { ...ep1, revision: "z".repeat(40) } } },
+        ],
+      },
+    ],
+  };
+
+  // When reading ep1 on tree-1:
+  // - branch-a and tree-1 are the current next step -> excluded
+  // - tree-2 (with ep2b) and branch-b are valid alternate continuations -> included
+  // - branch-diff-rev, branch-paused, branch-invalid-url, tree-bad-parent -> excluded
+  const candidates = findBranchCandidates("tree-1", ep1, steps, 0, branchesData);
+  expect(candidates).toEqual([
+    {
+      title: "🌲 木2（第2話へ）",
+      author: "by 管理人2",
+      href: "?id=tree-2&v=1&at=1",
+      isExternal: false,
+    },
+    {
+      title: "🌱 枝B",
+      author: "by 作者B",
+      href: "https://github.com/b/relay/blob/" + "2".repeat(40) + "/manuscript/02.md",
+      isExternal: true,
+    },
+  ]);
+
+  // Safe against null/empty
+  expect(findBranchCandidates("tree-1", null, steps, 0, branchesData)).toEqual([]);
+  expect(findBranchCandidates("tree-1", ep1, steps, 0, null)).toEqual([]);
+  expect(findBranchCandidates("tree-1", { ...ep1, revision: null }, steps, 0, branchesData)).toEqual([]);
+});
+
+it("renders candidate pills safely and directs to branches catalog on load failure", () => {
+  const elements: Record<string, any> = {};
+  const doc = {
+    getElementById: (id: string) => elements[id],
+    createElement: (tag: string) => {
+      const node: any = { tag, textContent: "", className: "", children: [] };
+      node.append = (...children: any[]) => { node.children.push(...children); };
+      node.replaceChildren = (...children: any[]) => { node.children = [...children]; node.textContent = ""; };
+      return node;
+    },
+    createTextNode: (text: string) => ({ textContent: text }),
+  };
+  elements["branch-candidates"] = doc.createElement("div");
+  elements["branch-candidates-title"] = doc.createElement("div");
+  elements["candidate-pills"] = doc.createElement("div");
+  elements["branch-candidates-empty"] = doc.createElement("p");
+
+  const ep = { branchId: "origin", episodeId: "ep-001", revision: sha, title: "三割の午後" };
+
+  // 1. Success with candidates
+  const data = {
+    mains: [{ mainId: "tree-2", title: "木2", maintainer: "管理2", version: 1, steps: [
+      { position: 0, available: true, episode: ep },
+      { position: 1, available: true, episode: { branchId: "b2", episodeId: "ep-2", revision: sha, parent: ep } },
+    ]}],
+    branches: [],
+  };
+  renderBranchCandidates(doc as any, "tree-1", ep, [{ position: 0, available: true, episode: ep }], 0, { ok: true, candidates: [{ title: "木2", author: "by 管理2", href: "?id=tree-2" }] });
+  expect(elements["candidate-pills"].children).toHaveLength(1);
+  expect(elements["candidate-pills"].children[0].className).toBe("candidate-pill");
+  expect(elements["candidate-pills"].hidden).toBe(false);
+  expect(elements["branch-candidates-empty"].hidden).toBe(true);
+
+  // 2. Error / failure state: directs to branches catalog rather than falsely reporting "no candidates"
+  renderBranchCandidates(doc as any, "tree-1", ep, [], 0, { ok: false, error: "Network failed" });
+  expect(elements["candidate-pills"].hidden).toBe(true);
+  expect(elements["branch-candidates-empty"].hidden).toBe(false);
+  const emptyChildren = elements["branch-candidates-empty"].children;
+  expect(emptyChildren.some((c: any) => c.tag === "a" && c.href === "../../branches/")).toBe(true);
+  expect(emptyChildren.some((c: any) => c.textContent?.includes("読み込めませんでした"))).toBe(true);
+});
+
+it("handles live API fetch with strict error isolation, pagination, and version checking", async () => {
+  const ep = { branchId: "origin", episodeId: "ep-001", revision: sha, title: "第1話" };
+  const epNext = { branchId: "tree-b-branch", episodeId: "ep-002", revision: "b".repeat(40), parent: ep };
+
+  const validMains = { isDone: true, page: [
+    { mainId: "tree-a", title: "木A", version: 1, count: 1 },
+    { mainId: "tree-b", title: "木B", version: 2, count: 2, maintainer: "作者B", agentName: "AI-B" },
+  ]};
+  const validTreeBPath = { version: 2, count: 2, isDone: true, page: [
+    { position: 0, available: true, episode: ep },
+    { position: 1, available: true, episode: epNext },
+  ]};
+  const validCatalog = { isDone: true, page: [
+    { branchId: "branch-x", title: "枝X", maintainer: "作者X", parent: ep, status: "verified", readingUrl: "https://github.com/x/r/blob/" + sha + "/manuscript/02.md" },
+  ]};
+
+  // 1. /mains returns 503 -> fails closed (ok: false)
+  const fetchMains503 = async (url: string) => {
+    if (url.startsWith("/api/v1/mains")) return new Response("Service Unavailable", { status: 503 });
+    return Response.json({ page: [], isDone: true });
+  };
+  const res1 = await fetchLiveCandidates(fetchMains503, "tree-a", ep, [{ episode: ep }], 0);
+  expect(res1.ok).toBe(false);
+
+  // 2. Individual /main?id=tree-b returns 503 -> fails closed (ok: false)
+  const fetchMain503 = async (url: string) => {
+    if (url.startsWith("/api/v1/mains")) return Response.json(validMains);
+    if (url.startsWith("/api/v1/main?id=tree-b")) return new Response("Unavailable", { status: 503 });
+    if (url.startsWith("/api/v1/catalog")) return Response.json(validCatalog);
+    return new Response("Not found", { status: 404 });
+  };
+  const res2 = await fetchLiveCandidates(fetchMain503, "tree-a", ep, [{ episode: ep }], 0);
+  expect(res2.ok).toBe(false);
+
+  // 3. /catalog incomplete pagination (page limit exceeded while isDone: false) -> fails closed
+  const fetchIncompleteCatalog = async (url: string) => {
+    if (url.startsWith("/api/v1/mains")) return Response.json(validMains);
+    if (url.startsWith("/api/v1/main?id=tree-b")) return Response.json(validTreeBPath);
+    if (url.startsWith("/api/v1/catalog")) return Response.json({ page: [{ branchId: "b" }], isDone: false, continueCursor: "next" });
+    return new Response("Not found", { status: 404 });
+  };
+  const res3 = await fetchLiveCandidates(fetchIncompleteCatalog, "tree-a", ep, [{ episode: ep }], 0, { maxCatalogPages: 2 });
+  expect(res3.ok).toBe(false);
+
+  // 4. Version mismatch: mains has version 1, path returns version 2 -> fails closed
+  const fetchVersionMismatch = async (url: string) => {
+    if (url.startsWith("/api/v1/mains")) return Response.json({ isDone: true, page: [{ mainId: "tree-b", version: 1 }] });
+    if (url.startsWith("/api/v1/main?id=tree-b")) return Response.json({ version: 2, count: 0, isDone: true, page: [] });
+    if (url.startsWith("/api/v1/catalog")) return Response.json({ page: [], isDone: true });
+    return new Response("Not found", { status: 404 });
+  };
+  const res4 = await fetchLiveCandidates(fetchVersionMismatch, "tree-a", ep, [{ episode: ep }], 0);
+  expect(res4.ok).toBe(false);
+
+  // 5. Successful live fetch with all pages complete -> ok: true and valid candidate pills
+  const fetchSuccess = async (url: string) => {
+    if (url.startsWith("/api/v1/mains")) return Response.json(validMains);
+    if (url.startsWith("/api/v1/main?id=tree-b")) return Response.json(validTreeBPath);
+    if (url.startsWith("/api/v1/catalog")) return Response.json(validCatalog);
+    return new Response("Not found", { status: 404 });
+  };
+  const res5 = await fetchLiveCandidates(fetchSuccess, "tree-a", ep, [{ episode: ep }], 0);
+  expect(res5.ok).toBe(true);
+  expect(res5.candidates).toHaveLength(2);
+  expect(res5.candidates[0]).toMatchObject({ title: "🌲 木B（第2話へ）", href: "?id=tree-b&v=2&at=1" });
+  expect(res5.candidates[1]).toMatchObject({ title: "🌱 枝X", href: validCatalog.page[0].readingUrl });
+});
+
+it("enforces strict cursor presence when incomplete, validates path continuity, catches limits on final page, and bounds empty pages", async () => {
+  const ep = { branchId: "origin", episodeId: "ep-001", revision: sha, title: "第1話" };
+  const epNext = { branchId: "tree-b-branch", episodeId: "ep-002", revision: "b".repeat(40), parent: ep };
+
+  const validMains = { isDone: true, page: [
+    { mainId: "tree-a", title: "木A", version: 1, count: 1 },
+    { mainId: "tree-b", title: "木B", version: 2, count: 2, maintainer: "作者B", agentName: "AI-B" },
+  ]};
+  const validTreeBPath = { version: 2, count: 2, isDone: true, page: [
+    { position: 0, available: true, episode: ep },
+    { position: 1, available: true, episode: epNext },
+  ]};
+  const validCatalog = { isDone: true, page: [
+    { branchId: "branch-x", title: "枝X", maintainer: "作者X", parent: ep, status: "verified", readingUrl: "https://github.com/x/r/blob/" + sha + "/manuscript/02.md" },
+  ]};
+
+  // Case 1: 未完了なのにカーソル欠落 (Missing continueCursor on incomplete response)
+  const fetchMissingCursor = async (url: string) => {
+    if (url.startsWith("/api/v1/mains")) return Response.json({ isDone: false, page: [{ mainId: "tree-b", version: 1 }] }); // continueCursor missing
+    return Response.json({ page: [], isDone: true });
+  };
+  expect((await fetchLiveCandidates(fetchMissingCursor, "tree-a", ep, [{ episode: ep }], 0)).ok).toBe(false);
+
+  // Case 2: 道順件数/position不一致 (Path count mismatch or position discontinuity)
+  const fetchCountMismatch = async (url: string) => {
+    if (url.startsWith("/api/v1/mains")) return Response.json(validMains);
+    if (url.startsWith("/api/v1/main?id=tree-b")) {
+      // count: 3 なのに 2件しかない
+      return Response.json({ version: 2, count: 3, isDone: true, page: validTreeBPath.page });
+    }
+    if (url.startsWith("/api/v1/catalog")) return Response.json(validCatalog);
+    return new Response("Not found", { status: 404 });
+  };
+  expect((await fetchLiveCandidates(fetchCountMismatch, "tree-a", ep, [{ episode: ep }], 0)).ok).toBe(false);
+
+  const fetchPositionMismatch = async (url: string) => {
+    if (url.startsWith("/api/v1/mains")) return Response.json(validMains);
+    if (url.startsWith("/api/v1/main?id=tree-b")) {
+      // position が 0 の次が 2 (不連続)
+      return Response.json({
+        version: 2,
+        count: 2,
+        isDone: true,
+        page: [
+          { position: 0, available: true, episode: ep },
+          { position: 2, available: true, episode: epNext },
+        ],
+      });
+    }
+    if (url.startsWith("/api/v1/catalog")) return Response.json(validCatalog);
+    return new Response("Not found", { status: 404 });
+  };
+  expect((await fetchLiveCandidates(fetchPositionMismatch, "tree-a", ep, [{ episode: ep }], 0)).ok).toBe(false);
+
+  // Case 3: 最終ページで件数超過 (Limit exceeded on final page with isDone: true)
+  const fetchFinalPageOverflow = async (url: string) => {
+    if (url.startsWith("/api/v1/mains")) {
+      return Response.json({
+        isDone: true,
+        page: [
+          { mainId: "tree-a", version: 1 },
+          { mainId: "tree-b", version: 1 },
+        ],
+      });
+    }
+    return Response.json({ page: [], isDone: true });
+  };
+  // maxMains: 1 に対して 2件入りで isDone: true
+  expect((await fetchLiveCandidates(fetchFinalPageOverflow, "tree-a", ep, [{ episode: ep }], 0, { maxMains: 1 })).ok).toBe(false);
+
+  // Case 4: 空ページが続く (Consecutive empty pages caught by page limit or request budget)
+  let mainsRequests = 0;
+  const fetchEmptyMainsPages = async (url: string) => {
+    if (url.startsWith("/api/v1/mains")) {
+      mainsRequests++;
+      return Response.json({
+        isDone: false,
+        continueCursor: "cursor-" + mainsRequests,
+        page: [],
+      });
+    }
+    return Response.json({ page: [], isDone: true });
+  };
+  const resEmpty = await fetchLiveCandidates(fetchEmptyMainsPages, "tree-a", ep, [{ episode: ep }], 0, { maxMainsPages: 3 });
+  expect(resEmpty.ok).toBe(false);
+  expect(mainsRequests).toBe(3); // maxMainsPages に達して安全に停止
+});
+
+it("validates path version on every page and enforces overall timeout through final response", async () => {
+  const ep = { branchId: "origin", episodeId: "ep-001", revision: sha, title: "第1話" };
+  const epNext = { branchId: "tree-b-branch", episodeId: "ep-002", revision: "b".repeat(40), parent: ep };
+
+  const validMainsV2 = { isDone: true, page: [
+    { mainId: "tree-a", title: "木A", version: 1, count: 1 },
+    { mainId: "tree-b", title: "木B", version: 2, count: 2, maintainer: "作者B", agentName: "AI-B" },
+  ]};
+  const validCatalog = { isDone: true, page: [] };
+
+  // 1. Path version mismatch across pages: mains is v2, first page is v1, final page is v2 -> ok: false
+  const fetchVersionShiftInPath = async (url: string) => {
+    if (url.startsWith("/api/v1/mains")) return Response.json(validMainsV2);
+    if (url.startsWith("/api/v1/main?id=tree-b")) {
+      if (!url.includes("cursor=")) {
+        // 先頭ページ: version 1, isDone: false, continueCursor: "c2"
+        return Response.json({
+          version: 1,
+          isDone: false,
+          continueCursor: "c2",
+          page: [{ position: 0, available: true, episode: ep }],
+        });
+      }
+      // 最終ページ: version 2, isDone: true, count: 2
+      return Response.json({
+        version: 2,
+        count: 2,
+        isDone: true,
+        page: [{ position: 1, available: true, episode: epNext }],
+      });
+    }
+    if (url.startsWith("/api/v1/catalog")) return Response.json(validCatalog);
+    return new Response("Not found", { status: 404 });
+  };
+  const resShift = await fetchLiveCandidates(fetchVersionShiftInPath, "tree-a", ep, [{ episode: ep }], 0);
+  expect(resShift.ok).toBe(false);
+
+  // 2. Overall timeout: final response completes after overall budget exceeded -> ok: false
+  const fetchSlowFinalCatalog = async (url: string) => {
+    if (url.startsWith("/api/v1/mains")) return Response.json(validMainsV2);
+    if (url.startsWith("/api/v1/main?id=tree-b")) {
+      return Response.json({
+        version: 2,
+        count: 2,
+        isDone: true,
+        page: [
+          { position: 0, available: true, episode: ep },
+          { position: 1, available: true, episode: epNext },
+        ],
+      });
+    }
+    if (url.startsWith("/api/v1/catalog")) {
+      // 最後の catalog レスポンス本文取得で全体時間を超過
+      await new Promise(resolve => setTimeout(resolve, 25));
+      return Response.json(validCatalog);
+    }
+    return new Response("Not found", { status: 404 });
+  };
+  const resTimeout = await fetchLiveCandidates(fetchSlowFinalCatalog, "tree-a", ep, [{ episode: ep }], 0, {
+    overallTimeoutMs: 20,
+    timeoutMs: 50,
+  });
+  expect(resTimeout.ok).toBe(false);
+});
+
+
 
 it("shows literal provenance credits with fixed source links, and clears withdrawn references", () => {
   const nodes: any[] = [];
