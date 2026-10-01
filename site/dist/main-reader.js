@@ -79,7 +79,7 @@ export function renderProvenance(document, target, episode) {
     target.append(credit);
   }
 }
-async function readTree() {
+export async function readTree() {
   const params = new URLSearchParams(location.search), id = params.get('id') || '';
   const status = document.getElementById('reading-status');
   const refresh = document.getElementById('refresh-tree');
@@ -117,8 +117,8 @@ async function readTree() {
       else li.textContent='現在は案内を停止している話';
       path.append(li);
     }
-    // Never jump past a withdrawn or unavailable episode and call it a continuous story.
-    if (!steps[position] || steps.slice(0,position+1).some(s => !s.available)) throw Error('Unavailable step');
+    // Reading a selected public episode does not change the author's fixed path.
+    if (!steps[position]?.available) throw Error('Unavailable step');
     const ep = steps[position].episode;
     document.getElementById('episode-title').textContent = (position+1)+'話目 · '+ep.title;
     const source = await fetch(rawSource(ep.readingUrl), {credentials:'omit',redirect:'error',referrerPolicy:'no-referrer',signal:AbortSignal.timeout(15000)});
@@ -137,11 +137,11 @@ async function readTree() {
       if (live.version !== version) throw Error('Path changed');
       liveSteps.push(...live.page);
     }
-    if (liveSteps.slice(0,position+1).some(s=>!s.available) || !liveSteps[position]?.available) throw Error('Unavailable step');
+    if (!liveSteps[position]?.available || !isSameRef(liveSteps[position].episode, ep) || liveSteps[position].episode.contentHash !== ep.contentHash) throw Error('Unavailable step');
     renderProvenance(document,document.getElementById('episode-source'),liveSteps[position].episode);
     renderStory(document,document.getElementById('tree-story'),prose);
     const nav = document.getElementById('tree-navigation');
-    if (position > 0) nav.append(link('前の話へ',position-1));
+    if (position > 0 && liveSteps[position-1]?.available) nav.append(link('前の話へ',position-1));
     if (position+1 < steps.length && steps[position+1].available) nav.append(link('次の話へ',position+1));
     const original=document.createElement('a');original.textContent='公開元の固定版';original.href=ep.readingUrl;original.rel='noopener noreferrer';nav.append(original);
     const epilogue = document.getElementById('tree-epilogue');
@@ -320,13 +320,14 @@ export async function fetchLiveCandidates(fetcher, currentMainId, ep, steps, pos
     return Math.min(timeoutMs, remaining);
   };
 
-  try {
-    if (!ep || !ep.revision || !(ep.branchId || ep.branch_id) || !(ep.episodeId || ep.episode_id)) {
-      return { ok: true, candidates: [] };
-    }
+  const mains = [], populatedMains = [], branches = [], errors = [];
+  const recordFailure = err => errors.push(err instanceof Error ? err.message : String(err));
+  if (!ep || !ep.revision || !(ep.branchId || ep.branch_id) || !(ep.episodeId || ep.episode_id)) {
+    return { ok: true, candidates: [] };
+  }
 
+  try {
     // 1. Fetch live mains with cursor pagination to completion
-    const mains = [];
     let mainsCursor = null;
     const mainsSeen = new Set();
     let mainsDone = false;
@@ -353,8 +354,9 @@ export async function fetchLiveCandidates(fetcher, currentMainId, ep, steps, pos
       if (!Array.isArray(data.page)) throw Error('Invalid mains response');
 
       mainsPageCount++;
-      mains.push(...data.page);
-      if (mains.length > maxMains) {
+      const remaining = maxMains - mains.length;
+      mains.push(...data.page.slice(0, remaining));
+      if (data.page.length > remaining) {
         throw Error('Mains count limit exceeded');
       }
 
@@ -368,14 +370,14 @@ export async function fetchLiveCandidates(fetcher, currentMainId, ep, steps, pos
         mainsCursor = data.continueCursor;
       }
     }
+  } catch (err) { recordFailure(err); }
 
-    // 2. Fetch path for all other mains, strictly validating versions and path completeness
-    const otherMains = mains.filter(m => (m.mainId || m.id) !== currentMainId);
-    const populatedMains = [];
-
-    for (const m of otherMains) {
+  // 2. A failed or changing tree cannot discard other verified paths.
+  const otherMains = mains.filter(m => m && (m.mainId || m.id) !== currentMainId);
+  for (const m of otherMains) {
+    try {
       const mId = m.mainId || m.id;
-      if (!mId || typeof m.version !== 'number' || !Number.isSafeInteger(m.version) || m.version < 1) {
+      if (typeof mId !== 'string' || !/^[a-z0-9][a-z0-9-]{1,79}$/.test(mId) || typeof m.version !== 'number' || !Number.isSafeInteger(m.version) || m.version < 1) {
         throw Error('Invalid main entry: ' + mId);
       }
 
@@ -434,10 +436,13 @@ export async function fetchLiveCandidates(fetcher, currentMainId, ep, steps, pos
         steps: mSteps,
         version: m.version,
       });
-    }
+    } catch (err) { recordFailure(err); }
+    // Do not keep trying requests once the shared budget is exhausted.
+    try { checkBudget(); } catch (err) { recordFailure(err); break; }
+  }
 
+  try {
     // 3. Fetch full catalog of branches with cursor pagination to completion
-    const branches = [];
     let catCursor = null;
     const catSeen = new Set();
     let catDone = false;
@@ -464,8 +469,9 @@ export async function fetchLiveCandidates(fetcher, currentMainId, ep, steps, pos
       if (!Array.isArray(data.page)) throw Error('Invalid catalog response');
 
       catPageCount++;
-      branches.push(...data.page);
-      if (branches.length > 500) throw Error('Catalog count limit exceeded');
+      const remaining = 500 - branches.length;
+      branches.push(...data.page.slice(0, remaining));
+      if (data.page.length > remaining) throw Error('Catalog count limit exceeded');
 
       if (data.isDone === true) {
         catDone = true;
@@ -478,13 +484,13 @@ export async function fetchLiveCandidates(fetcher, currentMainId, ep, steps, pos
       }
     }
 
-    checkTimeBudget();
-    const candidates = findBranchCandidates(currentMainId, ep, steps, position, { mains: populatedMains, branches });
-    checkTimeBudget();
-    return { ok: true, candidates };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
-  }
+  } catch (err) { recordFailure(err); }
+  // Only complete, validated tree paths and already received catalog entries contribute.
+  const candidates = findBranchCandidates(currentMainId, ep, steps, position, { mains: populatedMains, branches });
+  try { checkTimeBudget(); } catch (err) { recordFailure(err); }
+  return { ok: errors.length === 0 || candidates.length > 0, candidates,
+    partial: errors.length > 0, error: errors[0] };
+
 }
 
 export function renderBranchCandidates(doc, currentMainId, ep, steps, position, result) {
@@ -546,7 +552,10 @@ export function renderBranchCandidates(doc, currentMainId, ep, steps, position, 
       }
       pillsEl.hidden = false;
     }
-    if (emptyEl) emptyEl.hidden = true;
+    if (emptyEl) {
+      emptyEl.textContent = result?.partial ? '一部の道標はまだ読み込めていません。' : '';
+      emptyEl.hidden = !result?.partial;
+    }
     container.hidden = false;
   } else {
     if (pillsEl) {
@@ -564,3 +573,22 @@ export function renderBranchCandidates(doc, currentMainId, ep, steps, position, 
 
 if (typeof document !== 'undefined' && document.getElementById('main-reader')) readTree();
 
+// Static prose keeps its layout; only its continuation pills use the live forest.
+export async function readStaticCandidates(doc, fetcher) {
+  const container = doc.getElementById('branch-candidates');
+  const reference = container?.getAttribute('data-episode-ref');
+  if (!reference) return;
+  try {
+    const ep = JSON.parse(reference);
+    const result = await fetchLiveCandidates(fetcher, '', ep, [], 0);
+    result.candidates = result.candidates.map(c => ({ ...c,
+      href: c.isExternal ? c.href : '../main/' + c.href }));
+    renderBranchCandidates(doc, '', ep, [], Number(container.getAttribute('data-position') || 0), result);
+    return result;
+  } catch {
+    renderBranchCandidates(doc, '', null, [], 0, { ok: false });
+  }
+}
+if (typeof document !== 'undefined' && typeof location !== 'undefined' && location.protocol !== 'file:') {
+  readStaticCandidates(document, (url, init) => fetch(url, init));
+}

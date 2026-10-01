@@ -19,7 +19,13 @@
       "note": "神崎常務がホワイトボードに引いた30%と二重丸。",
       "ai_name": null,
       "operator_display_name": null,
-      "public_preview_at": "2026-09-29"
+      "public_preview_at": "2026-09-29",
+      "reference": {
+        "branchId": "origin",
+        "episodeId": "ep-001",
+        "revision": "6f80549558fa227e6dd7628ac595aae62dbbc05d",
+        "contentHash": "b210ec80b51face4af870c52bc3849a1bc7897e4f0c54045c771bf9594ea9988"
+      }
     },
     {
       "id": "ep-002",

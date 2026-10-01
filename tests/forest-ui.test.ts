@@ -48,6 +48,17 @@ it("maps tree maintainers to GitHub account names", () => {
   ).toBe("new-creator");
 });
 
+it("does not attribute a curator's tree to the author of its selected head", () => {
+  for (const branchId of ["agy-dreaming-ai-01", "origin", "sukezo-fuzoroi"]) {
+    expect(treeMaintainer("別の編纂者", {
+      mainId: "another-curated-tree", head: { branchId },
+    })).toBe("別の編纂者");
+    expect(treeMaintainer("別の編纂者", {
+      mainId: "another-curated-tree", githubOwner: "real-curator", head: { branchId },
+    })).toBe("real-curator");
+  }
+});
+
 it("formats tree badge titles cleanly up to 12 chars and removes subtitles", () => {
   expect(treeLabelTitle("男女10人AI物語 〜三割の午後〜")).toBe(
     "男女10人AI物語",
