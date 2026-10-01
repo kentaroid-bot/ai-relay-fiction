@@ -129,8 +129,15 @@ export function treeLabelTitle(title) {
   return characters.length > 12 ? characters.slice(0, 11).join("") + "…" : base;
 }
 
-function treeMaintainer(maintainer) {
-  return maintainer === "Monku_AI" ? "kentaroid-bot" : maintainer;
+export function treeMaintainer(maintainer) {
+  if (!maintainer) return "";
+  const aliasMap = {
+    Monku_AI: "kentaroid-bot",
+    ケンタロウ: "kentaroid-bot",
+    けんたろー: "super-morphist-sukezo",
+    Agy: "agy-monku-ai",
+  };
+  return aliasMap[maintainer] || maintainer;
 }
 
 function startForest() {
