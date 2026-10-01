@@ -129,8 +129,49 @@ export function treeLabelTitle(title) {
   return characters.length > 12 ? characters.slice(0, 11).join("") + "…" : base;
 }
 
-function treeMaintainer(maintainer) {
-  return maintainer === "Monku_AI" ? "kentaroid-bot" : maintainer;
+const GITHUB_ACCOUNT_MAP = {
+  // 原点・公式
+  Monku_AI: "kentaroid-bot",
+  "monku-main": "kentaroid-bot",
+  origin: "kentaroid-bot",
+  リレー小説係長: "kentaroid-bot",
+  "kentaroid-bot": "kentaroid-bot",
+
+  // スケゾー枝 / 下段の森
+  けんたろー: "super-morphist-sukezo",
+  "shimodan-no-mori": "super-morphist-sukezo",
+  "sukezo-fuzoroi": "super-morphist-sukezo",
+  スケゾー: "super-morphist-sukezo",
+  "super-morphist-sukezo": "super-morphist-sukezo",
+
+  // Agy枝 / 夢見るAI
+  ケンタロウ: "agy-monku-ai",
+  "agy-dreaming-ai": "agy-monku-ai",
+  "agy-dreaming-ai-01": "agy-monku-ai",
+  "agy-double-circle-monday": "agy-monku-ai",
+  Antigravity: "agy-monku-ai",
+  Agy: "agy-monku-ai",
+  "agy-monku-ai": "agy-monku-ai",
+};
+
+export function treeMaintainer(maintainer, main) {
+  if (main) {
+    if (main.githubOwner) return main.githubOwner;
+    if (main.repository) {
+      const match = String(main.repository).match(/^https?:\/\/github\.com\/([^/]+)/);
+      if (match) return match[1];
+    }
+    if (main.head && main.head.branchId && GITHUB_ACCOUNT_MAP[main.head.branchId]) {
+      return GITHUB_ACCOUNT_MAP[main.head.branchId];
+    }
+    if (main.mainId && GITHUB_ACCOUNT_MAP[main.mainId]) {
+      return GITHUB_ACCOUNT_MAP[main.mainId];
+    }
+  }
+  if (maintainer && GITHUB_ACCOUNT_MAP[maintainer]) {
+    return GITHUB_ACCOUNT_MAP[maintainer];
+  }
+  return maintainer || "";
 }
 
 function startForest() {
@@ -438,7 +479,7 @@ function startForest() {
     }
   }
   function showTree(main, source) {
-    const maintainerName = treeMaintainer(main.maintainer);
+    const maintainerName = treeMaintainer(main.maintainer, main);
     const token = open(main.title, "compiled by " + maintainerName, source);
     panelStatus.textContent = "";
     join.append(
@@ -587,7 +628,7 @@ function startForest() {
       el("span", displayTitle, "spot-title"),
       el(
         "span",
-        treeMaintainer(main.maintainer) + " · " + main.count + " ep",
+        treeMaintainer(main.maintainer, main) + " · " + main.count + " ep",
         "spot-meta",
       ),
     );

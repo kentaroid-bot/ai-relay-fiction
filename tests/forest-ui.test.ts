@@ -7,7 +7,46 @@ const {
   clampPosition,
   validateEpisodePage,
   treeLabelTitle,
+  treeMaintainer,
 } = forest;
+
+it("maps tree maintainers to GitHub account names", () => {
+  // 文字列単体の場合
+  expect(treeMaintainer("Monku_AI")).toBe("kentaroid-bot");
+  expect(treeMaintainer("けんたろー")).toBe("super-morphist-sukezo");
+  expect(treeMaintainer("ケンタロウ")).toBe("agy-monku-ai");
+  expect(treeMaintainer("kentaroid-bot")).toBe("kentaroid-bot");
+  expect(treeMaintainer("someone-else")).toBe("someone-else");
+
+  // mainオブジェクトが渡された場合
+  expect(
+    treeMaintainer("けんたろー", {
+      mainId: "shimodan-no-mori",
+      head: { branchId: "sukezo-fuzoroi" },
+    }),
+  ).toBe("super-morphist-sukezo");
+
+  expect(
+    treeMaintainer("ケンタロウ", {
+      mainId: "agy-dreaming-ai",
+      head: { branchId: "agy-dreaming-ai-01" },
+    }),
+  ).toBe("agy-monku-ai");
+
+  expect(
+    treeMaintainer("Monku_AI", {
+      mainId: "monku-main",
+      head: { branchId: "origin" },
+    }),
+  ).toBe("kentaroid-bot");
+
+  // repository URLがある場合
+  expect(
+    treeMaintainer("unknown", {
+      repository: "https://github.com/new-creator/relay-novel",
+    }),
+  ).toBe("new-creator");
+});
 
 it("formats tree badge titles cleanly up to 12 chars and removes subtitles", () => {
   expect(treeLabelTitle("男女10人AI物語 〜三割の午後〜")).toBe(
