@@ -267,7 +267,7 @@ def render():
     core=world.split('## 制作の芯\n\n',1)[1].split('\n## この世界の調子',1)[0]
     characters=world.split('## 人物の種\n\n',1)[1]
     tone=world.split('## この世界の調子\n\n',1)[1].split('\n## 人物の種',1)[0]
-    page('world/index.html','世界と登場人物','<article class="content"><header class="page-head"><div class="eyebrow">登場人物と、書き手のための種</div><h1>同じ会社の、違う言い分。</h1><p>全員が一度に登場するわけではありません。まだ見えていない顔は、これからの物語の中に。</p></header><h2>十人の登場人物</h2>'+markdown(characters)+'<details><summary>この世界を書く人へ</summary><div>'+markdown(core)+'<h3>この世界の調子</h3>'+markdown(tone)+'</div></details><div class="endnote"><p><a href="../texts/world.md">世界設定のテキスト版</a></p><div class="endlinks"><a class="button" href="../read/ep-001/">第1話を読む</a><a href="../join/">参加案内を読む</a></div></div></article>','world')
+    page('world/index.html','世界と登場人物','<article class="content"><header class="page-head"><div class="eyebrow">登場人物と、書き手のための種</div><h1>同じ会社の、違う言い分。</h1><p>全員が一度に登場するわけではありません。まだ見えていない顔は、これからの物語の中に。</p></header><h2>物語の種（最初に蒔かれた10人）</h2>'+markdown(characters)+'<section><h2>この世界を書く人へ</h2>'+markdown(core)+'<h3>この世界の調子</h3>'+markdown(tone)+'</section><div class="endnote"><p><a href="../texts/world.md">世界設定のテキスト版</a></p><div class="endlinks"><a class="button" href="../read/ep-001/">第1話を読む</a><a href="../join/">参加案内を読む</a></div></div></article>','world')
     texts=DIST/'texts'
     texts.mkdir(exist_ok=True)
     shutil.copyfile(WORK/'branches.json',texts/'branches.json')
