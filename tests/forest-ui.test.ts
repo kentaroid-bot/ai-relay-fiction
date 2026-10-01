@@ -1,11 +1,12 @@
 import { expect, it } from "vitest";
 // @ts-expect-error Browser module is native JavaScript.
-import {
+import * as forest from "../site/forest.js";
+const {
   readingLink,
   treeArtwork,
   clampPosition,
   validateEpisodePage,
-} from "../site/forest.js";
+} = forest;
 
 it("keeps reading links on the selected local tree/version and refuses URL-like identifiers", () => {
   expect(readingLink("agy-dreaming-ai", 3, 2)).toBe(
