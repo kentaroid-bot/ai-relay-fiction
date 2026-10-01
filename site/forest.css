@@ -299,6 +299,7 @@ h1 {
   align-items: center;
   background: transparent;
   border: 0;
+  padding: 0;
   cursor: grab;
   user-select: none;
   -webkit-user-select: none;
@@ -308,7 +309,12 @@ h1 {
   z-index: 5;
 }
 .forest-stone-spot:hover {
-  transform: translateY(-4px) scale(1.04);
+  transform: translateY(-4px) scale(1.05);
+}
+.forest-stone-spot:focus-visible {
+  outline: 2px dashed rgba(120, 110, 100, 0.4);
+  outline-offset: 4px;
+  border-radius: 50%;
 }
 .forest-stone-spot * {
   pointer-events: none;
@@ -316,28 +322,15 @@ h1 {
 .forest-stone-spot.is-dragging {
   cursor: grabbing;
   transition: none !important;
-  transform: scale(1.08) translateY(-4px);
+  transform: scale(1.1) translateY(-6px);
   z-index: 1000 !important;
-  filter: drop-shadow(0 10px 10px rgba(60, 45, 30, 0.12));
+  filter: drop-shadow(0 12px 12px rgba(60, 45, 30, 0.15));
 }
 .forest-stone-spot .stone-artwork {
-  width: 52px;
+  width: 54px;
   height: auto;
   mix-blend-mode: multiply;
   pointer-events: none;
-}
-.forest-stone-spot .spot-label {
-  margin-top: 0.2rem;
-  padding: 0.15rem 0.5rem;
-  background: rgba(255, 255, 255, 0.9);
-  border: 1px dashed rgba(120, 110, 100, 0.25);
-  border-radius: 3px;
-  pointer-events: none;
-}
-.forest-stone-spot .spot-title {
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--pencil);
 }
 .forest-field.is-arranged {
   padding: 0;
