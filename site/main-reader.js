@@ -280,9 +280,21 @@ export function findBranchCandidates(currentMainId, ep, steps, position, branche
 }
 
 export async function fetchLiveCandidates(fetcher, currentMainId, ep, steps, position, options = {}) {
-  const timeoutMs = options.timeoutMs || 5000;
+  const timeoutMs = options.timeoutMs || 4000;
+  const overallTimeoutMs = options.overallTimeoutMs || 10000;
   const maxMains = options.maxMains || 50;
+  const maxMainsPages = options.maxMainsPages || 10;
+  const maxPathPages = options.maxPathPages || 10;
   const maxCatalogPages = options.maxCatalogPages || 20;
+  const maxTotalRequests = options.maxTotalRequests || 40;
+
+  const startTime = Date.now();
+  let totalRequests = 0;
+
+  const checkBudget = () => {
+    if (Date.now() - startTime > overallTimeoutMs) throw Error('Overall timeout exceeded');
+    if (totalRequests >= maxTotalRequests) throw Error('Total request budget exceeded');
+  };
 
   try {
     if (!ep || !ep.revision || !(ep.branchId || ep.branch_id) || !(ep.episodeId || ep.episode_id)) {
@@ -294,67 +306,102 @@ export async function fetchLiveCandidates(fetcher, currentMainId, ep, steps, pos
     let mainsCursor = null;
     const mainsSeen = new Set();
     let mainsDone = false;
+    let mainsPageCount = 0;
 
     while (!mainsDone) {
-      if (mainsCursor && mainsSeen.has(mainsCursor)) throw Error('Mains cursor cycle');
-      if (mainsCursor) mainsSeen.add(mainsCursor);
+      checkBudget();
+      if (mainsPageCount >= maxMainsPages) throw Error('Mains page limit exceeded');
+
+      if (mainsCursor !== null) {
+        if (typeof mainsCursor !== 'string' || !mainsCursor || mainsSeen.has(mainsCursor) || mainsCursor.length > 2000) {
+          throw Error('Invalid mains cursor');
+        }
+        mainsSeen.add(mainsCursor);
+      }
 
       const url = '/api/v1/mains' + (mainsCursor ? '?cursor=' + encodeURIComponent(mainsCursor) : '');
+      totalRequests++;
       const res = await fetcher(url, { credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(timeoutMs) });
       if (!res.ok) throw Error('Mains fetch failed');
       const data = JSON.parse(await boundedText(res, 200000));
       if (!Array.isArray(data.page)) throw Error('Invalid mains response');
 
+      mainsPageCount++;
       mains.push(...data.page);
-      if (data.isDone || !data.continueCursor) {
+      if (mains.length > maxMains) {
+        throw Error('Mains count limit exceeded');
+      }
+
+      if (data.isDone === true) {
         mainsDone = true;
         break;
+      } else {
+        if (typeof data.continueCursor !== 'string' || !data.continueCursor) {
+          throw Error('Missing continueCursor on incomplete mains response');
+        }
+        mainsCursor = data.continueCursor;
       }
-      if (mains.length >= maxMains) {
-        throw Error('Mains limit exceeded');
-      }
-      mainsCursor = data.continueCursor;
     }
 
-    // 2. Fetch path for all other mains, strictly validating versions and completeness
+    // 2. Fetch path for all other mains, strictly validating versions and path completeness
     const otherMains = mains.filter(m => (m.mainId || m.id) !== currentMainId);
     const populatedMains = [];
 
     for (const m of otherMains) {
       const mId = m.mainId || m.id;
+      if (!mId || typeof m.version !== 'number' || !Number.isSafeInteger(m.version) || m.version < 1) {
+        throw Error('Invalid main entry: ' + mId);
+      }
+
       const mSteps = [];
       let stepCursor = null;
       const stepSeen = new Set();
       let stepDone = false;
+      let stepPageCount = 0;
+      let lastData = null;
 
       while (!stepDone) {
-        if (stepCursor && stepSeen.has(stepCursor)) throw Error('Step cursor cycle');
-        if (stepCursor) stepSeen.add(stepCursor);
+        checkBudget();
+        if (stepPageCount >= maxPathPages) throw Error('Path page limit exceeded');
+
+        if (stepCursor !== null) {
+          if (typeof stepCursor !== 'string' || !stepCursor || stepSeen.has(stepCursor) || stepCursor.length > 2000) {
+            throw Error('Invalid step cursor');
+          }
+          stepSeen.add(stepCursor);
+        }
 
         const url = '/api/v1/main?id=' + encodeURIComponent(mId) + (stepCursor ? '&cursor=' + encodeURIComponent(stepCursor) : '');
+        totalRequests++;
         const res = await fetcher(url, { credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(timeoutMs) });
         if (!res.ok) throw Error('Main path fetch failed: ' + mId);
         const data = JSON.parse(await boundedText(res, 200000));
         if (!Array.isArray(data.page)) throw Error('Invalid main path response');
 
-        // Verify version alignment between catalog listing and path route
-        if (typeof data.version === 'number' && typeof m.version === 'number' && data.version !== m.version) {
-          throw Error('Version mismatch for ' + mId);
-        }
-
+        lastData = data;
+        stepPageCount++;
         mSteps.push(...data.page);
-        if (data.isDone || !data.continueCursor) {
+        if (mSteps.length > 200) throw Error('Steps limit exceeded');
+
+        if (data.isDone === true) {
           stepDone = true;
           break;
+        } else {
+          if (typeof data.continueCursor !== 'string' || !data.continueCursor) {
+            throw Error('Missing continueCursor on incomplete step response');
+          }
+          stepCursor = data.continueCursor;
         }
-        if (mSteps.length >= 200) throw Error('Steps limit exceeded');
-        stepCursor = data.continueCursor;
       }
+
+      if (!lastData) throw Error('No path data for ' + mId);
+      // Validate path integrity, continuity, count, and version alignment using validatePath
+      validatePath(lastData, mSteps, m.version);
 
       populatedMains.push({
         ...m,
         steps: mSteps,
-        version: typeof m.version === 'number' ? m.version : 1,
+        version: m.version,
       });
     }
 
@@ -363,28 +410,39 @@ export async function fetchLiveCandidates(fetcher, currentMainId, ep, steps, pos
     let catCursor = null;
     const catSeen = new Set();
     let catDone = false;
-    let catPages = 0;
+    let catPageCount = 0;
 
     while (!catDone) {
-      if (catCursor && catSeen.has(catCursor)) throw Error('Catalog cursor cycle');
-      if (catCursor) catSeen.add(catCursor);
+      checkBudget();
+      if (catPageCount >= maxCatalogPages) throw Error('Catalog page limit exceeded');
+
+      if (catCursor !== null) {
+        if (typeof catCursor !== 'string' || !catCursor || catSeen.has(catCursor) || catCursor.length > 2000) {
+          throw Error('Invalid catalog cursor');
+        }
+        catSeen.add(catCursor);
+      }
 
       const url = '/api/v1/catalog' + (catCursor ? '?cursor=' + encodeURIComponent(catCursor) : '');
+      totalRequests++;
       const res = await fetcher(url, { credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(timeoutMs) });
       if (!res.ok) throw Error('Catalog fetch failed');
       const data = JSON.parse(await boundedText(res, 200000));
       if (!Array.isArray(data.page)) throw Error('Invalid catalog response');
 
+      catPageCount++;
       branches.push(...data.page);
-      catPages++;
-      if (data.isDone || !data.continueCursor) {
+      if (branches.length > 500) throw Error('Catalog count limit exceeded');
+
+      if (data.isDone === true) {
         catDone = true;
         break;
+      } else {
+        if (typeof data.continueCursor !== 'string' || !data.continueCursor) {
+          throw Error('Missing continueCursor on incomplete catalog response');
+        }
+        catCursor = data.continueCursor;
       }
-      if (catPages >= maxCatalogPages) {
-        throw Error('Catalog page limit exceeded');
-      }
-      catCursor = data.continueCursor;
     }
 
     const candidates = findBranchCandidates(currentMainId, ep, steps, position, { mains: populatedMains, branches });

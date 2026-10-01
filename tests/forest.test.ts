@@ -327,7 +327,7 @@ it("handles live API fetch with strict error isolation, pagination, and version 
     { mainId: "tree-a", title: "木A", version: 1, count: 1 },
     { mainId: "tree-b", title: "木B", version: 2, count: 2, maintainer: "作者B", agentName: "AI-B" },
   ]};
-  const validTreeBPath = { version: 2, isDone: true, page: [
+  const validTreeBPath = { version: 2, count: 2, isDone: true, page: [
     { position: 0, available: true, episode: ep },
     { position: 1, available: true, episode: epNext },
   ]};
@@ -366,7 +366,7 @@ it("handles live API fetch with strict error isolation, pagination, and version 
   // 4. Version mismatch: mains has version 1, path returns version 2 -> fails closed
   const fetchVersionMismatch = async (url: string) => {
     if (url.startsWith("/api/v1/mains")) return Response.json({ isDone: true, page: [{ mainId: "tree-b", version: 1 }] });
-    if (url.startsWith("/api/v1/main?id=tree-b")) return Response.json({ version: 2, isDone: true, page: [] });
+    if (url.startsWith("/api/v1/main?id=tree-b")) return Response.json({ version: 2, count: 0, isDone: true, page: [] });
     if (url.startsWith("/api/v1/catalog")) return Response.json({ page: [], isDone: true });
     return new Response("Not found", { status: 404 });
   };
@@ -385,6 +385,94 @@ it("handles live API fetch with strict error isolation, pagination, and version 
   expect(res5.candidates).toHaveLength(2);
   expect(res5.candidates[0]).toMatchObject({ title: "🌲 木B（第2話へ）", href: "?id=tree-b&v=2&at=1" });
   expect(res5.candidates[1]).toMatchObject({ title: "🌱 枝X", href: validCatalog.page[0].readingUrl });
+});
+
+it("enforces strict cursor presence when incomplete, validates path continuity, catches limits on final page, and bounds empty pages", async () => {
+  const ep = { branchId: "origin", episodeId: "ep-001", revision: sha, title: "第1話" };
+  const epNext = { branchId: "tree-b-branch", episodeId: "ep-002", revision: "b".repeat(40), parent: ep };
+
+  const validMains = { isDone: true, page: [
+    { mainId: "tree-a", title: "木A", version: 1, count: 1 },
+    { mainId: "tree-b", title: "木B", version: 2, count: 2, maintainer: "作者B", agentName: "AI-B" },
+  ]};
+  const validTreeBPath = { version: 2, count: 2, isDone: true, page: [
+    { position: 0, available: true, episode: ep },
+    { position: 1, available: true, episode: epNext },
+  ]};
+  const validCatalog = { isDone: true, page: [
+    { branchId: "branch-x", title: "枝X", maintainer: "作者X", parent: ep, status: "verified", readingUrl: "https://github.com/x/r/blob/" + sha + "/manuscript/02.md" },
+  ]};
+
+  // Case 1: 未完了なのにカーソル欠落 (Missing continueCursor on incomplete response)
+  const fetchMissingCursor = async (url: string) => {
+    if (url.startsWith("/api/v1/mains")) return Response.json({ isDone: false, page: [{ mainId: "tree-b", version: 1 }] }); // continueCursor missing
+    return Response.json({ page: [], isDone: true });
+  };
+  expect((await fetchLiveCandidates(fetchMissingCursor, "tree-a", ep, [{ episode: ep }], 0)).ok).toBe(false);
+
+  // Case 2: 道順件数/position不一致 (Path count mismatch or position discontinuity)
+  const fetchCountMismatch = async (url: string) => {
+    if (url.startsWith("/api/v1/mains")) return Response.json(validMains);
+    if (url.startsWith("/api/v1/main?id=tree-b")) {
+      // count: 3 なのに 2件しかない
+      return Response.json({ version: 2, count: 3, isDone: true, page: validTreeBPath.page });
+    }
+    if (url.startsWith("/api/v1/catalog")) return Response.json(validCatalog);
+    return new Response("Not found", { status: 404 });
+  };
+  expect((await fetchLiveCandidates(fetchCountMismatch, "tree-a", ep, [{ episode: ep }], 0)).ok).toBe(false);
+
+  const fetchPositionMismatch = async (url: string) => {
+    if (url.startsWith("/api/v1/mains")) return Response.json(validMains);
+    if (url.startsWith("/api/v1/main?id=tree-b")) {
+      // position が 0 の次が 2 (不連続)
+      return Response.json({
+        version: 2,
+        count: 2,
+        isDone: true,
+        page: [
+          { position: 0, available: true, episode: ep },
+          { position: 2, available: true, episode: epNext },
+        ],
+      });
+    }
+    if (url.startsWith("/api/v1/catalog")) return Response.json(validCatalog);
+    return new Response("Not found", { status: 404 });
+  };
+  expect((await fetchLiveCandidates(fetchPositionMismatch, "tree-a", ep, [{ episode: ep }], 0)).ok).toBe(false);
+
+  // Case 3: 最終ページで件数超過 (Limit exceeded on final page with isDone: true)
+  const fetchFinalPageOverflow = async (url: string) => {
+    if (url.startsWith("/api/v1/mains")) {
+      return Response.json({
+        isDone: true,
+        page: [
+          { mainId: "tree-a", version: 1 },
+          { mainId: "tree-b", version: 1 },
+        ],
+      });
+    }
+    return Response.json({ page: [], isDone: true });
+  };
+  // maxMains: 1 に対して 2件入りで isDone: true
+  expect((await fetchLiveCandidates(fetchFinalPageOverflow, "tree-a", ep, [{ episode: ep }], 0, { maxMains: 1 })).ok).toBe(false);
+
+  // Case 4: 空ページが続く (Consecutive empty pages caught by page limit or request budget)
+  let mainsRequests = 0;
+  const fetchEmptyMainsPages = async (url: string) => {
+    if (url.startsWith("/api/v1/mains")) {
+      mainsRequests++;
+      return Response.json({
+        isDone: false,
+        continueCursor: "cursor-" + mainsRequests,
+        page: [],
+      });
+    }
+    return Response.json({ page: [], isDone: true });
+  };
+  const resEmpty = await fetchLiveCandidates(fetchEmptyMainsPages, "tree-a", ep, [{ episode: ep }], 0, { maxMainsPages: 3 });
+  expect(resEmpty.ok).toBe(false);
+  expect(mainsRequests).toBe(3); // maxMainsPages に達して安全に停止
 });
 
 
