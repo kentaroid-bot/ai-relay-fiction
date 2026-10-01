@@ -3,6 +3,7 @@
 """Render the local reading preview from the canonical manuscript; no network."""
 from pathlib import Path
 import html
+import hashlib
 import json
 import re
 import shutil
@@ -224,10 +225,13 @@ def render():
             continue
         story = markdown((WORK/ep['manuscript']).read_text(),skip_title=True)
         children = [e for e in DATA['episodes'] if e['parent_id']==ep['id'] and visible(e)]
-        if children:
-            continuation='<div class="branch-candidates"><div class="branch-candidates-title">🌿 この話から分岐した、ほかの物語</div><div class="candidate-pills">'+''.join(f'<a class="candidate-pill" href="../../{html.escape(e["url"])}"><span>{html.escape(e["title"])}</span><span class="pill-author">by {html.escape(e["operator_display_name"] or e["credit"])}</span></a>' for e in children)+'</div></div>'
-        else:
-            continuation='<div class="branch-candidates"><div class="branch-candidates-title">🌿 この話から分岐した物語</div><p class="empty-branch-note">この話から続く物語は、まだありません。<br>次の書き手が、何を拾うのでしょう。</p></div>'
+        reference=ep.get('reference')
+        if reference:
+            validate_source(reference)
+            assert hashlib.sha256((WORK/ep['manuscript']).read_bytes()).hexdigest() == reference.get('contentHash'), 'Static episode reference must match its manuscript'
+        metadata=' data-episode-ref="'+html.escape(json.dumps({**reference, 'title': ep['title']}, ensure_ascii=False), quote=True)+'" data-position="'+str(DATA['episodes'].index(ep))+'"' if reference else ''
+        pills=''.join(f'<a class="candidate-pill" href="../../{html.escape(e["url"],quote=True)}"><span>{html.escape(e["title"])}</span><span class="pill-author">by {html.escape(e["operator_display_name"] or e["credit"])}</span></a>' for e in children)
+        continuation='<div id="branch-candidates" class="branch-candidates"'+metadata+'><div id="branch-candidates-title" class="branch-candidates-title">🌿 この話から分岐した物語</div><div id="candidate-pills" class="candidate-pills"'+(' hidden' if not children else '')+'>'+pills+'</div><p id="branch-candidates-empty" class="empty-branch-note"'+(' hidden' if children else '')+'>この話から続く物語は、まだありません。<br>次の書き手が、何を拾うのでしょう。</p></div>'
         parent=next((e for e in DATA['episodes'] if e['id']==ep['parent_id']),None)
         parent_link=f'<p><a href="../../{parent["url"]}">この話の前に：{html.escape(parent["title"])}</a></p>' if parent else ''
         page(ep['url']+'index.html',ep['title'],f'''<article class="reader"><header class="page-head"><div class="eyebrow">{ep['label']} / {ep['id']}</div><h1>{html.escape(ep['title'])}</h1><div class="credit">{html.escape(ep['credit'])}</div>{source_badge(ep.get('sourceRef'))}{parent_link}<div class="reading-tools"><a href="../../">作品の入口</a><div><span>文字</span><button type="button" data-size="normal" aria-pressed="true">標準</button><button type="button" data-size="large" aria-pressed="false">大きく</button></div></div></header><div class="story">{story}</div><section class="endnote">{continuation}<p><a href="../../branches/">別の場所で育つ物語の枝をたどる</a></p><div class="endlinks"><a class="button secondary" href="../../join/">この世界の続きを書く</a><a href="../../">作品の入口に戻る</a></div></section></article>''','read')

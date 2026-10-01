@@ -353,7 +353,7 @@ it("handles live API fetch with strict error isolation, pagination, and version 
   const res1 = await fetchLiveCandidates(fetchMains503, "tree-a", ep, [{ episode: ep }], 0);
   expect(res1.ok).toBe(false);
 
-  // 2. Individual /main?id=tree-b returns 503 -> fails closed (ok: false)
+  // 2. An unavailable tree does not remove the independent catalog candidate
   const fetchMain503 = async (url: string) => {
     if (url.startsWith("/api/v1/mains")) return Response.json(validMains);
     if (url.startsWith("/api/v1/main?id=tree-b")) return new Response("Unavailable", { status: 503 });
@@ -361,9 +361,11 @@ it("handles live API fetch with strict error isolation, pagination, and version 
     return new Response("Not found", { status: 404 });
   };
   const res2 = await fetchLiveCandidates(fetchMain503, "tree-a", ep, [{ episode: ep }], 0);
-  expect(res2.ok).toBe(false);
+  expect(res2.ok).toBe(true);
+  expect(res2.partial).toBe(true);
+  expect(res2.candidates).toHaveLength(1);
 
-  // 3. /catalog incomplete pagination (page limit exceeded while isDone: false) -> fails closed
+  // 3. Incomplete catalog keeps the complete, verified tree candidate
   const fetchIncompleteCatalog = async (url: string) => {
     if (url.startsWith("/api/v1/mains")) return Response.json(validMains);
     if (url.startsWith("/api/v1/main?id=tree-b")) return Response.json(validTreeBPath);
@@ -371,7 +373,9 @@ it("handles live API fetch with strict error isolation, pagination, and version 
     return new Response("Not found", { status: 404 });
   };
   const res3 = await fetchLiveCandidates(fetchIncompleteCatalog, "tree-a", ep, [{ episode: ep }], 0, { maxCatalogPages: 2 });
-  expect(res3.ok).toBe(false);
+  expect(res3.ok).toBe(true);
+  expect(res3.partial).toBe(true);
+  expect(res3.candidates[0].href).toBe("?id=tree-b&v=2&at=1");
 
   // 4. Version mismatch: mains has version 1, path returns version 2 -> fails closed
   const fetchVersionMismatch = async (url: string) => {
@@ -430,7 +434,9 @@ it("enforces strict cursor presence when incomplete, validates path continuity, 
     if (url.startsWith("/api/v1/catalog")) return Response.json(validCatalog);
     return new Response("Not found", { status: 404 });
   };
-  expect((await fetchLiveCandidates(fetchCountMismatch, "tree-a", ep, [{ episode: ep }], 0)).ok).toBe(false);
+  const countResult = await fetchLiveCandidates(fetchCountMismatch, "tree-a", ep, [{ episode: ep }], 0);
+  expect(countResult.partial).toBe(true);
+  expect(countResult.candidates.map((c: any) => c.href)).toEqual([validCatalog.page[0].readingUrl]);
 
   const fetchPositionMismatch = async (url: string) => {
     if (url.startsWith("/api/v1/mains")) return Response.json(validMains);
@@ -449,7 +455,9 @@ it("enforces strict cursor presence when incomplete, validates path continuity, 
     if (url.startsWith("/api/v1/catalog")) return Response.json(validCatalog);
     return new Response("Not found", { status: 404 });
   };
-  expect((await fetchLiveCandidates(fetchPositionMismatch, "tree-a", ep, [{ episode: ep }], 0)).ok).toBe(false);
+  const positionResult = await fetchLiveCandidates(fetchPositionMismatch, "tree-a", ep, [{ episode: ep }], 0);
+  expect(positionResult.partial).toBe(true);
+  expect(positionResult.candidates.map((c: any) => c.href)).toEqual([validCatalog.page[0].readingUrl]);
 
   // Case 3: 最終ページで件数超過 (Limit exceeded on final page with isDone: true)
   const fetchFinalPageOverflow = async (url: string) => {
@@ -522,7 +530,7 @@ it("validates path version on every page and enforces overall timeout through fi
   const resShift = await fetchLiveCandidates(fetchVersionShiftInPath, "tree-a", ep, [{ episode: ep }], 0);
   expect(resShift.ok).toBe(false);
 
-  // 2. Overall timeout: final response completes after overall budget exceeded -> ok: false
+  // 2. A slow final catalog page cannot discard an already verified tree
   const fetchSlowFinalCatalog = async (url: string) => {
     if (url.startsWith("/api/v1/mains")) return Response.json(validMainsV2);
     if (url.startsWith("/api/v1/main?id=tree-b")) {
@@ -547,7 +555,9 @@ it("validates path version on every page and enforces overall timeout through fi
     overallTimeoutMs: 20,
     timeoutMs: 50,
   });
-  expect(resTimeout.ok).toBe(false);
+  expect(resTimeout.ok).toBe(true);
+  expect(resTimeout.partial).toBe(true);
+  expect(resTimeout.candidates[0].href).toBe("?id=tree-b&v=2&at=1");
 });
 
 

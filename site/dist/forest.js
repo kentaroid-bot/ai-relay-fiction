@@ -161,9 +161,6 @@ export function treeMaintainer(maintainer, main) {
       const match = String(main.repository).match(/^https?:\/\/github\.com\/([^/]+)/);
       if (match) return match[1];
     }
-    if (main.head && main.head.branchId && GITHUB_ACCOUNT_MAP[main.head.branchId]) {
-      return GITHUB_ACCOUNT_MAP[main.head.branchId];
-    }
     if (main.mainId && GITHUB_ACCOUNT_MAP[main.mainId]) {
       return GITHUB_ACCOUNT_MAP[main.mainId];
     }
@@ -416,7 +413,7 @@ function startForest() {
         const row = el("li", undefined, "ep-row-item");
         const epLabel = "ep " + String(step.position + 1).padStart(2, "0");
         if (!step.available) state.blocked = true;
-        if (step.available && !state.blocked) {
+        if (step.available) {
           const card = anchor(
             undefined,
             readingLink(state.main.mainId, state.main.version, step.position),
@@ -448,9 +445,7 @@ function startForest() {
           top.append(el("span", epLabel, "ep-row-num"));
           const title = el(
             "div",
-            step.available
-              ? step.episode.title + "（前の話の案内が再開するまで読めません）"
-              : "現在は案内を停止している話",
+            "現在は案内を停止している話",
             "ep-row-title",
           );
           card.append(top, title);
