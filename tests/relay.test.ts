@@ -163,6 +163,46 @@ describe("GitHub PR intake", () => {
   const ingest = (t: Test, sha = forkRevision, key = editorKey) =>
     request(t, key, "branches/github", { number: 5, revision: sha });
 
+  it("carries a fixed sourceRef from a keyless PR into the listed episode and the original writer's inbox", async () => {
+    vi.stubEnv("PARTICIPATION_MODE", "test");
+    const t = await setup();
+    await register(t, otherKey, "https://github.com/source-writer/story");
+    const sourceRef = await listedBranch(
+      t,
+      otherKey,
+      "source-story",
+      "https://github.com/source-writer/story",
+    );
+    const m: any = await manifest();
+    m.episodes[0].sourceRef = sourceRef;
+    sources(m);
+    expect((await ingest(t)).status).toBe(200);
+    expect(
+      (await request(t, editorKey, "branches/check", { branchId: m.branchId }))
+        .status,
+    ).toBe(200);
+    expect(
+      (
+        await command(t, editorKey, "editor.branch", {
+          branchId: m.branchId,
+          expectedVersion: 2,
+          status: "verified",
+          complianceNote: "出典付き固定版を確認",
+        })
+      ).status,
+    ).toBe(200);
+    expect((await request(t, otherKey, "inbox")).data.page).toHaveLength(1);
+    expect((await request(t, otherKey, "me")).data.acornCount).toBe(1);
+    const episode = await t.run((ctx) =>
+      ctx.db
+        .query("episodes")
+        .withIndex("reference", (q) => q.eq("branchId", m.branchId))
+        .unique(),
+    );
+    expect(episode?.sourceRef).toEqual(sourceRef);
+    expect(episode?.parent).toEqual(parent);
+  });
+
   it("applies a keyless PR writer's declared tree after listing, from origin, exactly once", async () => {
     vi.stubEnv("PARTICIPATION_MODE", "test");
     const t = await setup(),
@@ -2193,4 +2233,389 @@ it("paginates community mains and long paths without exposing private fields", a
   ).json()) as any;
   expect(next.page[0].position).toBe(50);
   expect(next.isDone).toBe(true);
+});
+
+describe("fixed provenance and acorns", () => {
+  async function fixture() {
+    const t = await setup();
+    await register(t, otherKey, "https://github.com/source-writer/story");
+    const sourceRef = await listedBranch(
+      t,
+      otherKey,
+      "source-story",
+      "https://github.com/source-writer/story",
+    );
+    await register(t);
+    expect(
+      (
+        await command(t, writerKey, "branch.create", {
+          branchId: "remix-story",
+          title: "取り込んだ話",
+          repository,
+          parent,
+          revision: forkRevision,
+          readingUrl: repository,
+          license,
+        })
+      ).status,
+    ).toBe(200);
+    const manifest: any = {
+      schemaVersion: 1,
+      branchId: "remix-story",
+      title: "取り込んだ話",
+      repository,
+      parent,
+      license: "CC0-1.0",
+      termsVersion: WORK_TERMS,
+      episodes: [
+        {
+          episodeId: "ep-002",
+          title: "取り込んだ話",
+          path: "manuscript/02.md",
+          contentHash: await digest("remixed story"),
+          sourceRef,
+        },
+      ],
+    };
+    const fetchSource = vi.fn(async (url: string, options: RequestInit) => {
+      expect(options.redirect).toBe("manual");
+      expect(JSON.stringify(options)).not.toContain(writerKey);
+      expect(
+        url.startsWith("https://raw.githubusercontent.com/test-writer/story/"),
+      ).toBe(true);
+      return new Response(
+        url.endsWith("relay-branch.json")
+          ? JSON.stringify(manifest)
+          : "remixed story",
+      );
+    });
+    vi.stubGlobal("fetch", fetchSource);
+    const check = () =>
+      request(t, writerKey, "branches/check", { branchId: "remix-story" });
+    const list = (version = 2, id?: string) =>
+      command(
+        t,
+        editorKey,
+        "editor.branch",
+        {
+          branchId: "remix-story",
+          expectedVersion: version,
+          status: "verified",
+          complianceNote: "出典付き固定版を確認",
+        },
+        id,
+      );
+    return { t, sourceRef, manifest, fetchSource, check, list };
+  }
+
+  it("separates path parent from provenance, credits registry owners, and notifies only after listing", async () => {
+    const { t, sourceRef, check, list, fetchSource } = await fixture();
+    expect((await check()).status).toBe(200);
+    expect((await request(t, otherKey, "me")).data.acornCount).toBe(0);
+    expect((await list(2, "publish-remix")).status).toBe(200);
+    expect((await list(2, "publish-remix")).status).toBe(200);
+    const start = {
+      branchId: "remix-story",
+      episodeId: "ep-002",
+      revision: forkRevision,
+    };
+    for (const mainId of ["remix-tree", "another-tree"])
+      expect(
+        (
+          await command(t, writerKey, "main.create", {
+            mainId,
+            title: "取り込んだ木",
+            start,
+          })
+        ).status,
+      ).toBe(200);
+    const route: any = await (await t.fetch("/v1/main?id=remix-tree")).json();
+    expect(route.page[1].episode).toMatchObject({
+      parent,
+      sourceRef: {
+        ...sourceRef,
+        available: true,
+        maintainer: "依頼者",
+        agentName: "参加AI",
+      },
+    });
+    expect(route.page[1].episode.sourceRef.readingUrl).toContain(
+      "/source-writer/story/blob/" + forkRevision,
+    );
+    expect(route.count).toBe(2);
+    // Only our manifest/prose were fetched, never the referenced repo or links.
+    expect(fetchSource).toHaveBeenCalledTimes(2);
+    const inbox = (await request(t, otherKey, "inbox")).data.page;
+    expect(inbox).toHaveLength(1);
+    expect(inbox[0]).toMatchObject({
+      kind: "acorn",
+      submissionId: null,
+      acorn: { source: sourceRef, remix: start },
+    });
+    expect((await request(t, writerKey, "inbox")).data.page).toHaveLength(0);
+    expect((await request(t, otherKey, "me")).data.acornCount).toBe(1);
+    expect((await command(t, writerKey, "editor.branch", {})).status).toBe(403);
+    // A new commit of the same episode, and suspension/relisting, do not award again.
+    expect(
+      (
+        await command(t, writerKey, "branch.update", {
+          branchId: "remix-story",
+          title: "取り込んだ話",
+          expectedVersion: 3,
+          revision: "4".repeat(40),
+          readingUrl: repository,
+          license,
+        })
+      ).status,
+    ).toBe(200);
+    expect((await check()).status).toBe(200);
+    expect((await list(5)).status).toBe(200);
+    expect(
+      (
+        await command(t, editorKey, "editor.branch", {
+          branchId: "remix-story",
+          expectedVersion: 6,
+          status: "suspended",
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await command(t, writerKey, "branch.update", {
+          branchId: "remix-story",
+          title: "取り込んだ話",
+          expectedVersion: 7,
+          revision: "4".repeat(40),
+          readingUrl: repository,
+          license,
+        })
+      ).status,
+    ).toBe(200);
+    expect((await check()).status).toBe(200);
+    expect((await list(9)).status).toBe(200);
+    expect((await request(t, otherKey, "me")).data.acornCount).toBe(1);
+    expect((await request(t, otherKey, "inbox")).data.page).toHaveLength(1);
+  });
+
+  it.each([
+    "missing",
+    "unlisted",
+    "suspended",
+    "inactive",
+    "legacy",
+    "later-license",
+    "self",
+    "moving",
+    "null",
+  ])("rejects %s sources without publication or notification", async (kind) => {
+    const { t, sourceRef, manifest, check } = await fixture();
+    let expected = "SOURCE_NOT_LISTED";
+    if (kind === "missing") manifest.episodes[0].sourceRef.episodeId = "absent";
+    else if (kind === "self") {
+      manifest.episodes[0].sourceRef = {
+        branchId: "remix-story",
+        episodeId: "ep-002",
+        revision: forkRevision,
+      };
+      expected = "SOURCE_SELF_REFERENCE";
+    } else if (kind === "moving") {
+      manifest.episodes[0].sourceRef.revision = "main";
+      expected = "FIXED_COMMIT_REQUIRED";
+    } else if (kind === "null") {
+      manifest.episodes[0].sourceRef = null;
+      expected = "INVALID_OBJECT";
+    } else
+      await t.run(async (ctx) => {
+        const branch = (await ctx.db
+          .query("branches")
+          .withIndex("branchId", (q) => q.eq("branchId", sourceRef.branchId))
+          .unique())!;
+        const episode = (await ctx.db
+          .query("episodes")
+          .withIndex("reference", (q) => q.eq("branchId", sourceRef.branchId))
+          .unique())!;
+        if (kind === "unlisted")
+          await ctx.db.patch(episode._id, { listed: false });
+        if (kind === "suspended")
+          await ctx.db.patch(branch._id, { status: "suspended" });
+        if (kind === "inactive")
+          await ctx.db.patch(branch.owner, { status: "suspended" });
+        if (kind === "legacy" || kind === "later-license") {
+          expected = "SOURCE_LICENSE_UNCONFIRMED";
+          await ctx.db.patch(episode._id, { license: undefined });
+          if (kind === "legacy")
+            await ctx.db.patch(branch._id, { license: undefined });
+          else await ctx.db.patch(branch._id, { revision: "7".repeat(40) });
+        }
+      });
+    expect((await check()).data.error).toBe(expected);
+    expect(await t.run((ctx) => ctx.db.query("acorns").collect())).toHaveLength(
+      0,
+    );
+  });
+
+  it("rechecks the source at listing, rolls back atomically, and hides a withdrawn source's metadata", async () => {
+    const { t, sourceRef, check, list } = await fixture();
+    expect((await check()).status).toBe(200);
+    const branch = (await t.run((ctx) =>
+      ctx.db
+        .query("branches")
+        .withIndex("branchId", (q) => q.eq("branchId", sourceRef.branchId))
+        .unique(),
+    ))!;
+    await t.run((ctx) => ctx.db.patch(branch._id, { status: "suspended" }));
+    expect((await list()).data.error).toBe("SOURCE_NOT_LISTED");
+    expect(await t.run((ctx) => ctx.db.query("acorns").collect())).toHaveLength(
+      0,
+    );
+    await t.run((ctx) => ctx.db.patch(branch._id, { status: "verified" }));
+    expect((await list()).status).toBe(200);
+    expect(
+      (
+        await command(t, writerKey, "main.create", {
+          mainId: "remix-tree",
+          title: "木",
+          start: {
+            branchId: "remix-story",
+            episodeId: "ep-002",
+            revision: forkRevision,
+          },
+        })
+      ).status,
+    ).toBe(200);
+    await t.run((ctx) => ctx.db.patch(branch._id, { status: "suspended" }));
+    const route: any = await (await t.fetch("/v1/main?id=remix-tree")).json();
+    expect(route.page[1].episode.sourceRef).toEqual({
+      ...sourceRef,
+      available: false,
+    });
+    expect(route.page[1].episode).not.toBeNull();
+  });
+
+  it("keeps approved source license evidence when its branch advances, and forbids rewriting fixed provenance", async () => {
+    const { t, sourceRef, manifest, check, list } = await fixture();
+    await t.run(async (ctx) => {
+      const ep = (await ctx.db
+        .query("episodes")
+        .withIndex("reference", (q) => q.eq("branchId", sourceRef.branchId))
+        .unique())!;
+      await ctx.db.patch(ep._id, { license: undefined });
+    });
+    expect(
+      (
+        await command(t, otherKey, "branch.update", {
+          branchId: sourceRef.branchId,
+          title: sourceRef.branchId,
+          expectedVersion: 3,
+          revision: "8".repeat(40),
+          readingUrl: "https://github.com/source-writer/story",
+          license,
+        })
+      ).status,
+    ).toBe(200);
+    const old = (await t.run((ctx) =>
+      ctx.db
+        .query("episodes")
+        .withIndex("reference", (q) => q.eq("branchId", sourceRef.branchId))
+        .unique(),
+    ))!;
+    expect(old.license).toEqual(license);
+    // Its current branch must be listed again before any previous episode is visible.
+    await t.run(async (ctx) => {
+      const b = (await ctx.db
+        .query("branches")
+        .withIndex("branchId", (q) => q.eq("branchId", sourceRef.branchId))
+        .unique())!;
+      await ctx.db.patch(b._id, { status: "verified" });
+    });
+    expect((await check()).status).toBe(200);
+    expect((await list()).status).toBe(200);
+    expect(
+      (
+        await command(t, writerKey, "branch.update", {
+          branchId: "remix-story",
+          title: "取り込んだ話",
+          expectedVersion: 3,
+          revision: forkRevision,
+          readingUrl: repository,
+          license,
+        })
+      ).status,
+    ).toBe(200);
+    delete manifest.episodes[0].sourceRef;
+    expect((await check()).data.error).toBe("EPISODE_IMMUTABLE");
+    expect((await request(t, otherKey, "me")).data.acornCount).toBe(1);
+  });
+
+  it("rolls back the award and notification if the subsequent compliance gate fails", async () => {
+    const { t, check, list } = await fixture();
+    expect((await check()).status).toBe(200);
+    await t.run(async (ctx) => {
+      const b = (await ctx.db
+        .query("branches")
+        .withIndex("branchId", (q) => q.eq("branchId", "remix-story"))
+        .unique())!;
+      await ctx.db.patch(b._id, {
+        gate: { ...b.gate!, findings: ["instruction_override"] },
+      });
+    });
+    expect((await list()).data.error).toBe("FINDINGS_REVIEW_REQUIRED");
+    expect((await request(t, otherKey, "me")).data.acornCount).toBe(0);
+    expect((await request(t, otherKey, "inbox")).data.page).toHaveLength(0);
+    expect(await t.run((ctx) => ctx.db.query("acorns").collect())).toHaveLength(
+      0,
+    );
+    const episode = (await t.run((ctx) =>
+      ctx.db
+        .query("episodes")
+        .withIndex("reference", (q) => q.eq("branchId", "remix-story"))
+        .unique(),
+    ))!;
+    expect(episode.listed).toBe(false);
+  });
+
+  it("supports existing current CC0 records without migrating legacy consent, and excludes self awards", async () => {
+    const { t, sourceRef, manifest, check, list } = await fixture();
+    await t.run(async (ctx) => {
+      const episode = (await ctx.db
+        .query("episodes")
+        .withIndex("reference", (q) => q.eq("branchId", sourceRef.branchId))
+        .unique())!;
+      await ctx.db.patch(episode._id, { license: undefined });
+    });
+    expect((await check()).status).toBe(200);
+    expect((await list()).status).toBe(200);
+    // A source by the same registered writer can be cited, without an acorn.
+    const own = await listedBranch(t, writerKey, "own-source", repository);
+    manifest.episodes[0].sourceRef = own;
+    expect(
+      (
+        await command(t, writerKey, "branch.update", {
+          branchId: "remix-story",
+          title: "取り込んだ話",
+          expectedVersion: 3,
+          revision: "6".repeat(40),
+          readingUrl: repository,
+          license,
+        })
+      ).status,
+    ).toBe(200);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async (url: string) =>
+          new Response(
+            url.endsWith("relay-branch.json")
+              ? JSON.stringify(manifest)
+              : "remixed story",
+          ),
+      ),
+    );
+    expect((await check()).status).toBe(200);
+    expect((await list(5)).status).toBe(200);
+    expect((await request(t, writerKey, "me")).data.acornCount).toBe(0);
+    expect(await t.run((ctx) => ctx.db.query("acorns").collect())).toHaveLength(
+      1,
+    );
+  });
 });

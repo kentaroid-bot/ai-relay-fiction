@@ -68,6 +68,34 @@ def validate_branches():
                 assert re.fullmatch(r'[a-f0-9]{40}', ep['revision']), 'Invalid selected revision'
                 assert re.fullmatch(r'[a-z0-9][a-z0-9-]*', ep['branch_id']), 'Invalid selected branch'
                 assert ep['episode_id'], 'Missing selected episode'
+                if ep.get('sourceRef') is not None:
+                    validate_source(ep['sourceRef'])
+
+def validate_source(ref):
+    assert isinstance(ref, dict), 'Invalid source reference'
+    assert re.fullmatch(r'[a-z0-9][a-z0-9-]{0,79}', ref.get('branchId', '')), 'Invalid source branch'
+    assert re.fullmatch(r'[a-z0-9][a-z0-9-]{0,79}', ref.get('episodeId', '')), 'Invalid source episode'
+    assert re.fullmatch(r'[a-f0-9]{40}', ref.get('revision', '')), 'Invalid source revision'
+    if ref.get('readingUrl'):
+        url = urlsplit(ref['readingUrl'])
+        assert url.scheme == 'https' and url.netloc == 'github.com' and not url.query and not url.fragment, 'Invalid source URL'
+        match = re.fullmatch(r'/[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+/blob/([a-f0-9]{40})/(.+\.md)', url.path)
+        assert match and match[1] == ref['revision'], 'Source URL must identify the fixed revision'
+        assert len(match[2]) <= 200 and re.fullmatch(r'[A-Za-z0-9_./-]+', match[2]) and all(part not in ('', '.', '..') for part in match[2].split('/')), 'Invalid source path'
+
+def source_badge(ref):
+    if not ref:
+        return ''
+    validate_source(ref)
+    if ref.get('available') is False:
+        return '<p class="credit">出典の話は現在、案内を停止しています。</p>'
+    label = '出典：' + ref.get('title', ref['branchId'] + ' / ' + ref['episodeId'])
+    if ref.get('agentName'):
+        label += ' · ' + ref.get('maintainer', '') + ' / ' + ref['agentName']
+    label = html.escape(label)
+    if ref.get('readingUrl'):
+        label = '<a rel="noopener noreferrer" href="' + html.escape(ref['readingUrl'], quote=True) + '">' + label + '</a>'
+    return '<p class="credit">' + label + '</p>'
 
 def inline(text):
     text = html.escape(text)
@@ -91,6 +119,8 @@ def validate():
         source = (WORK/ep['manuscript']).resolve()
         assert source.is_relative_to((WORK/'manuscript').resolve()) and source.is_file(), 'Invalid manuscript path'
         assert ep['status'] in ('draft','accepted','published'), 'Invalid publication state'
+        if ep.get('sourceRef') is not None:
+            validate_source(ep['sourceRef'])
         if ep['status'] == 'published':
             assert ep['published_at'], 'Publication date required'
         seen = {ep['id']}
@@ -188,7 +218,7 @@ def render():
     (DIST/'index.html').write_text((SITE/'forest-home.html').read_text().replace('{{TREES}}', trees))
     reader_bar = '''<div class="reader-bar"><div class="reader-bar-left"><a href="../../" class="btn-back-forest">← 森へ戻る</a><span class="eyebrow" id="tree-credit"></span></div><div class="reader-bar-right"><div class="tool-group" role="group" aria-label="組版方向"><button type="button" class="tool-btn active" id="btn-horizontal" aria-pressed="true">横</button><button type="button" class="tool-btn" id="btn-vertical" aria-pressed="false">縦</button></div><div class="tool-group" role="group" aria-label="文字サイズ"><button type="button" class="tool-btn" data-size="small">小</button><button type="button" class="tool-btn active" data-size="normal" aria-pressed="true">中</button><button type="button" class="tool-btn" data-size="large" aria-pressed="false">大</button></div></div></div>'''
     reader_epilogue = '''<footer id="tree-epilogue" class="reader-epilogue" hidden><div class="epilogue-status">COMPLETED</div><h2 class="epilogue-title">この木は、ここまで育っています</h2><p class="epilogue-desc">この物語の続きを、あなたが新しい話として書き継ぐことも、<br>はじまりの一話から別の枝を育てることもできます。</p><div class="epilogue-actions"><a href="../../join/" class="action-card primary" id="epilogue-join-link"><div><div class="card-tag">🌱 Fork & Write</div><div class="card-title">このつづきをあなたが書く</div><div class="card-sub">この話を親にして、GitHubでフォークして次の話を書き継ぎます。</div></div><div class="action-link-primary">参加案内を見る →</div></a><a href="../../" class="action-card"><div><div class="card-tag">🌲 The Forest</div><div class="card-title">森の全景へ戻る</div><div class="card-sub">他の木々や新芽、地面に転がる道標のある森へ戻ります。</div></div><div class="action-link-sub">木を見上げる →</div></a></div></footer>'''
-    page('read/main/index.html','木をたどって読む',f'''<article class="reader" id="main-reader">{reader_bar}<header class="page-head"><h1 id="tree-title">物語を読み込んでいます</h1><p id="reading-status" role="status"></p></header><h2 id="episode-title"></h2><div id="tree-story" class="story"></div><div class="endlinks" id="tree-navigation"></div>{reader_epilogue}<section class="endnote"><h2>この木の道順</h2><ol id="tree-path"></ol><p><a href="../../branches/">ほかの枝をたどる</a></p><p><a id="refresh-tree" href="./">最新の道順を読み直す</a></p></section></article>''','read')
+    page('read/main/index.html','木をたどって読む',f'''<article class="reader" id="main-reader">{reader_bar}<header class="page-head"><h1 id="tree-title">物語を読み込んでいます</h1><p id="reading-status" role="status"></p></header><h2 id="episode-title"></h2><p id="episode-source" class="credit" hidden></p><div id="tree-story" class="story"></div><div class="endlinks" id="tree-navigation"></div>{reader_epilogue}<section class="endnote"><h2>この木の道順</h2><ol id="tree-path"></ol><p><a href="../../branches/">ほかの枝をたどる</a></p><p><a id="refresh-tree" href="./">最新の道順を読み直す</a></p></section></article>''','read')
     for ep in DATA['episodes']:
         if not visible(ep):
             continue
@@ -200,7 +230,7 @@ def render():
             continuation='<p>この話から続く物語は、まだありません。<br>次の書き手が、何を拾うのでしょう。</p>'
         parent=next((e for e in DATA['episodes'] if e['id']==ep['parent_id']),None)
         parent_link=f'<p><a href="../../{parent["url"]}">この話の前に：{html.escape(parent["title"])}</a></p>' if parent else ''
-        page(ep['url']+'index.html',ep['title'],f'''<article class="reader"><header class="page-head"><div class="eyebrow">{ep['label']} / {ep['id']}</div><h1>{html.escape(ep['title'])}</h1><div class="credit">{html.escape(ep['credit'])}</div>{parent_link}<div class="reading-tools"><a href="../../">作品の入口</a><div><span>文字</span><button type="button" data-size="normal" aria-pressed="true">標準</button><button type="button" data-size="large" aria-pressed="false">大きく</button></div></div></header><div class="story">{story}</div><section class="endnote"><h2>この話から続く物語</h2>{continuation}<p><a href="../../branches/">別の場所で育つ物語の枝をたどる</a></p><div class="endlinks"><a class="button secondary" href="../../join/">この世界の続きを書く</a><a href="../../">作品の入口に戻る</a></div></section></article>''','read')
+        page(ep['url']+'index.html',ep['title'],f'''<article class="reader"><header class="page-head"><div class="eyebrow">{ep['label']} / {ep['id']}</div><h1>{html.escape(ep['title'])}</h1><div class="credit">{html.escape(ep['credit'])}</div>{source_badge(ep.get('sourceRef'))}{parent_link}<div class="reading-tools"><a href="../../">作品の入口</a><div><span>文字</span><button type="button" data-size="normal" aria-pressed="true">標準</button><button type="button" data-size="large" aria-pressed="false">大きく</button></div></div></header><div class="story">{story}</div><section class="endnote"><h2>この話から続く物語</h2>{continuation}<p><a href="../../branches/">別の場所で育つ物語の枝をたどる</a></p><div class="endlinks"><a class="button secondary" href="../../join/">この世界の続きを書く</a><a href="../../">作品の入口に戻る</a></div></section></article>''','read')
     branch_items = []
     labels = {'local_preview':'公開前プレビュー', 'preparing':'公開準備版', 'active':'公開中', 'paused':'休止中', 'unavailable':'現在の到達先を確認できません'}
     for branch in BRANCHES['branches']:

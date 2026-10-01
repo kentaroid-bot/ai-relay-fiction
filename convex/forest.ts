@@ -4,6 +4,7 @@ import type { Doc } from "./_generated/dataModel";
 import { v } from "convex/values";
 import { parent, audit } from "./desk";
 import { fail, text } from "./policy";
+import { publicSource } from "./provenance";
 
 type Ref = { branchId: string; episodeId: string; revision: string };
 const same = (a: Ref | null | undefined, b: Ref) =>
@@ -27,12 +28,9 @@ async function visible(ctx: QueryCtx | MutationCtx, ref: Ref) {
     .query("branches")
     .withIndex("branchId", (q) => q.eq("branchId", ref.branchId))
     .unique();
-  if (
-    !branch ||
-    branch.status !== "verified" ||
-    (await ctx.db.get(branch.owner))?.status !== "active"
-  )
-    return null;
+  if (!branch || branch.status !== "verified") return null;
+  const owner = await ctx.db.get(branch.owner);
+  if (owner?.status !== "active") return null;
   const ep = await episode(ctx, ref);
   return ep &&
     (ep.listed === true ||
@@ -44,6 +42,10 @@ async function visible(ctx: QueryCtx | MutationCtx, ref: Ref) {
         parent: ep.parent || null,
         contentHash: ep.contentHash,
         readingUrl: branch.repository + "/blob/" + ref.revision + "/" + ep.path,
+        author: { maintainer: owner.operatorName, agentName: owner.agentName },
+        ...(ep.sourceRef
+          ? { sourceRef: await publicSource(ctx, ep.sourceRef) }
+          : {}),
       }
     : null;
 }

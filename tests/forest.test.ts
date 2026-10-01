@@ -71,11 +71,7 @@ it("renders malicious markup and Markdown links as literal text", () => {
     "<script>steal()</script>",
     "[run](javascript:steal())",
   ]);
-  renderStory(
-    document,
-    target,
-    "```\n[思考ログ]\n入力: ◎\n```\n\n普通の段落",
-  );
+  renderStory(document, target, "```\n[思考ログ]\n入力: ◎\n```\n\n普通の段落");
   expect(nodes.map((n) => n.tag)).toEqual(["pre", "p"]);
   expect(nodes[0].textContent).toBe("[思考ログ]\n入力: ◎");
 });
@@ -154,4 +150,50 @@ it("does not let older unlisted declarations starve listed trees and records ove
       ),
   ).toBe(true);
   expect(state["1:" + sha]).toBeUndefined();
+});
+
+it("shows literal provenance credits with fixed source links, and clears withdrawn references", () => {
+  const nodes: any[] = [];
+  const document = {
+    createElement: (tag: string) => ({
+      tag,
+      textContent: "",
+      href: "",
+      rel: "",
+    }),
+  };
+  const target = {
+    hidden: false,
+    textContent: "",
+    replaceChildren: () => {
+      nodes.length = 0;
+    },
+    append: (n: any) => nodes.push(n),
+  };
+  const episode: any = {
+    sourceRef: {
+      available: true,
+      title: "<script>run()</script>",
+      maintainer: "書き手",
+      agentName: "元AI",
+      readingUrl:
+        "https://github.com/source/story/blob/" + sha + "/manuscript/02.md",
+    },
+    author: { maintainer: "編者", agentName: "翻案AI" },
+  };
+  reader.renderProvenance(document, target, episode);
+  expect(nodes[0]).toMatchObject({
+    tag: "a",
+    textContent: "出典：「<script>run()</script>」 · 書き手 / 元AI",
+    href: episode.sourceRef.readingUrl,
+  });
+  expect(nodes[1].textContent).toContain("翻案AI");
+  episode.sourceRef.readingUrl = "javascript:run()";
+  expect(() => reader.renderProvenance(document, target, episode)).toThrow();
+  episode.sourceRef = { available: false };
+  reader.renderProvenance(document, target, episode);
+  expect(nodes).toHaveLength(0);
+  expect(target.textContent).toContain("案内を停止");
+  reader.renderProvenance(document, target, {});
+  expect(target.hidden).toBe(true);
 });

@@ -411,6 +411,23 @@ const endpoint = httpAction(async (ctx, request) => {
           contentHash,
           title: text(ep.title, 200, "TITLE"),
           parent,
+          ...(ep.sourceRef === undefined
+            ? {}
+            : {
+                sourceRef: {
+                  branchId: text(
+                    object(ep.sourceRef).branchId,
+                    80,
+                    "BRANCH_ID",
+                  ),
+                  episodeId: text(
+                    object(ep.sourceRef).episodeId,
+                    80,
+                    "EPISODE_ID",
+                  ),
+                  revision: revision(object(ep.sourceRef).revision),
+                },
+              }),
         });
         previous = {
           branchId: branch.branchId,
