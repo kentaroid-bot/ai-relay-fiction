@@ -291,9 +291,20 @@ export async function fetchLiveCandidates(fetcher, currentMainId, ep, steps, pos
   const startTime = Date.now();
   let totalRequests = 0;
 
-  const checkBudget = () => {
+  const checkTimeBudget = () => {
     if (Date.now() - startTime > overallTimeoutMs) throw Error('Overall timeout exceeded');
+  };
+
+  const checkBudget = () => {
+    checkTimeBudget();
     if (totalRequests >= maxTotalRequests) throw Error('Total request budget exceeded');
+  };
+
+  const getRequestTimeout = () => {
+    const elapsed = Date.now() - startTime;
+    const remaining = overallTimeoutMs - elapsed;
+    if (remaining <= 0) throw Error('Overall timeout exceeded');
+    return Math.min(timeoutMs, remaining);
   };
 
   try {
@@ -320,10 +331,12 @@ export async function fetchLiveCandidates(fetcher, currentMainId, ep, steps, pos
       }
 
       const url = '/api/v1/mains' + (mainsCursor ? '?cursor=' + encodeURIComponent(mainsCursor) : '');
+      const reqTimeout = getRequestTimeout();
       totalRequests++;
-      const res = await fetcher(url, { credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(timeoutMs) });
+      const res = await fetcher(url, { credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(reqTimeout) });
       if (!res.ok) throw Error('Mains fetch failed');
       const data = JSON.parse(await boundedText(res, 200000));
+      checkTimeBudget();
       if (!Array.isArray(data.page)) throw Error('Invalid mains response');
 
       mainsPageCount++;
@@ -372,11 +385,16 @@ export async function fetchLiveCandidates(fetcher, currentMainId, ep, steps, pos
         }
 
         const url = '/api/v1/main?id=' + encodeURIComponent(mId) + (stepCursor ? '&cursor=' + encodeURIComponent(stepCursor) : '');
+        const reqTimeout = getRequestTimeout();
         totalRequests++;
-        const res = await fetcher(url, { credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(timeoutMs) });
+        const res = await fetcher(url, { credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(reqTimeout) });
         if (!res.ok) throw Error('Main path fetch failed: ' + mId);
         const data = JSON.parse(await boundedText(res, 200000));
+        checkTimeBudget();
         if (!Array.isArray(data.page)) throw Error('Invalid main path response');
+        if (!Number.isSafeInteger(data.version) || data.version !== m.version) {
+          throw Error('Path changed');
+        }
 
         lastData = data;
         stepPageCount++;
@@ -424,10 +442,12 @@ export async function fetchLiveCandidates(fetcher, currentMainId, ep, steps, pos
       }
 
       const url = '/api/v1/catalog' + (catCursor ? '?cursor=' + encodeURIComponent(catCursor) : '');
+      const reqTimeout = getRequestTimeout();
       totalRequests++;
-      const res = await fetcher(url, { credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(timeoutMs) });
+      const res = await fetcher(url, { credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(reqTimeout) });
       if (!res.ok) throw Error('Catalog fetch failed');
       const data = JSON.parse(await boundedText(res, 200000));
+      checkTimeBudget();
       if (!Array.isArray(data.page)) throw Error('Invalid catalog response');
 
       catPageCount++;
@@ -445,7 +465,9 @@ export async function fetchLiveCandidates(fetcher, currentMainId, ep, steps, pos
       }
     }
 
+    checkTimeBudget();
     const candidates = findBranchCandidates(currentMainId, ep, steps, position, { mains: populatedMains, branches });
+    checkTimeBudget();
     return { ok: true, candidates };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };

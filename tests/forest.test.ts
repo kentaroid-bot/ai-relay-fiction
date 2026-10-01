@@ -475,6 +475,71 @@ it("enforces strict cursor presence when incomplete, validates path continuity, 
   expect(mainsRequests).toBe(3); // maxMainsPages に達して安全に停止
 });
 
+it("validates path version on every page and enforces overall timeout through final response", async () => {
+  const ep = { branchId: "origin", episodeId: "ep-001", revision: sha, title: "第1話" };
+  const epNext = { branchId: "tree-b-branch", episodeId: "ep-002", revision: "b".repeat(40), parent: ep };
+
+  const validMainsV2 = { isDone: true, page: [
+    { mainId: "tree-a", title: "木A", version: 1, count: 1 },
+    { mainId: "tree-b", title: "木B", version: 2, count: 2, maintainer: "作者B", agentName: "AI-B" },
+  ]};
+  const validCatalog = { isDone: true, page: [] };
+
+  // 1. Path version mismatch across pages: mains is v2, first page is v1, final page is v2 -> ok: false
+  const fetchVersionShiftInPath = async (url: string) => {
+    if (url.startsWith("/api/v1/mains")) return Response.json(validMainsV2);
+    if (url.startsWith("/api/v1/main?id=tree-b")) {
+      if (!url.includes("cursor=")) {
+        // 先頭ページ: version 1, isDone: false, continueCursor: "c2"
+        return Response.json({
+          version: 1,
+          isDone: false,
+          continueCursor: "c2",
+          page: [{ position: 0, available: true, episode: ep }],
+        });
+      }
+      // 最終ページ: version 2, isDone: true, count: 2
+      return Response.json({
+        version: 2,
+        count: 2,
+        isDone: true,
+        page: [{ position: 1, available: true, episode: epNext }],
+      });
+    }
+    if (url.startsWith("/api/v1/catalog")) return Response.json(validCatalog);
+    return new Response("Not found", { status: 404 });
+  };
+  const resShift = await fetchLiveCandidates(fetchVersionShiftInPath, "tree-a", ep, [{ episode: ep }], 0);
+  expect(resShift.ok).toBe(false);
+
+  // 2. Overall timeout: final response completes after overall budget exceeded -> ok: false
+  const fetchSlowFinalCatalog = async (url: string) => {
+    if (url.startsWith("/api/v1/mains")) return Response.json(validMainsV2);
+    if (url.startsWith("/api/v1/main?id=tree-b")) {
+      return Response.json({
+        version: 2,
+        count: 2,
+        isDone: true,
+        page: [
+          { position: 0, available: true, episode: ep },
+          { position: 1, available: true, episode: epNext },
+        ],
+      });
+    }
+    if (url.startsWith("/api/v1/catalog")) {
+      // 最後の catalog レスポンス本文取得で全体時間を超過
+      await new Promise(resolve => setTimeout(resolve, 25));
+      return Response.json(validCatalog);
+    }
+    return new Response("Not found", { status: 404 });
+  };
+  const resTimeout = await fetchLiveCandidates(fetchSlowFinalCatalog, "tree-a", ep, [{ episode: ep }], 0, {
+    overallTimeoutMs: 20,
+    timeoutMs: 50,
+  });
+  expect(resTimeout.ok).toBe(false);
+});
+
 
 
 it("shows literal provenance credits with fixed source links, and clears withdrawn references", () => {
