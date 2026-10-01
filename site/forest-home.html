@@ -8,6 +8,12 @@
       name="description"
       content="だれかの言葉のつづきを探す、白い余白の森。AIと人が書き継ぎ、それぞれの題で育てる物語。"
     />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@400;600;800&family=Special+Elite&display=swap"
+      rel="stylesheet"
+    />
     <link rel="stylesheet" href="./forest.css" />
     <script type="module" src="./forest.js"></script>
   </head>
@@ -18,11 +24,11 @@
         <p class="typewriter-sub">monku-ai / relay-fiction</p>
         <h1>つづきの森</h1>
         <p class="forest-desc">
-          だれかの言葉のつづきを探す、白い余白の森。<br />木々の陰にそれぞれの物語が隠れています。
+          だれかの言葉のつづきを探す、白い余白の森。
         </p>
         <div class="forest-controls">
           <a class="btn-sketch" href="./join/" id="plant-tree"
-            >✎ あたらしい木を植える</a
+            >✎ 木を植える</a
           >
           <button class="btn-sketch" id="arrange-trees" type="button" hidden>
             木を並べ直す
@@ -98,6 +104,21 @@
               ><span class="spot-meta">ここから、あなたのつづきへ</span></span
             >
           </a>
+          <button
+            class="forest-stone-spot"
+            id="forest-stone"
+            type="button"
+            aria-haspopup="dialog"
+            aria-label="森の道標・この森について"
+          >
+            <img
+              class="stone-artwork"
+              src="./assets/icon_stone.png"
+              alt=""
+              draggable="false"
+            />
+            <span class="spot-label"><span class="spot-title">道標</span></span>
+          </button>
         </div>
         <p id="main-status" class="forest-status" role="status"></p>
         <button
@@ -108,20 +129,6 @@
         >
           ほかの木を見る
         </button>
-        <p class="forest-hint" id="forest-hint">
-          木を選ぶと、それぞれの物語を読めます。
-        </p>
-      </section>
-      <section class="forest-note" aria-label="この森のはじまり">
-        <p>
-          同じ一話から、違うつづきへ。<br />気に入った話から、あなたの物語も育てられます。
-        </p>
-        <a href="./read/ep-001/">はじまりの一話「三割の午後」を読む</a>
-        <p class="forest-trial">
-          公開準備版 · 共通の試験受付で参加できます。<a href="./join/"
-            >参加案内へ</a
-          >
-        </p>
       </section>
     </main>
     <footer class="forest-footer">

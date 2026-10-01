@@ -1,11 +1,13 @@
 @charset "UTF-8";
 :root {
   --canvas: #fbf9f4;
-  --paper: #fff;
+  --paper: #ffffff;
   --ink: #2a2a2a;
-  --pencil: #6b675f;
+  --pencil: #7a7670;
   --green: #3d6840;
-  --serif: "Yu Mincho", "Hiragino Mincho ProN", "Noto Serif CJK JP", serif;
+  --serif: "Shippori Mincho", "Yu Mincho", "Hiragino Mincho ProN", serif;
+  --mono: "Special Elite", "Courier New", monospace;
+  --shadow-soft: 0 8px 24px rgba(60, 50, 40, 0.08);
 }
 * {
   box-sizing: border-box;
@@ -79,25 +81,25 @@ a:focus-visible {
   min-width: 0;
 }
 .typewriter-sub {
-  font-family: "Courier New", monospace;
-  font-size: 0.8rem;
-  letter-spacing: 0.12em;
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  letter-spacing: 0.15em;
   color: var(--pencil);
-  margin: 0 0 0.5rem;
+  margin: 0 0 0.4rem;
 }
 h1 {
-  font-size: clamp(2rem, 4vw, 2.6rem);
+  font-size: clamp(2rem, 4vw, 2.5rem);
   font-weight: 600;
   letter-spacing: 0.18em;
   line-height: 1.5;
-  margin: 0 0 0.8rem;
+  margin: 0 0 0.6rem;
 }
 .forest-desc {
   font-size: 0.95rem;
-  line-height: 1.9;
+  line-height: 1.8;
   color: var(--pencil);
   margin: 0;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
 }
 .forest-controls {
   display: flex;
@@ -119,11 +121,13 @@ h1 {
   cursor: pointer;
   text-decoration: none;
   min-height: 44px;
+  transition: all 0.2s ease;
 }
 .btn-sketch:hover {
   border-color: var(--ink);
   color: var(--ink);
   background: rgba(255, 255, 255, 0.7);
+  transform: translateY(-1px);
 }
 .btn-sketch:disabled {
   opacity: 0.6;
@@ -134,10 +138,10 @@ h1 {
   flex-shrink: 0;
 }
 .hommage-badge {
-  font:
-    0.7rem/1.7 "Courier New",
-    monospace;
-  letter-spacing: 0.05em;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  line-height: 1.7;
+  letter-spacing: 0.08em;
   color: var(--pencil);
   border: 1px dashed rgba(120, 110, 100, 0.25);
   border-radius: 4px;
@@ -195,9 +199,19 @@ nav a {
   border: 0;
   background: transparent;
   font: inherit;
-  cursor: pointer;
+  cursor: grab;
   user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
+  touch-action: none;
   border-radius: 6px;
+  transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.forest-tree:hover {
+  transform: translateY(-6px);
+}
+.forest-tree * {
+  pointer-events: none;
 }
 .tree-artwork {
   display: block;
@@ -207,6 +221,7 @@ nav a {
   object-fit: contain;
   mix-blend-mode: multiply;
   pointer-events: none;
+  transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .forest-tree[data-art="tree_blue.png"] .tree-artwork {
   height: 155px;
@@ -220,32 +235,35 @@ nav a {
 .spot-label {
   display: block;
   max-width: 180px;
-  margin-top: 0.3rem;
-  padding: 0.3rem 0.65rem;
+  margin-top: 0.25rem;
+  padding: 0.25rem 0.65rem;
   border: 1px solid rgba(120, 110, 100, 0.15);
   border-radius: 3px;
   background: rgba(255, 255, 255, 0.88);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.03);
+  transition: all 0.2s ease;
 }
 .spot-title {
   display: block;
   font-size: 0.85rem;
   font-weight: 600;
-  line-height: 1.65;
-  letter-spacing: 0.03em;
+  line-height: 1.6;
+  letter-spacing: 0.05em;
   overflow-wrap: anywhere;
 }
 .spot-meta {
   display: block;
+  font-family: var(--mono);
   font-size: 0.7rem;
   color: var(--pencil);
-  line-height: 1.7;
-  margin-top: 0.25rem;
+  line-height: 1.6;
+  margin-top: 0.15rem;
   overflow-wrap: anywhere;
 }
 .forest-tree:hover .spot-label {
-  border-color: var(--pencil);
+  border-color: var(--ink);
   background: #fff;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.06);
 }
 .forest-sprout {
   margin: 56px auto 0;
@@ -255,6 +273,43 @@ nav a {
 }
 .forest-sprout .spot-title {
   font-size: 0.8rem;
+}
+.forest-stone-spot {
+  position: absolute;
+  bottom: 20px;
+  left: 36px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  user-select: none;
+  touch-action: none;
+  transition: transform 0.25s ease;
+  z-index: 5;
+}
+.forest-stone-spot:hover {
+  transform: translateY(-4px) scale(1.04);
+}
+.forest-stone-spot .stone-artwork {
+  width: 52px;
+  height: auto;
+  mix-blend-mode: multiply;
+  pointer-events: none;
+}
+.forest-stone-spot .spot-label {
+  margin-top: 0.2rem;
+  padding: 0.15rem 0.5rem;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px dashed rgba(120, 110, 100, 0.25);
+  border-radius: 3px;
+  pointer-events: none;
+}
+.forest-stone-spot .spot-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--pencil);
 }
 .forest-field.is-arranged {
   padding: 0;
@@ -270,10 +325,12 @@ nav a {
 }
 .is-arranged .forest-tree.is-dragging {
   cursor: grabbing;
-  filter: drop-shadow(0 8px 8px rgba(60, 45, 30, 0.12));
+  transition: none !important;
+  transform: scale(1.08) translateY(-8px);
+  z-index: 1000 !important;
+  filter: drop-shadow(0 14px 14px rgba(60, 45, 30, 0.12));
 }
-.forest-status,
-.forest-hint {
+.forest-status {
   color: var(--pencil);
   text-align: center;
   font-size: 0.8rem;
@@ -285,21 +342,6 @@ nav a {
 .more-trees {
   display: flex;
   margin: 20px auto;
-}
-.forest-note {
-  text-align: center;
-  padding: 24px;
-  max-width: 650px;
-  margin: 0 auto;
-  font-size: 0.9rem;
-}
-.forest-note p {
-  margin: 0 0 1.2rem;
-}
-.forest-note .forest-trial {
-  margin: 2rem 0 0;
-  font-size: 0.75rem;
-  color: var(--pencil);
 }
 .forest-footer {
   max-width: 1180px;
@@ -317,40 +359,43 @@ nav a {
 .book-panel {
   color: var(--ink);
   background: var(--paper);
-  width: 480px;
+  width: 460px;
   max-width: calc(100vw - 32px);
   max-height: calc(100dvh - 48px);
-  padding: 28px;
+  padding: 2rem;
   border: 1px solid rgba(80, 70, 60, 0.2);
   border-radius: 8px;
   box-shadow:
-    0 8px 24px rgba(60, 50, 40, 0.08),
+    var(--shadow-soft),
     0 20px 40px rgba(40, 30, 20, 0.06);
+  font-family: var(--serif);
 }
 .book-panel::backdrop {
-  background: rgba(70, 65, 55, 0.13);
+  background: rgba(40, 30, 20, 0.15);
+  backdrop-filter: blur(2px);
 }
 .panel-header {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
-  gap: 16px;
+  align-items: baseline;
   border-bottom: 1px solid rgba(100, 90, 80, 0.15);
-  padding-bottom: 12px;
-  margin-bottom: 16px;
+  padding-bottom: 0.8rem;
+  margin-bottom: 1.2rem;
 }
 .panel-header h2 {
-  font-size: 1.2rem;
+  font-size: 1.25rem;
   font-weight: 600;
   margin: 0;
-  line-height: 1.7;
+  line-height: 1.6;
+  letter-spacing: 0.05em;
   overflow-wrap: anywhere;
 }
 .panel-header .typewriter-sub {
-  font-family: var(--serif);
+  font-family: var(--mono);
   font-size: 0.75rem;
-  letter-spacing: 0;
-  overflow-wrap: anywhere;
+  letter-spacing: 0.08em;
+  color: var(--pencil);
+  margin: 0 0 0.2rem;
 }
 .panel-close {
   background: none;
@@ -361,6 +406,10 @@ nav a {
   min-width: 44px;
   min-height: 44px;
   flex-shrink: 0;
+  transition: color 0.2s ease;
+}
+.panel-close:hover {
+  color: var(--ink);
 }
 #panel-status {
   color: var(--pencil);
@@ -372,29 +421,41 @@ nav a {
 .panel-episodes {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 0.85rem;
   list-style: none;
   padding: 0;
-  margin: 20px 0;
+  margin: 1.2rem 0;
 }
 .ep-row {
   border-radius: 6px;
   background: #faf9f5;
-  border: 1px solid rgba(100, 90, 80, 0.1);
-  padding: 14px 16px;
+  border: 1px solid rgba(100, 90, 80, 0.08);
+  padding: 0.85rem 1rem;
+  transition: all 0.2s ease;
+}
+.ep-row:hover {
+  background: #f4f1e8;
+  border-color: rgba(100, 90, 80, 0.25);
+  transform: translateX(3px);
 }
 .ep-row a {
   color: var(--ink);
   font-size: 0.95rem;
+  font-weight: 600;
+  text-decoration: none;
   overflow-wrap: anywhere;
 }
 .ep-row .spot-meta {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--pencil);
   margin: 0 0 4px;
 }
 .ep-join {
   display: block;
   font-size: 0.75rem !important;
-  margin-top: 8px;
+  font-weight: normal !important;
+  margin-top: 6px;
   color: var(--pencil) !important;
 }
 .panel-join {

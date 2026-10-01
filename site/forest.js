@@ -181,6 +181,8 @@ function startForest() {
   function makeDraggable(node) {
     if (draggable.has(node)) return;
     draggable.add(node);
+    node.setAttribute("draggable", "false");
+    node.addEventListener("dragstart", (e) => e.preventDefault());
     let down = null,
       moved = false,
       suppressClick = false;
@@ -194,17 +196,21 @@ function startForest() {
         event.shiftKey
       )
         return;
+      const treeRect = node.getBoundingClientRect();
+      const fieldRect = field.getBoundingClientRect();
       down = {
         id: event.pointerId,
         x: event.clientX,
         y: event.clientY,
-        left: parseFloat(node.style.left) || 0,
-        top: parseFloat(node.style.top) || 0,
+        left: treeRect.left - fieldRect.left,
+        top: treeRect.top - fieldRect.top,
       };
       moved = false;
       suppressClick = false;
       node.style.zIndex = String(++z);
-      node.setPointerCapture(event.pointerId);
+      try {
+        node.setPointerCapture(event.pointerId);
+      } catch (_) {}
     });
     node.addEventListener("pointermove", (event) => {
       if (!down || down.id !== event.pointerId) return;
@@ -225,28 +231,28 @@ function startForest() {
     });
     function end(event) {
       if (!down || down.id !== event.pointerId) return;
-      suppressClick = moved || event.type === "pointercancel";
+      try {
+        if (node.hasPointerCapture(event.pointerId))
+          node.releasePointerCapture(event.pointerId);
+      } catch (_) {}
+      suppressClick = moved;
       down = null;
       node.classList.remove("is-dragging");
-      if (node.hasPointerCapture(event.pointerId))
-        node.releasePointerCapture(event.pointerId);
     }
     node.addEventListener("pointerup", end);
     node.addEventListener("pointercancel", end);
     node.addEventListener("lostpointercapture", () => {
       if (down) {
         down = null;
-        suppressClick = true;
+        suppressClick = moved;
         node.classList.remove("is-dragging");
       }
     });
     node.addEventListener("click", (event) => {
       if (suppressClick) {
         suppressClick = false;
-        if (event.detail > 0) {
-          event.preventDefault();
-          event.stopImmediatePropagation();
-        }
+        event.preventDefault();
+        event.stopImmediatePropagation();
       }
     });
   }
@@ -305,7 +311,8 @@ function startForest() {
       validateEpisodePage(state.main, page, state.position);
       for (const step of page.page) {
         const row = el("li", undefined, "ep-row");
-        row.append(el("span", step.position + 1 + "話目", "spot-meta"));
+        const epLabel = "ep " + String(step.position + 1).padStart(2, "0");
+        row.append(el("span", epLabel, "spot-meta"));
         if (!step.available) state.blocked = true;
         if (step.available && !state.blocked) {
           row.append(
@@ -324,7 +331,7 @@ function startForest() {
           if (step.position === 0) {
             read.hidden = false;
             read.href = readingLink(state.main.mainId, state.main.version);
-            read.textContent = "第1話から読む";
+            read.textContent = "ep 01 から読む";
           }
         } else
           row.append(
@@ -402,6 +409,35 @@ function startForest() {
     );
     join.append(anchor("書き手になるための案内", "/join/", "btn-sketch"));
   }
+  function showStone(source) {
+    open("この森について", "道標 / About", source);
+    join.append(
+      el(
+        "p",
+        "だれかの言葉のつづきを探す、白い余白の森。木々の陰にそれぞれの物語が隠れています。",
+      ),
+    );
+    join.append(
+      el(
+        "p",
+        "同じ一話から、違うつづきへ。はじまりの一話からでも、気に入った話の途中からでも、自分の木を育てられます。",
+      ),
+    );
+    join.append(
+      anchor("はじまりの一話「三割の午後」を読む", "/read/ep-001/", "btn-sketch"),
+      anchor("参加案内へ", "/join/", "btn-sketch"),
+    );
+  }
+  const stone = document.getElementById("forest-stone");
+  if (stone) {
+    makeDraggable(stone);
+    stone.addEventListener("click", (event) => {
+      if (ordinaryClick(event)) {
+        event.preventDefault();
+        showStone(stone);
+      }
+    });
+  }
   for (const source of [sprout, document.getElementById("plant-tree")])
     source.addEventListener("click", (event) => {
       if (ordinaryClick(event)) {
@@ -430,8 +466,11 @@ function startForest() {
       layout();
     }
   }).observe(field);
-  document.getElementById("forest-hint").textContent =
-    "木を選ぶと、物語が開きます。木を動かして眺めることもできます。";
+  const hintEl = document.getElementById("forest-hint");
+  if (hintEl) {
+    hintEl.textContent =
+      "木を選ぶと、物語が開きます。木を動かして眺めることもできます。";
+  }
 
   function makeTree(main) {
     const node = anchor(

@@ -151,8 +151,11 @@ def render():
     shutil.copyfile(SITE/'_headers',DIST/'_headers')
     for name in ('forest.css', 'forest.js'):
         shutil.copyfile(SITE/name, DIST/name)
-    # Only the reviewed tree assets are deployed; never copy an arbitrary folder.
-    assets = ['tree_emerald.png', 'tree_blue.png', 'tree_round.png', 'tree_olive.png', 'tree_sprout.png']
+    # Only the reviewed tree and symbol assets are deployed; never copy an arbitrary folder.
+    assets = [
+        'tree_emerald.png', 'tree_blue.png', 'tree_round.png', 'tree_olive.png', 'tree_sprout.png',
+        'icon_stone.png', 'icon_bird.png', 'icon_ladybug.png', 'icon_butterfly.png', 'icon_acorn.png'
+    ]
     (DIST/'assets').mkdir(exist_ok=True)
     for name in assets:
         shutil.copyfile(SITE/'assets'/name, DIST/'assets'/name)
@@ -232,7 +235,11 @@ def export_repository():
                ('site/build.py','site/build.py'),('site/style.css','site/style.css'),
                ('site/main-reader.js','site/main-reader.js'),('site/reader.js','site/reader.js'),('site/branches.js','site/branches.js'),('site/_headers','site/_headers'),('site/public-readme.md','site/README.md'),('participation/api.md','docs/api.md')]
     copies += [('site/'+name, 'site/'+name) for name in ('forest.js', 'forest.css', 'forest-home.html', 'forest-prototype.html')]
-    copies += [('site/assets/'+name, 'site/assets/'+name) for name in ('tree_emerald.png', 'tree_blue.png', 'tree_round.png', 'tree_olive.png', 'tree_sprout.png', 'TREE_STYLE_PROMPT.md')]
+    copies += [('site/assets/'+name, 'site/assets/'+name) for name in (
+        'tree_emerald.png', 'tree_blue.png', 'tree_round.png', 'tree_olive.png', 'tree_sprout.png',
+        'icon_stone.png', 'icon_bird.png', 'icon_ladybug.png', 'icon_butterfly.png', 'icon_acorn.png',
+        'TREE_STYLE_PROMPT.md'
+    )]
     for source,dest in copies:
         output=target/dest
         output.parent.mkdir(parents=True,exist_ok=True)
