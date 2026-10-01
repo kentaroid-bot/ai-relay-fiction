@@ -10,6 +10,9 @@ document.querySelectorAll('[data-size]').forEach((button) => {
       item.setAttribute('aria-pressed', String(item === button));
       item.classList.toggle('active', item === button);
     });
+    if (typeof window.updateReadingProgress === 'function') {
+      window.updateReadingProgress();
+    }
   });
 });
 
@@ -33,7 +36,45 @@ try {
   }
 } catch {}
 
-// 3. 縦書き / 横書き切り替え
+// 3. 読書プログレスバー
+const progress = document.getElementById('read-progress');
+function updateProgress() {
+  if (!progress) return;
+  if (document.body.classList.contains('mode-vertical')) {
+    const story = document.querySelector('.story');
+    if (story) {
+      const maxScroll = story.scrollWidth - story.clientWidth;
+      if (maxScroll > 0) {
+        const current = Math.abs(story.scrollLeft);
+        const pct = Math.min(100, Math.max(0, (current / maxScroll) * 100));
+        progress.style.width = pct + '%';
+        return;
+      }
+      progress.style.width = '100%';
+      return;
+    }
+  }
+  const h = document.documentElement;
+  const total = h.scrollHeight - h.clientHeight;
+  if (total > 0) {
+    const pct = Math.min(100, Math.max(0, (h.scrollTop / total) * 100));
+    progress.style.width = pct + '%';
+  } else {
+    progress.style.width = '0%';
+  }
+}
+window.updateReadingProgress = updateProgress;
+window.addEventListener('scroll', updateProgress);
+window.addEventListener('resize', updateProgress);
+
+// 本文コンテナのスクロールも監視
+document.addEventListener('scroll', (e) => {
+  if (e.target && e.target.classList && e.target.classList.contains('story')) {
+    updateProgress();
+  }
+}, true);
+
+// 4. 縦書き / 横書き切り替え
 const btnH = document.getElementById('btn-horizontal');
 const btnV = document.getElementById('btn-vertical');
 
@@ -44,8 +85,9 @@ if (btnV && btnH) {
     btnH.classList.remove('active');
     btnH.setAttribute('aria-pressed', 'false');
     document.body.classList.add('mode-vertical');
-    const reader = document.querySelector('.reader');
-    if (reader) reader.scrollLeft = 0;
+    const story = document.querySelector('.story');
+    if (story) story.scrollLeft = 0;
+    updateProgress();
   });
 
   btnH.addEventListener('click', () => {
@@ -54,28 +96,17 @@ if (btnV && btnH) {
     btnV.classList.remove('active');
     btnV.setAttribute('aria-pressed', 'false');
     document.body.classList.remove('mode-vertical');
+    updateProgress();
   });
 
-  // 縦書き時のホイール横スクロール
+  // 縦書き時のホイール横スクロール（本文 .story をスクロール）
   window.addEventListener('wheel', (e) => {
     if (!document.body.classList.contains('mode-vertical')) return;
-    const reader = document.querySelector('.reader');
-    if (reader && e.deltaY !== 0) {
-      reader.scrollLeft -= e.deltaY;
+    const story = document.querySelector('.story');
+    if (story && e.deltaY !== 0) {
+      story.scrollLeft -= e.deltaY;
+      updateProgress();
       e.preventDefault();
     }
   }, { passive: false });
-}
-
-// 4. 読書プログレスバー
-const progress = document.getElementById('read-progress');
-if (progress) {
-  window.addEventListener('scroll', () => {
-    const h = document.documentElement;
-    const total = h.scrollHeight - h.clientHeight;
-    if (total > 0) {
-      const pct = (h.scrollTop / total) * 100;
-      progress.style.width = pct + '%';
-    }
-  });
 }

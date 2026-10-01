@@ -398,28 +398,41 @@ body[data-theme="dark"] .story pre {
   color: var(--ink-subtle);
   letter-spacing: 0.5em;
 }
+.story.small {
+  --story-font-size: 0.95rem;
+  --story-line-height: 2.0;
+}
 .story.large {
   --story-font-size: 1.3rem;
   --story-line-height: 2.3;
 }
 
-/* 縦書きモード */
+/* 縦書きモード：操作バーは表示範囲に残し、本文のみを横スクロール領域にする */
 body.mode-vertical .reader {
+  width: 100%;
   max-width: none;
-  width: 100vw;
-  height: calc(100vh - 100px);
-  margin: 0;
-  padding: 2rem 2.5rem;
-  overflow-x: auto;
-  overflow-y: hidden;
-  display: flex;
-  flex-direction: row-reverse;
+  margin: 0 auto;
+}
+body.mode-vertical .reader-bar {
+  width: 100%;
 }
 body.mode-vertical .story {
   writing-mode: vertical-rl;
   -webkit-writing-mode: vertical-rl;
-  height: 100%;
+  height: calc(100vh - 240px);
+  max-height: 680px;
+  min-height: 400px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 1.8rem 1.2rem 1.8rem 2rem;
+  margin: 1.5rem 0 2rem;
+  background: rgba(0, 0, 0, 0.015);
+  border: 1px dashed var(--line);
+  border-radius: 6px;
   letter-spacing: 0.05em;
+}
+body[data-theme="dark"].mode-vertical .story {
+  background: rgba(255, 255, 255, 0.015);
 }
 body.mode-vertical .story p {
   margin: 0 0 0 1.6em;
@@ -436,21 +449,44 @@ body.mode-vertical .story pre {
   writing-mode: horizontal-tb;
   -webkit-writing-mode: horizontal-tb;
 }
-body.mode-vertical .reader .page-head {
-  writing-mode: vertical-rl;
-  -webkit-writing-mode: vertical-rl;
-  margin-left: 2.5rem;
-  padding-left: 1.5rem;
-  border-bottom: 0;
-  border-left: 1px dashed var(--line);
-  height: 100%;
+
+/* CSP対応スタイルクラス（インラインstyle属性の代替） */
+.reader-bar-right {
+  display: flex;
+  gap: 8px;
+  align-items: center;
 }
-body.mode-vertical .reader-epilogue, body.mode-vertical .endnote {
-  writing-mode: horizontal-tb;
-  -webkit-writing-mode: horizontal-tb;
-  min-width: 440px;
-  align-self: center;
-  margin-left: 3rem;
+.action-link-primary {
+  margin-top: 1rem;
+  font-family: var(--typewriter);
+  font-size: 0.82rem;
+  color: var(--accent);
+  font-weight: 600;
+}
+.action-link-sub {
+  margin-top: 1rem;
+  font-family: var(--typewriter);
+  font-size: 0.82rem;
+  color: var(--pencil);
+  font-weight: 600;
+}
+.guide-outro {
+  text-align: center;
+  max-width: 34em;
+  margin: 3.5rem auto 2rem;
+}
+.guide-outro-text {
+  font-family: var(--serif);
+  font-size: 1.05rem;
+  line-height: 2.1;
+  color: var(--ink);
+}
+.guide-outro-action {
+  margin-top: 2rem;
+}
+.prompt-note {
+  font-size: 0.9rem;
+  color: var(--ink-subtle);
 }
 
 /* ========================================================
