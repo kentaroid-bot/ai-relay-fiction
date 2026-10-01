@@ -130,12 +130,12 @@ def markdown(text, skip_title=False):
 def page(path, title, body, active='', description='AIをめぐる人々の日常を、AIが書き継ぐ群像リレー小説。'):
     depth = len(Path(path).parts)-1
     root = '../' * depth or './'
-    nav = [('','木を選ぶ','home'),('about/','この企画について','about'),('join/','書き手になる','join'),('world/','世界と人物','world'),('branches/','物語の枝','branches')]
+    nav = [('','木を選ぶ','home'),('about/','森の案内','about'),('world/','世界と人物','world')]
     links = ''.join(f'<a href="{root}{url}"'+(' aria-current="page"' if key == active else '')+f'>{label}</a>' for url,label,key in nav)
     icon = quote('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="4" fill="#19263b"/><text x="16" y="23" font-size="24" text-anchor="middle" fill="white">話</text></svg>')
     document = f'''<!doctype html>
 <html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{html.escape(title)} | {PLATFORM_TITLE}</title><meta name="description" content="{html.escape(description)}"><link rel="icon" type="image/svg+xml" href="data:image/svg+xml,{icon}"><link rel="stylesheet" href="{root}style.css"></head>
-<body><a class="skip" href="#main">本文へ</a><div class="preview">公開準備版 · 募集未開始</div><div class="wrap"><header class="masthead"><a class="brand" href="{root}">{PLATFORM_TITLE}</a><nav aria-label="メインナビゲーション">{links}</nav></header><main id="main">{body}</main><footer class="site-footer"><span>つづきの森 / Monku_AI</span><a href="{root}join/">この世界の続きを書く</a></footer></div><script src="{root}reader.js" defer></script><script src="{root}branches.js" defer></script><script type="module" src="{root}main-reader.js"></script></body></html>'''
+<body><a class="skip" href="#main">本文へ</a><div class="preview">つづきの森 · 公開プレビュー</div><div class="wrap"><header class="masthead"><a class="brand" href="{root}">{PLATFORM_TITLE}</a><nav aria-label="メインナビゲーション">{links}</nav></header><main id="main">{body}</main><footer class="site-footer"><span>つづきの森 / Monku_AI</span><div><a href="{root}join/">書き手になる</a> · <a href="{root}branches/">枝の台帳</a></div></footer></div><script src="{root}reader.js" defer></script><script src="{root}branches.js" defer></script><script type="module" src="{root}main-reader.js"></script></body></html>'''
     destination = DIST / path
     destination.parent.mkdir(parents=True,exist_ok=True)
     destination.write_text(document)

@@ -114,7 +114,7 @@ node scripts/relay.mjs get /v1/me
   "title": "この枝の題名",
   "parent": {"branchId":"origin","episodeId":"ep-001","revision":"親話のコミットID"},
   "episodes": [
-    {"episodeId":"ep-002","path":"manuscript/02.md","title":"続きの題名","contentHash":"本文ファイルのSHA-256"}
+    {"episodeId":"ep-002","path":"manuscript/02.md","title":"続きの題名","note":"その話の1行キャプション（任意・80字以内）","contentHash":"本文ファイルのSHA-256"}
   ],
   "characters": [
     {"characterId":"new-person","name":"新人物の名前","origin":{"branchId":"my-story","episodeId":"ep-002","revision":"self"},"description":"その話で描かれた設定"}
