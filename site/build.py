@@ -130,12 +130,12 @@ def markdown(text, skip_title=False):
 def page(path, title, body, active='', description='AIをめぐる人々の日常を、AIが書き継ぐ群像リレー小説。'):
     depth = len(Path(path).parts)-1
     root = '../' * depth or './'
-    nav = [('','木を選ぶ','home'),('about/','この企画について','about'),('join/','書き手になる','join'),('world/','世界と人物','world'),('branches/','物語の枝','branches')]
+    nav = [('','木を選ぶ','home'),('about/','森の案内','about'),('world/','世界と人物','world')]
     links = ''.join(f'<a href="{root}{url}"'+(' aria-current="page"' if key == active else '')+f'>{label}</a>' for url,label,key in nav)
     icon = quote('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="4" fill="#19263b"/><text x="16" y="23" font-size="24" text-anchor="middle" fill="white">話</text></svg>')
     document = f'''<!doctype html>
 <html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{html.escape(title)} | {PLATFORM_TITLE}</title><meta name="description" content="{html.escape(description)}"><link rel="icon" type="image/svg+xml" href="data:image/svg+xml,{icon}"><link rel="stylesheet" href="{root}style.css"></head>
-<body><a class="skip" href="#main">本文へ</a><div class="preview">公開準備版 · 募集未開始</div><div class="wrap"><header class="masthead"><a class="brand" href="{root}">{PLATFORM_TITLE}</a><nav aria-label="メインナビゲーション">{links}</nav></header><main id="main">{body}</main><footer class="site-footer"><span>つづきの森 / Monku_AI</span><a href="{root}join/">この世界の続きを書く</a></footer></div><script src="{root}reader.js" defer></script><script src="{root}branches.js" defer></script><script type="module" src="{root}main-reader.js"></script></body></html>'''
+<body><a class="skip" href="#main">本文へ</a><div class="preview">つづきの森 · 公開プレビュー</div><div class="wrap"><header class="masthead"><a class="brand" href="{root}">{PLATFORM_TITLE}</a><nav aria-label="メインナビゲーション">{links}</nav></header><main id="main">{body}</main><footer class="site-footer"><span>つづきの森 / Monku_AI</span><div><a href="{root}join/">書き手になる</a> · <a href="{root}branches/">枝の台帳</a></div></footer></div><script src="{root}reader.js" defer></script><script src="{root}branches.js" defer></script><script type="module" src="{root}main-reader.js"></script></body></html>'''
     destination = DIST / path
     destination.parent.mkdir(parents=True,exist_ok=True)
     destination.write_text(document)
@@ -163,10 +163,13 @@ def render():
     for name in ('special-elite.woff2', 'special-elite-LICENSE.txt', 'special-elite-NOTICE.txt', 'shippori-mincho-regular.woff2', 'shippori-mincho-semibold.woff2', 'shippori-mincho-OFL.txt', 'shippori-mincho-NOTICE.txt'):
         shutil.copyfile(SITE/'assets/fonts'/name, DIST/'assets/fonts'/name)
     def tree_label_title(title):
-        return title.split('〜')[0].strip() if '〜' in title else title
+        if not title:
+            return ''
+        base = title.split('〜')[0].strip() or title.strip()
+        return (base[:11] + '…') if len(base) > 12 else base
     def tree_maintainer(maintainer):
         return 'kentaroid-bot' if maintainer == 'Monku_AI' else maintainer
-    trees = ''.join('<a class="forest-tree" data-main-id="'+html.escape(m['id'],quote=True)+'" data-art="tree_emerald.png" href="./read/main/?id='+quote(m['id'])+'"><img class="tree-artwork" src="./assets/tree_emerald.png" width="240" height="400" alt="" draggable="false"><span class="spot-label"><span class="spot-title">'+html.escape(tree_label_title(m['title']))+'</span><span class="spot-meta">'+html.escape(tree_maintainer(m['maintainer']))+' · '+str(len(m['path']))+' ep</span></span></a>' for m in BRANCHES.get('mains', []))
+    trees = ''.join('<a class="forest-tree" data-main-id="'+html.escape(m['id'],quote=True)+'" title="'+html.escape(m['title'],quote=True)+'" data-art="tree_emerald.png" href="./read/main/?id='+quote(m['id'])+'"><img class="tree-artwork" src="./assets/tree_emerald.png" width="240" height="400" alt="" draggable="false"><span class="spot-label"><span class="spot-title">'+html.escape(tree_label_title(m['title']))+'</span><span class="spot-meta">'+html.escape(tree_maintainer(m['maintainer']))+' · '+str(len(m['path']))+' ep</span></span></a>' for m in BRANCHES.get('mains', []))
     (DIST/'index.html').write_text((SITE/'forest-home.html').read_text().replace('{{TREES}}', trees))
     page('read/main/index.html','木をたどって読む','''<article class="reader" id="main-reader"><header class="page-head"><div class="eyebrow" id="tree-credit"></div><h1 id="tree-title">物語を読み込んでいます</h1><p id="reading-status" role="status"></p><div class="reading-tools"><a href="../../">木を選び直す</a><div><span>文字</span><button type="button" data-size="normal" aria-pressed="true">標準</button><button type="button" data-size="large" aria-pressed="false">大きく</button></div></div></header><h2 id="episode-title"></h2><div id="tree-story" class="story"></div><div class="endlinks" id="tree-navigation"></div><section class="endnote"><h2>この木の道順</h2><ol id="tree-path"></ol><p><a href="../../branches/">ほかの枝をたどる</a></p><p><a id="refresh-tree" href="./">最新の道順を読み直す</a></p></section></article>''','read')
     for ep in DATA['episodes']:
@@ -206,7 +209,7 @@ def render():
     human, agent_steps = (participation('README.md')).read_text().split('## エージェント向けの進行案内\n\n',1)
     guide = markdown(human,skip_title=True) + '<details><summary>エージェント向けの進行案内・掲載条件</summary><div>' + markdown(agent_steps) + '</div></details>'
     context='<section class="notice" id="continuation-context" hidden><h2>あなたが選んだ、つづきの入口</h2><p id="continuation-status" role="status"></p><p id="continuation-links"></p><p>AIに任せるときの依頼例：</p><pre id="continuation-request" hidden></pre><p><a href="../">木を選び直す</a></p></section>'
-    page('join/index.html','書き手になる','<article class="content"><header class="page-head"><div class="eyebrow">次の書き手へ</div><h1>この世界の続きを書く。</h1></header>'+context+guide+'<section class="notice"><h2>手元で読む・準備する</h2><p><a href="../world/">世界と人物</a> / <a href="../read/ep-001/">第1話を読む</a></p><p><a href="../texts/recruitment.md">初回募集の文面案</a> / <a href="../texts/submission.md">提出するときの案内</a> / <a href="../texts/CONTRIBUTING.md">参加案内のテキスト版</a></p><p>本番の登録は準備中です。共通の試験受付では、自分の枝を申告し、それぞれの物語の流れを記録できます。手順は参加APIの案内をご覧ください。</p></section></article><script type="module" src="../forest.js"></script>','join')
+    page('join/index.html','書き手になる','<article class="content"><header class="page-head"><div class="eyebrow">次の書き手へ</div><h1>この世界の続きを書く。</h1></header>'+context+guide+'</article><script type="module" src="../forest.js"></script>','join')
     world=(WORK/'world.md').read_text()
     core=world.split('## 制作の芯\n\n',1)[1].split('\n## この世界の調子',1)[0]
     characters=world.split('## 人物の種\n\n',1)[1]

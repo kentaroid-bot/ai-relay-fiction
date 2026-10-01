@@ -263,7 +263,9 @@ h1 {
   font-weight: 600;
   line-height: 1.6;
   letter-spacing: 0.05em;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .spot-meta {
   display: block;

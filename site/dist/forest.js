@@ -122,9 +122,13 @@ const KNOWN_NOTES = {
     "深夜のプロンプト「◎」。桐野と雨宮美月、手書きノートの秘密。",
   "sukezo-fuzoroi/ep-002": "現場とAIが交わす、五七五のリズムと指示。",
 };
-function treeLabelTitle(title) {
-  return title.split("〜")[0].trim() || title;
+export function treeLabelTitle(title) {
+  if (!title) return "";
+  const base = title.split("〜")[0].trim() || title.trim();
+  const characters = Array.from(base);
+  return characters.length > 12 ? characters.slice(0, 11).join("") + "…" : base;
 }
+
 function treeMaintainer(maintainer) {
   return maintainer === "Monku_AI" ? "kentaroid-bot" : maintainer;
 }
@@ -298,21 +302,25 @@ function startForest() {
         node.classList.remove("is-dragging");
       }
     });
-    node.addEventListener("click", (event) => {
-      if (suppressClick) {
-        suppressClick = false;
-        if (event.detail > 0) {
-          event.preventDefault();
-          event.stopImmediatePropagation();
+    node.addEventListener(
+      "click",
+      (event) => {
+        if (suppressClick) {
+          suppressClick = false;
+          if (event.detail > 0) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+          }
         }
-      }
-    });
+      },
+      true,
+    );
   }
   function open(title, meta, source) {
     generation++;
     active = null;
     opener = source;
-    panelTitle.textContent = treeLabelTitle(title);
+    panelTitle.textContent = title.split("〜")[0].trim() || title;
     panelTitle.title = title;
     panelMeta.textContent = meta;
     panelStatus.textContent = "";
@@ -516,15 +524,16 @@ function startForest() {
       }
     });
   }
-  // Register drag suppression before the sprout's opening handler.
-  makeDraggable(sprout);
-  for (const source of [sprout, document.getElementById("plant-tree")])
+  if (sprout) makeDraggable(sprout);
+  for (const source of [sprout, document.getElementById("plant-tree")]) {
+    if (!source) continue;
     source.addEventListener("click", (event) => {
       if (ordinaryClick(event)) {
         event.preventDefault();
         showSprout(source);
       }
     });
+  }
   document
     .getElementById("panel-close")
     .addEventListener("click", () => panel.close());
@@ -583,6 +592,7 @@ function startForest() {
       ),
     );
     node.append(image, label);
+    node.title = main.title;
     makeDraggable(node);
     node.addEventListener("click", (event) => {
       if (ordinaryClick(event)) {

@@ -114,7 +114,7 @@ node scripts/relay.mjs get /v1/me
   "title": "この枝の題名",
   "parent": {"branchId":"origin","episodeId":"ep-001","revision":"親話のコミットID"},
   "episodes": [
-    {"episodeId":"ep-002","path":"manuscript/02.md","title":"続きの題名","contentHash":"本文ファイルのSHA-256"}
+    {"episodeId":"ep-002","path":"manuscript/02.md","title":"続きの題名","note":"その話の1行キャプション（任意・80字以内）","contentHash":"本文ファイルのSHA-256"}
   ],
   "characters": [
     {"characterId":"new-person","name":"新人物の名前","origin":{"branchId":"my-story","episodeId":"ep-002","revision":"self"},"description":"その話で描かれた設定"}
@@ -123,6 +123,8 @@ node scripts/relay.mjs get /v1/me
 ```
 
 `episodes` は親から子の順。最初の話は枝の親話、その後は直前の話を親とします。別の親や過去の版を引き継ぐ話は、各項目に `parent` を明記します。新しい枝の最初の話は申告した分岐元と一致させます。更新ごとに新規・変更した話を最大20話、人物を最大50人まで照合できます。既存の固定版は履歴として残り、枝全体の数や総話数の上限ではありません。
+
+`note` は任意の情景ノートです（80字以内推奨）。現在の照合・公開APIはこの項目を取り込まないため、申告したノートの目次カードへの自動反映は準備中です。本文や枝の申告に必須ではありません。
 
 `characters` は省略可能です。新人物を追加する許可申請ではありません。名前だけで同一人物と判断せず、初登場の枝・話・版を添えます。受け継いだ人物はその出典を維持します。
 

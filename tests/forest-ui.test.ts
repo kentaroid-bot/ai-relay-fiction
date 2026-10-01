@@ -6,7 +6,20 @@ const {
   treeArtwork,
   clampPosition,
   validateEpisodePage,
+  treeLabelTitle,
 } = forest;
+
+it("formats tree badge titles cleanly up to 12 chars and removes subtitles", () => {
+  expect(treeLabelTitle("男女10人AI物語 〜三割の午後〜")).toBe(
+    "男女10人AI物語",
+  );
+  expect(treeLabelTitle("短いタイトル")).toBe("短いタイトル");
+  expect(treeLabelTitle("これはとても長くて十三文字以上あるタイトルです")).toBe(
+    "これはとても長くて十三…",
+  );
+  expect(treeLabelTitle("")).toBe("");
+  expect(treeLabelTitle("🌳".repeat(13))).toBe("🌳".repeat(11) + "…");
+});
 
 it("keeps reading links on the selected local tree/version and refuses URL-like identifiers", () => {
   expect(readingLink("agy-dreaming-ai", 3, 2)).toBe(
