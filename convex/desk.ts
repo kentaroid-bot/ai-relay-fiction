@@ -5,6 +5,7 @@ import { v } from "convex/values";
 import { scanText, workLicense, gateValidator } from "./safety";
 import { forestCommand, validateFromMain, applyDeclaredMain } from "./forest";
 import { parentRef } from "./schema";
+import { checkSource, awardAcorn, preserveSourceLicense } from "./provenance";
 import {
   fail,
   text,
@@ -445,8 +446,10 @@ export const importGithubBranch = internalMutation({
       gate: scanText(title, "pending_fixed_source", "cc0_declared"),
       version: (branch?.version ?? 0) + 1,
     };
-    if (branch) await ctx.db.patch(branch._id, data);
-    else await ctx.db.insert("branches", { ...data, branchId });
+    if (branch) {
+      await preserveSourceLicense(ctx, branch);
+      await ctx.db.patch(branch._id, data);
+    } else await ctx.db.insert("branches", { ...data, branchId });
     await audit(ctx, editor._id, "branch.github", branchId, data.version);
     return {
       branchId,
@@ -652,6 +655,7 @@ export const command = internalMutation({
       if (!branch || branch.owner !== agent._id || branch.branchId === "origin")
         fail("FORBIDDEN");
       if (body.expectedVersion !== branch.version) fail("VERSION_CONFLICT");
+      await preserveSourceLicense(ctx, branch);
       await ctx.db.patch(branch._id, {
         githubPr: undefined,
         license: workLicense(body.license),
@@ -884,8 +888,12 @@ export const command = internalMutation({
             .take(21);
           if (!checkedEpisodes.length || checkedEpisodes.length > 20)
             fail("CHECK_REQUIRED");
-          for (const ep of checkedEpisodes)
+          for (const ep of checkedEpisodes) {
+            if (ep.sourceRef) {
+              await awardAcorn(ctx, branch, ep);
+            }
             await ctx.db.patch(ep._id, { listed: true });
+          }
           if (
             !branch.gate ||
             branch.gate.source !== "fixed_source_hash_checked"
@@ -952,6 +960,7 @@ export const read = internalQuery({
         repository: agent.repository,
         agentName: agent.agentName,
         role: agent.role,
+        acornCount: agent.acornCount ?? 0,
       };
     if (kind === "inbox") {
       if (agent.role === "editor")
@@ -1115,6 +1124,7 @@ export const recordCheck = internalMutation({
         contentHash: v.string(),
         title: v.string(),
         parent: parentRef,
+        sourceRef: v.optional(parentRef),
       }),
     ),
     gate: gateValidator,
@@ -1180,6 +1190,14 @@ export const recordCheck = internalMutation({
     }
     for (const ep of episodes) {
       await episodeSource(ep.parent);
+      if (ep.sourceRef) {
+        if (
+          ep.sourceRef.branchId === branchId &&
+          ep.sourceRef.episodeId === ep.episodeId
+        )
+          fail("SOURCE_SELF_REFERENCE");
+        await checkSource(ctx, ep.sourceRef);
+      }
       const old = await ctx.db
         .query("episodes")
         .withIndex("reference", (q) =>
@@ -1189,9 +1207,22 @@ export const recordCheck = internalMutation({
             .eq("revision", b.revision),
         )
         .unique();
+      if (
+        old &&
+        (old.path !== ep.path ||
+          old.contentHash !== ep.contentHash ||
+          old.title !== ep.title ||
+          (["branchId", "episodeId", "revision"] as const).some(
+            (k) =>
+              old.parent?.[k] !== ep.parent[k] ||
+              old.sourceRef?.[k] !== ep.sourceRef?.[k],
+          ))
+      )
+        fail("EPISODE_IMMUTABLE");
       if (!old)
         await ctx.db.insert("episodes", {
           ...ep,
+          ...(b.license ? { license: b.license } : {}),
           listed: false,
           branchId,
           revision: b.revision,

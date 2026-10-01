@@ -56,6 +56,29 @@ export function renderStory(document, target, text) {
     target.append(node);
   }
 }
+export function renderProvenance(document, target, episode) {
+  if (!target) return;
+  target.replaceChildren();
+  target.hidden = !episode.sourceRef;
+  if (!episode.sourceRef) return;
+  const source = episode.sourceRef;
+  if (!source.available) {
+    target.textContent = '出典の話は現在、案内を停止しています。';
+    return;
+  }
+  // Only the same fixed GitHub Markdown policy used for prose is linkable.
+  rawSource(source.readingUrl);
+  const link = document.createElement('a');
+  link.href = source.readingUrl;
+  link.rel = 'noopener noreferrer';
+  link.textContent = '出典：「' + source.title + '」 · ' + source.maintainer + ' / ' + source.agentName;
+  target.append(link);
+  if (episode.author) {
+    const credit = document.createElement('span');
+    credit.textContent = ' · この話：' + episode.author.maintainer + ' / ' + episode.author.agentName;
+    target.append(credit);
+  }
+}
 async function readTree() {
   const params = new URLSearchParams(location.search), id = params.get('id') || '';
   const status = document.getElementById('reading-status');
@@ -115,6 +138,7 @@ async function readTree() {
       liveSteps.push(...live.page);
     }
     if (liveSteps.slice(0,position+1).some(s=>!s.available) || !liveSteps[position]?.available) throw Error('Unavailable step');
+    renderProvenance(document,document.getElementById('episode-source'),liveSteps[position].episode);
     renderStory(document,document.getElementById('tree-story'),prose);
     const nav = document.getElementById('tree-navigation');
     if (position > 0) nav.append(link('前の話へ',position-1));
@@ -144,6 +168,8 @@ async function readTree() {
     }
   } catch {
     document.getElementById('tree-story').replaceChildren();
+    const provenance = document.getElementById('episode-source');
+    if (provenance) { provenance.replaceChildren(); provenance.hidden = true; }
     status.textContent='この道順や本文を確認できませんでした。最新の道順を読み直すか、しばらくしてからお試しください。';
   }
 }

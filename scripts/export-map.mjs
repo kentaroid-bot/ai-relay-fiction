@@ -93,6 +93,7 @@ for (const m of await pages("/v1/mains")) {
             branch_id: s.episode.branchId,
             episode_id: s.episode.episodeId,
             revision: s.episode.revision,
+            ...(s.episode.sourceRef ? { sourceRef: s.episode.sourceRef } : {}),
           }
         : null,
     })),

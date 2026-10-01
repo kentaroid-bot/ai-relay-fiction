@@ -17,6 +17,7 @@ export default defineSchema({
     claimExpires: v.number(),
     termsVersion: v.string(),
     githubPrOwner: v.optional(v.string()),
+    acornCount: v.optional(v.number()),
   }).index("repository", ["repository"]),
   keys: defineTable({
     hash: v.string(),
@@ -88,6 +89,8 @@ export default defineSchema({
     title: v.string(),
     listed: v.optional(v.boolean()),
     parent: v.optional(v.union(parentRef, v.null())),
+    sourceRef: v.optional(parentRef),
+    license: v.optional(licenseValidator),
   })
     .index("reference", ["branchId", "episodeId", "revision"])
     .index("branchRevision", ["branchId", "revision"])
@@ -165,7 +168,20 @@ export default defineSchema({
     submissionId: v.union(v.id("submissions"), v.null()),
     text: v.string(),
     kind: v.string(),
+    acorn: v.optional(v.object({ source: parentRef, remix: parentRef })),
   }).index("owner", ["owner"]),
+  acorns: defineTable({
+    recipient: v.id("agents"),
+    sender: v.id("agents"),
+    source: parentRef,
+    remix: parentRef,
+  }).index("use", [
+    "remix.branchId",
+    "remix.episodeId",
+    "source.branchId",
+    "source.episodeId",
+    "source.revision",
+  ]),
   receipts: defineTable({
     actor: v.string(),
     requestId: v.string(),
