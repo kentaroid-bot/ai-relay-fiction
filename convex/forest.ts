@@ -32,10 +32,11 @@ async function visible(ctx: QueryCtx | MutationCtx, ref: Ref) {
   const owner = await ctx.db.get(branch.owner);
   if (owner?.status !== "active") return null;
   const ep = await episode(ctx, ref);
-  if (!ep || ep.lifecycle === "withdrawn" || ep.withdrawnAt !== undefined) return null;
-  return (ep.listed === true ||
-      (ep.listed === undefined &&
-        (branch.branchId === "origin" || branch.revision === ref.revision)))
+  if (!ep || ep.lifecycle === "withdrawn" || ep.withdrawnAt !== undefined)
+    return null;
+  return ep.listed === true ||
+    (ep.listed === undefined &&
+      (branch.branchId === "origin" || branch.revision === ref.revision))
     ? {
         ...ref,
         title: ep.title,
@@ -100,7 +101,8 @@ export async function forestCommand(
 ): Promise<any> {
   if (operation === "episode.withdraw") {
     const ref = body.episode as Ref;
-    if (!ref?.branchId || !ref?.episodeId || !ref?.revision) fail("INVALID_EPISODE_REF");
+    if (!ref?.branchId || !ref?.episodeId || !ref?.revision)
+      fail("INVALID_EPISODE_REF");
     const ep = await episode(ctx, ref);
     if (!ep) fail("NOT_FOUND");
     const branch = await ctx.db
@@ -108,7 +110,8 @@ export async function forestCommand(
       .withIndex("branchId", (q) => q.eq("branchId", ref.branchId))
       .unique();
     if (!branch) fail("BRANCH_NOT_FOUND");
-    if (branch.owner !== agent._id && agent.role !== "editor") fail("FORBIDDEN");
+    if (branch.owner !== agent._id && agent.role !== "editor")
+      fail("FORBIDDEN");
     if (ep.lifecycle === "withdrawn" || ep.withdrawnAt !== undefined) {
       return { episode: ref, status: "already_withdrawn" };
     }
@@ -433,8 +436,21 @@ export const publicMains = internalQuery({
     const rows = await Promise.all(
       result.page.map(async (m) => {
         const owner = await ctx.db.get(m.owner);
-        if (owner?.status !== "active" || !(await visible(ctx, m.head)))
-          return null;
+        if (owner?.status !== "active") return null;
+        let isTreeVisible = await visible(ctx, m.head);
+        if (!isTreeVisible) {
+          const steps = await ctx.db
+            .query("mainSteps")
+            .withIndex("path", (q) => q.eq("mainId", m.mainId))
+            .take(1001);
+          for (const s of steps) {
+            if (await visible(ctx, s.episode)) {
+              isTreeVisible = true as any;
+              break;
+            }
+          }
+        }
+        if (!isTreeVisible) return null;
         return {
           mainId: m.mainId,
           title: m.title,
@@ -465,9 +481,20 @@ export const publicMain = internalQuery({
     const rows = await Promise.all(
       steps.page.map(async (step) => {
         const ref = await visible(ctx, step.episode);
-        return ref
-          ? { position: step.position, available: true, episode: ref }
-          : { position: step.position, available: false, episode: null };
+        if (ref) {
+          return { position: step.position, available: true, episode: ref };
+        }
+        const ep = await episode(ctx, step.episode);
+        const isWithdrawn =
+          ep?.lifecycle === "withdrawn" || ep?.withdrawnAt !== undefined;
+        return {
+          position: step.position,
+          available: false,
+          episode: null,
+          reason: isWithdrawn
+            ? ("withdrawn" as const)
+            : ("unavailable" as const),
+        };
       }),
     );
     const owner = await ctx.db.get(main.owner);

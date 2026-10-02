@@ -25,6 +25,8 @@ export async function sourceRecord(ctx: QueryCtx | MutationCtx, ref: Ref) {
     .unique();
   if (
     !episode ||
+    episode.lifecycle === "withdrawn" ||
+    episode.withdrawnAt !== undefined ||
     !(
       episode.listed === true ||
       (episode.listed === undefined &&
