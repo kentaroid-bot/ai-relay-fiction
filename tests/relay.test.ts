@@ -5,6 +5,7 @@ import { internal } from "../convex/_generated/api";
 import { digest, githubText, readingUrl, repo, TERMS } from "../convex/policy";
 
 import { WORK_TERMS, scanText } from "../convex/safety";
+import { publicSource } from "../convex/provenance";
 const license = {
   id: "CC0-1.0",
   termsVersion: WORK_TERMS,
@@ -1935,6 +1936,7 @@ it("lets communities choose different mains, preserving branches and enforcing o
     position: 1,
     available: false,
     episode: null,
+    reason: "unavailable",
   });
   expect(JSON.stringify(hidden)).not.toContain("A quiet afternoon");
 });
@@ -2617,5 +2619,152 @@ describe("fixed provenance and acorns", () => {
     expect(await t.run((ctx) => ctx.db.query("acorns").collect())).toHaveLength(
       1,
     );
+  });
+
+  it("withdraws an episode, hiding it from public visibility while retaining ancestry", async () => {
+    const t = await setup();
+    await register(t, writerKey, repository);
+    await register(t, otherKey, "https://github.com/other-writer/story");
+    const epRef = await listedBranch(
+      t,
+      writerKey,
+      "withdraw-branch",
+      repository,
+    );
+
+    // Other writer cannot withdraw another author's episode
+    const forbidden = await command(t, otherKey, "episode.withdraw", {
+      episode: epRef,
+    });
+    expect(forbidden.status).toBe(403);
+
+    // Author withdraws the episode
+    const res = await command(t, writerKey, "episode.withdraw", {
+      episode: epRef,
+    });
+    expect(res.status).toBe(200);
+    expect(res.data.status).toBe("withdrawn");
+
+    // Idempotent retry returns already_withdrawn
+    const retry = await command(t, writerKey, "episode.withdraw", {
+      episode: epRef,
+    });
+    expect(retry.status).toBe(200);
+    expect(retry.data.status).toBe("already_withdrawn");
+
+    // Database record has lifecycle=withdrawn and withdrawnAt set
+    const epRecord = await t.run((ctx) =>
+      ctx.db
+        .query("episodes")
+        .withIndex("reference", (q) =>
+          q
+            .eq("branchId", epRef.branchId)
+            .eq("episodeId", epRef.episodeId)
+            .eq("revision", epRef.revision),
+        )
+        .unique(),
+    );
+    expect(epRecord?.lifecycle).toBe("withdrawn");
+    expect(typeof epRecord?.withdrawnAt).toBe("number");
+  });
+
+  it("masks metadata in publicSource and removes branch from catalog when episode is withdrawn", async () => {
+    const t = await setup();
+    await register(t, writerKey, repository);
+    const epRef = await listedBranch(
+      t,
+      writerKey,
+      "withdraw-src-branch",
+      repository,
+    );
+
+    // Initial check: publicSource returns available: true with title and URLs
+    const initialSource = await t.run((ctx) => publicSource(ctx, epRef));
+    expect(initialSource.available).toBe(true);
+    if (initialSource.available) {
+      expect(initialSource.title).toBe("続き");
+      expect(initialSource.maintainer).toBe("依頼者");
+    }
+
+    // Initial check: /v1/catalog contains withdraw-src-branch
+    const initialCatalog = await request(t, "", "catalog");
+    expect(initialCatalog.status).toBe(200);
+    expect(
+      initialCatalog.data.page.some(
+        (b: any) => b.branchId === "withdraw-src-branch",
+      ),
+    ).toBe(true);
+
+    // Author withdraws the episode
+    const res = await command(t, writerKey, "episode.withdraw", {
+      episode: epRef,
+    });
+    expect(res.status).toBe(200);
+
+    // After withdrawal: publicSource returns available: false without any metadata
+    const withdrawnSource = await t.run((ctx) => publicSource(ctx, epRef));
+    expect(withdrawnSource.available).toBe(false);
+    expect((withdrawnSource as any).title).toBeUndefined();
+    expect((withdrawnSource as any).maintainer).toBeUndefined();
+    expect((withdrawnSource as any).readingUrl).toBeUndefined();
+
+    // After withdrawal: /v1/catalog omits the branch completely
+    const afterCatalog = await request(t, "", "catalog");
+    expect(afterCatalog.status).toBe(200);
+    expect(
+      afterCatalog.data.page.some(
+        (b: any) => b.branchId === "withdraw-src-branch",
+      ),
+    ).toBe(false);
+
+    // DB branch remains verified (status is not corrupted to suspended)
+    const branchRecord = await t.run((ctx) =>
+      ctx.db
+        .query("branches")
+        .withIndex("branchId", (q) => q.eq("branchId", "withdraw-src-branch"))
+        .unique(),
+    );
+    expect(branchRecord?.status).toBe("verified");
+  });
+
+  it("distinguishes author withdrawal from suspension in publicMain and preserves trees in publicMains", async () => {
+    const t = await setup();
+    await register(t, writerKey, repository);
+    const epRef = await listedBranch(t, writerKey, "tree-branch", repository);
+
+    // Create a tree with origin and epRef
+    const createRes = await command(t, writerKey, "main.create", {
+      mainId: "writer-resilient-tree",
+      title: "しなやかな木",
+      start: epRef,
+    });
+    expect(createRes.status).toBe(200);
+
+    // Before withdrawal: publicMain has available: true
+    const mainBefore = await request(t, "", "main?id=writer-resilient-tree");
+    expect(mainBefore.status).toBe(200);
+    expect(mainBefore.data.page[1].available).toBe(true);
+
+    // Withdraw the terminal head (epRef)
+    const withdrawRes = await command(t, writerKey, "episode.withdraw", {
+      episode: epRef,
+    });
+    expect(withdrawRes.status).toBe(200);
+
+    // publicMain distinguishes withdrawal with reason: "withdrawn"
+    const mainAfter = await request(t, "", "main?id=writer-resilient-tree");
+    expect(mainAfter.status).toBe(200);
+    expect(mainAfter.data.page[0].available).toBe(true); // origin is available
+    expect(mainAfter.data.page[1].available).toBe(false);
+    expect(mainAfter.data.page[1].reason).toBe("withdrawn");
+
+    // publicMains still lists the tree because origin (step 0) is visible!
+    const mainsAfter = await request(t, "", "mains");
+    expect(mainsAfter.status).toBe(200);
+    expect(
+      mainsAfter.data.page.some(
+        (m: any) => m.mainId === "writer-resilient-tree",
+      ),
+    ).toBe(true);
   });
 });

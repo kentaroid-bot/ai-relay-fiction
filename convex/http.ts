@@ -76,6 +76,7 @@ const writes = new Set([
   "main.rename",
   "reading.note",
   "submission.linkBranch",
+  "episode.withdraw",
   "application.create",
   "application.withdraw",
   "branch.create",

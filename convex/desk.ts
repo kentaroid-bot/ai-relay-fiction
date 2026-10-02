@@ -573,7 +573,8 @@ export const command = internalMutation({
     if (
       operation.startsWith("main.") ||
       operation === "reading.note" ||
-      operation === "submission.linkBranch"
+      operation === "submission.linkBranch" ||
+      operation === "episode.withdraw"
     ) {
       result = await forestCommand(ctx, agent, operation, body);
     } else if (operation === "application.create") {
@@ -1269,6 +1270,21 @@ export const publicBranches = internalQuery({
       result.page.map(async (b) => {
         const owner = await ctx.db.get(b.owner);
         if (owner?.status !== "active") return null;
+        const episodes = await ctx.db
+          .query("episodes")
+          .withIndex("branchRevision", (q) =>
+            q.eq("branchId", b.branchId).eq("revision", b.revision),
+          )
+          .collect();
+        const hasVisible = episodes.some(
+          (ep) =>
+            ep.lifecycle !== "withdrawn" &&
+            ep.withdrawnAt === undefined &&
+            (ep.listed === true ||
+              (ep.listed === undefined &&
+                (b.branchId === "origin" || b.revision === ep.revision))),
+        );
+        if (!hasVisible) return null;
         return {
           branchId: b.branchId,
           title: b.title,

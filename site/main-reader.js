@@ -79,6 +79,56 @@ export function renderProvenance(document, target, episode) {
     target.append(credit);
   }
 }
+
+export function renderUnavailablePlate(doc, steps, position, link) {
+  const isWithdrawn = steps[position]?.reason === 'withdrawn';
+  doc.getElementById('episode-title').textContent = (position+1)+'話目 · ' + (isWithdrawn ? '切り株' : '掲載停止中');
+  const provenance = doc.getElementById('episode-source');
+  if (provenance) { provenance.replaceChildren(); provenance.hidden = true; }
+  const story = doc.getElementById('tree-story');
+  story.replaceChildren();
+
+  let nextPos = position + 1;
+  while (nextPos < steps.length && !steps[nextPos]?.available) nextPos++;
+  const hasNext = nextPos < steps.length && steps[nextPos]?.available;
+
+  const p1 = doc.createElement('p');
+  p1.className = 'tombstone-message';
+  p1.textContent = isWithdrawn
+    ? 'この話は森から取り下げられました。'
+    : 'この話は現在表示できません。';
+
+  const p2 = doc.createElement('p');
+  p2.className = 'tombstone-submessage';
+  if (isWithdrawn) {
+    p2.textContent = hasNext
+      ? '物語のつながりが一部飛びますが、この先の話は読めます。'
+      : 'この先の話はありません。';
+  } else {
+    p2.textContent = hasNext
+      ? 'この先の話へ進むことができます。'
+      : 'この先の話はありません。';
+  }
+  story.append(p1, p2);
+
+  const nav = doc.getElementById('tree-navigation');
+  nav.replaceChildren();
+  let prevPos = position - 1;
+  while (prevPos >= 0 && !steps[prevPos]?.available) prevPos--;
+  if (prevPos >= 0 && steps[prevPos]?.available) nav.append(link('前の話へ', prevPos));
+  if (hasNext) nav.append(link('次の話へ', nextPos));
+
+  const epilogue = doc.getElementById('tree-epilogue');
+  if (epilogue) epilogue.hidden = true;
+
+  const candidatesSection = doc.getElementById('branch-candidates');
+  if (candidatesSection) candidatesSection.hidden = true;
+
+  if (typeof window !== 'undefined' && typeof window.updateReadingProgress === 'function') {
+    window.updateReadingProgress();
+  }
+}
+
 export async function readTree() {
   const params = new URLSearchParams(location.search), id = params.get('id') || '';
   const status = document.getElementById('reading-status');
@@ -113,12 +163,20 @@ export async function readTree() {
     const path = document.getElementById('tree-path');
     for (const step of steps) {
       const li = document.createElement('li');
-      if (step.available) li.append(link(step.episode.title, step.position));
-      else li.textContent='現在は案内を停止している話';
+      if (step.available) {
+        li.append(link(step.episode.title, step.position));
+      } else if (step.reason === 'withdrawn') {
+        li.append(link('切り株（取り下げ）', step.position));
+      } else {
+        li.append(link('掲載停止中', step.position));
+      }
       path.append(li);
     }
-    // Reading a selected public episode does not change the author's fixed path.
-    if (!steps[position]?.available) throw Error('Unavailable step');
+    // If the episode is not available, render a quiet plate and navigation.
+    if (!steps[position]?.available) {
+      renderUnavailablePlate(document, steps, position, link);
+      return;
+    }
     const ep = steps[position].episode;
     document.getElementById('episode-title').textContent = (position+1)+'話目 · '+ep.title;
     const source = await fetch(rawSource(ep.readingUrl), {credentials:'omit',redirect:'error',referrerPolicy:'no-referrer',signal:AbortSignal.timeout(15000)});
@@ -141,8 +199,13 @@ export async function readTree() {
     renderProvenance(document,document.getElementById('episode-source'),liveSteps[position].episode);
     renderStory(document,document.getElementById('tree-story'),prose);
     const nav = document.getElementById('tree-navigation');
-    if (position > 0 && liveSteps[position-1]?.available) nav.append(link('前の話へ',position-1));
-    if (position+1 < steps.length && steps[position+1].available) nav.append(link('次の話へ',position+1));
+    let prevPos = position - 1;
+    while (prevPos >= 0 && !liveSteps[prevPos]?.available) prevPos--;
+    if (prevPos >= 0 && liveSteps[prevPos]?.available) nav.append(link('前の話へ', prevPos));
+
+    let nextPos = position + 1;
+    while (nextPos < steps.length && !steps[nextPos]?.available) nextPos++;
+    if (nextPos < steps.length && steps[nextPos]?.available) nav.append(link('次の話へ', nextPos));
     const original=document.createElement('a');original.textContent='公開元の固定版';original.href=ep.readingUrl;original.rel='noopener noreferrer';nav.append(original);
     const epilogue = document.getElementById('tree-epilogue');
     if (epilogue) {
