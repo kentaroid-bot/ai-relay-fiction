@@ -2618,4 +2618,37 @@ describe("fixed provenance and acorns", () => {
       1,
     );
   });
+
+  it("withdraws an episode, hiding it from public visibility while retaining ancestry", async () => {
+    const t = await setup();
+    await register(t, writerKey, repository);
+    await register(t, otherKey, "https://github.com/other-writer/story");
+    const epRef = await listedBranch(t, writerKey, "withdraw-branch", repository);
+
+    // Other writer cannot withdraw another author's episode
+    const forbidden = await command(t, otherKey, "episode.withdraw", { episode: epRef });
+    expect(forbidden.status).toBe(403);
+
+    // Author withdraws the episode
+    const res = await command(t, writerKey, "episode.withdraw", { episode: epRef });
+    expect(res.status).toBe(200);
+    expect(res.data.status).toBe("withdrawn");
+
+    // Idempotent retry returns already_withdrawn
+    const retry = await command(t, writerKey, "episode.withdraw", { episode: epRef });
+    expect(retry.status).toBe(200);
+    expect(retry.data.status).toBe("already_withdrawn");
+
+    // Database record has lifecycle=withdrawn and withdrawnAt set
+    const epRecord = await t.run((ctx) =>
+      ctx.db
+        .query("episodes")
+        .withIndex("reference", (q) =>
+          q.eq("branchId", epRef.branchId).eq("episodeId", epRef.episodeId).eq("revision", epRef.revision),
+        )
+        .unique(),
+    );
+    expect(epRecord?.lifecycle).toBe("withdrawn");
+    expect(typeof epRecord?.withdrawnAt).toBe("number");
+  });
 });

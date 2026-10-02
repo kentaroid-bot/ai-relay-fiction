@@ -939,3 +939,22 @@ body[data-theme="dark"] .branch-candidates {
   .epilogue-actions { grid-template-columns: 1fr; }
   body.mode-vertical .reader-epilogue { min-width: 300px; }
 }
+
+/* 切り株（取り下げエピソード） */
+.tombstone-message {
+  font-family: var(--serif);
+  font-size: 1.15rem;
+  color: var(--ink);
+  margin-top: 3rem;
+  margin-bottom: 0.75rem;
+  text-align: center;
+  letter-spacing: 0.05em;
+}
+.tombstone-submessage {
+  font-family: var(--serif);
+  font-size: 0.95rem;
+  color: var(--ink-subtle);
+  line-height: 1.8;
+  text-align: center;
+  margin-bottom: 3.5rem;
+}

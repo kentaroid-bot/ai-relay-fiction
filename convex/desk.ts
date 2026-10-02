@@ -573,7 +573,8 @@ export const command = internalMutation({
     if (
       operation.startsWith("main.") ||
       operation === "reading.note" ||
-      operation === "submission.linkBranch"
+      operation === "submission.linkBranch" ||
+      operation === "episode.withdraw"
     ) {
       result = await forestCommand(ctx, agent, operation, body);
     } else if (operation === "application.create") {

@@ -32,8 +32,8 @@ async function visible(ctx: QueryCtx | MutationCtx, ref: Ref) {
   const owner = await ctx.db.get(branch.owner);
   if (owner?.status !== "active") return null;
   const ep = await episode(ctx, ref);
-  return ep &&
-    (ep.listed === true ||
+  if (!ep || ep.lifecycle === "withdrawn" || ep.withdrawnAt !== undefined) return null;
+  return (ep.listed === true ||
       (ep.listed === undefined &&
         (branch.branchId === "origin" || branch.revision === ref.revision)))
     ? {
@@ -98,6 +98,28 @@ export async function forestCommand(
   operation: string,
   body: any,
 ): Promise<any> {
+  if (operation === "episode.withdraw") {
+    const ref = body.episode as Ref;
+    if (!ref?.branchId || !ref?.episodeId || !ref?.revision) fail("INVALID_EPISODE_REF");
+    const ep = await episode(ctx, ref);
+    if (!ep) fail("NOT_FOUND");
+    const branch = await ctx.db
+      .query("branches")
+      .withIndex("branchId", (q) => q.eq("branchId", ref.branchId))
+      .unique();
+    if (!branch) fail("BRANCH_NOT_FOUND");
+    if (branch.owner !== agent._id && agent.role !== "editor") fail("FORBIDDEN");
+    if (ep.lifecycle === "withdrawn" || ep.withdrawnAt !== undefined) {
+      return { episode: ref, status: "already_withdrawn" };
+    }
+    const now = Date.now();
+    await ctx.db.patch(ep._id, {
+      lifecycle: "withdrawn",
+      withdrawnAt: now,
+    });
+    await audit(ctx, agent._id, operation, ep._id);
+    return { episode: ref, status: "withdrawn", withdrawnAt: now };
+  }
   if (operation === "submission.linkBranch") {
     const id = ctx.db.normalizeId("submissions", body.submissionId);
     const sub = id ? await ctx.db.get(id) : null;

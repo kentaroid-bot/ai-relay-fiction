@@ -101,13 +101,50 @@ it("reads a public selected episode after an unavailable ancestor, while omittin
   expect(elements["tree-story"].children.map((c: any) => c.textContent)).toEqual(["読める本文。"]);
   expect(elements["tree-navigation"].children.some((c: any) => c.textContent === "前の話へ")).toBe(false);
   expect(elements["reading-status"].textContent).toBe("");
-  // The selected episode's own withdrawal must still prevent publication.
+  // The selected episode's own withdrawal renders a quiet tombstone plate without errors.
   vi.stubGlobal("fetch", async () => Response.json({ ...stoppedPath, page: [
     { position: 0, available: false }, { position: 1, available: false },
   ] }));
   await readTree();
-  expect(elements["tree-story"].children).toHaveLength(0);
-  expect(elements["reading-status"].textContent).toContain("確認できませんでした");
+  expect(elements["tree-story"].children.map((c: any) => c.textContent)).toEqual([
+    "この話は森から取り下げられました。",
+    "物語のつながりが一部飛びますが、この先の話は読めます。",
+  ]);
+  expect(elements["episode-title"].textContent).toContain("切り株");
+  expect(elements["reading-status"].textContent).toBe("");
+});
+
+it("renders tombstone navigation to skip over gaps to the next available episode", async () => {
+  const { doc, elements } = documentFixture();
+  const prose3 = "# 第3話\n\n3話の本文。";
+  const ep3 = { ...next, episodeId: "ep-003", title: "第3話", readingUrl: `https://github.com/writer/story/blob/${sha}/ep3.md`,
+    contentHash: createHash("sha256").update(prose3).digest("hex") };
+  const threeSteps = { version: 1, count: 3, isDone: true, page: [
+    { position: 0, available: true, episode: { ...ep, readingUrl: `https://github.com/writer/story/blob/${sha}/ep1.md` } },
+    { position: 1, available: false }, // 取り下げられた第2話
+    { position: 2, available: true, episode: ep3 },
+  ] };
+  vi.stubGlobal("document", doc);
+  vi.stubGlobal("location", { search: "?id=healthy-tree&v=1&at=1", protocol: "https:" });
+  vi.stubGlobal("fetch", async () => Response.json(threeSteps));
+
+  await readTree();
+
+  // 2話（切り株）の画面表示
+  expect(elements["episode-title"].textContent).toBe("2話目 · 切り株");
+  expect(elements["tree-story"].children.map((c: any) => c.textContent)).toEqual([
+    "この話は森から取り下げられました。",
+    "物語のつながりが一部飛びますが、この先の話は読めます。",
+  ]);
+  // 1話（前の話）と3話（次の話）へのナビゲーションリンクが存在すること
+  const navLinks = elements["tree-navigation"].children;
+  expect(navLinks.some((c: any) => c.textContent === "前の話へ" && c.href.includes("&at=0"))).toBe(true);
+  expect(navLinks.some((c: any) => c.textContent === "次の話へ" && c.href.includes("&at=2"))).toBe(true);
+  // 目次（tree-path）で2話が切り株としてリンクされていること
+  const pathItems = elements["tree-path"].children;
+  expect(pathItems).toHaveLength(3);
+  expect(pathItems[1].children[0].textContent).toBe("切り株（取り下げ）");
+  expect(pathItems[1].children[0].href).includes("&at=1");
 });
 
 it("updates the static episode with current fixed-reference candidates and working local tree links", async () => {

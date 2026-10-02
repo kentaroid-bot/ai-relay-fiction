@@ -91,6 +91,8 @@ export default defineSchema({
     parent: v.optional(v.union(parentRef, v.null())),
     sourceRef: v.optional(parentRef),
     license: v.optional(licenseValidator),
+    lifecycle: v.optional(v.string()),
+    withdrawnAt: v.optional(v.number()),
   })
     .index("reference", ["branchId", "episodeId", "revision"])
     .index("branchRevision", ["branchId", "revision"])
