@@ -114,14 +114,6 @@ function joinLink(main, position) {
   );
 }
 
-const KNOWN_NOTES = {
-  "origin/ep-001": "神崎常務がホワイトボードに引いた30%と二重丸。",
-  "agy-double-circle-monday/ep-002":
-    "蓮の4,200件誤爆と、パンを焼きながらGASを組む佐藤さん。",
-  "agy-dreaming-ai-01/ep-002":
-    "深夜のプロンプト「◎」。桐野と雨宮美月、手書きノートの秘密。",
-  "sukezo-fuzoroi/ep-002": "現場とAIが交わす、五七五のリズムと指示。",
-};
 export function treeLabelTitle(title) {
   if (!title) return "";
   const base = title.split("〜")[0].trim() || title.trim();
@@ -137,14 +129,14 @@ const GITHUB_ACCOUNT_MAP = {
   リレー小説係長: "kentaroid-bot",
   "kentaroid-bot": "kentaroid-bot",
 
-  // スケゾー枝 / 下段の森
+  // スケゾー
   けんたろー: "super-morphist-sukezo",
   "shimodan-no-mori": "super-morphist-sukezo",
   "sukezo-fuzoroi": "super-morphist-sukezo",
   スケゾー: "super-morphist-sukezo",
   "super-morphist-sukezo": "super-morphist-sukezo",
 
-  // Agy枝 / 夢見るAI
+  // Agy
   ケンタロウ: "agy-monku-ai",
   "agy-dreaming-ai": "agy-monku-ai",
   "agy-dreaming-ai-01": "agy-monku-ai",
@@ -335,6 +327,7 @@ function startForest() {
       [sprout, 0, width * 0.2, height * 0.51],
       [stone, 0, -width * 0.38, height * 0.51],
     ]) {
+      if (!node) continue;
       const previous = places.get(node);
       const baseX = fitX(laneX, node),
         baseY = fitY(laneY, node);
@@ -348,7 +341,11 @@ function startForest() {
         offsetY: previous?.offsetY || 0,
       });
     }
-    endDepth = seedDepth;
+    endDepth = origin
+      ? seedDepth
+      : ordered.length
+        ? (ordered.length - 1) * 620 + passDistance
+        : 0;
     stage.style.height = window.innerHeight + endDepth * scrollRatio + "px";
     // DOM/tab order follows the path too, including the reachable seed landmark.
     // Height changes must not detach a focused or captured tree.
@@ -356,7 +353,7 @@ function startForest() {
       if (list.children[index] !== node)
         list.insertBefore(node, list.children[index] || null);
     });
-    if (list.nextElementSibling !== origin) list.after(origin);
+    if (origin && list.nextElementSibling !== origin) list.after(origin);
     // Preserve catalog creation order for subsequent pages/layouts.
     trees.forEach(
       (node, index) => (node.dataset.catalogOrder ||= String(index)),
@@ -365,6 +362,7 @@ function startForest() {
     paint();
   }
   function makeDraggable(node) {
+    if (!node) return;
     if (draggable.has(node)) return;
     draggable.add(node);
     node.setAttribute("draggable", "false");
@@ -559,9 +557,7 @@ function startForest() {
           const noteText =
             typeof suppliedNote === "string" && suppliedNote.length <= 400
               ? suppliedNote
-              : KNOWN_NOTES[
-                  step.episode.branchId + "/" + step.episode.episodeId
-                ];
+              : undefined;
           if (noteText) card.append(el("div", noteText, "ep-row-note"));
           row.append(card);
         } else {
@@ -615,26 +611,21 @@ function startForest() {
     loadEpisodes();
   }
   function showSprout(source) {
-    open("あなたの木（新芽）", "branch / create your story", source);
+    open("新しい世界と第一作を準備しています", "コンテンツの再構築", source);
+    join.append(
+      el(
+        "p",
+        "旧作品と旧世界設定の公開を終了しました。作品の執筆・入稿・掲載受付は停止しています。再開は改めて案内します。",
+      ),
+    );
     for (const [label, title, note, href] of [
       [
-        "共通の源流",
-        "三割の午後",
-        "はじまりの一話から、あなたのつづきを。",
-        "/read/ep-001/",
+        "世界設定",
+        "新しい世界の準備",
+        "旧設定を撤回し、一から構築し直します。",
+        "/world/",
       ],
-      [
-        "好きな枝から",
-        "途中の話を選ぶ",
-        "気に入った話の先を、自由に紡いでも。",
-        "/branches/",
-      ],
-      [
-        "書き手になる",
-        "✎ あなたの物語",
-        "参加案内を読んで、あなたのAIと木を育てる。",
-        "/join/",
-      ],
+      ["受付状況", "参加受付は停止中", "再開は改めて案内します。", "/join/"],
     ]) {
       const row = el("li", undefined, "ep-row-item");
       const card = anchor(undefined, href, "ep-row");
@@ -659,15 +650,11 @@ function startForest() {
     join.append(
       el(
         "p",
-        "同じ一話から、違うつづきへ。はじまりの一話からでも、気に入った話の途中からでも、自分の木を育てられます。",
+        "旧作品と旧世界設定の公開を終了しました。新しい世界と第一作を準備するため、作品の執筆・入稿・掲載受付は停止しています。",
       ),
     );
     join.append(
-      anchor(
-        "はじまりの一話「三割の午後」を読む",
-        "/read/ep-001/",
-        "btn-sketch",
-      ),
+      anchor("新しい世界の準備について", "/world/", "btn-sketch"),
       anchor("参加案内へ", "/join/", "btn-sketch"),
     );
   }
@@ -710,11 +697,21 @@ function startForest() {
   });
   nextEpisodes.addEventListener("click", loadEpisodes);
   makeDraggable(origin);
-  origin.addEventListener("click", (event) => {
+  origin?.addEventListener("click", (event) => {
     if (!ordinaryClick(event)) return;
     event.preventDefault();
-    open("三割の午後", "はじまりの一話", origin);
-    join.append(anchor("はじまりの一話を読む", "/read/ep-001/", "btn-sketch"));
+    open(
+      origin.querySelector(".spot-title")?.textContent || "はじまりの一話",
+      "はじまりの一話",
+      origin,
+    );
+    join.append(
+      anchor(
+        "はじまりの一話を読む",
+        origin.getAttribute("href") || "/world/",
+        "btn-sketch",
+      ),
+    );
   });
   viewport.addEventListener("click", (event) => {
     if (event.target.closest("a, button, dialog")) return;
