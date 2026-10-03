@@ -278,7 +278,7 @@ function startForest() {
     const ordered = [...trees].reverse();
     field.classList.add("is-depth");
     viewport.style.setProperty("--forest-intro-height", scrollStart() + "px");
-    const height = viewport.clientHeight;
+    const height = field.clientHeight;
     field.style.setProperty(
       "--tree-art-height",
       Math.min(230, height * 0.48) + "px",
@@ -393,11 +393,11 @@ function startForest() {
       );
       const screenY = Math.max(
         Math.min(
-          viewport.clientHeight * 0.56 - 12,
-          node.offsetHeight * down.scale - viewport.clientHeight * 0.44 + 8,
+          field.clientHeight * 0.56 - 12,
+          node.offsetHeight * down.scale - field.clientHeight * 0.44 + 8,
         ),
         Math.min(
-          viewport.clientHeight * 0.56 - 12,
+          field.clientHeight * 0.56 - 12,
           down.startY * down.scale + dy,
         ),
       );
@@ -701,6 +701,7 @@ function startForest() {
     }
   });
   layoutObserver.observe(field);
+  layoutObserver.observe(viewport);
   layoutObserver.observe(document.querySelector(".forest-header"));
   const hintEl = document.getElementById("forest-hint");
   if (hintEl) {
