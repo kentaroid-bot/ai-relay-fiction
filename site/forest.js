@@ -158,7 +158,9 @@ export function treeMaintainer(maintainer, main) {
   if (main) {
     if (main.githubOwner) return main.githubOwner;
     if (main.repository) {
-      const match = String(main.repository).match(/^https?:\/\/github\.com\/([^/]+)/);
+      const match = String(main.repository).match(
+        /^https?:\/\/github\.com\/([^/]+)/,
+      );
       if (match) return match[1];
     }
     if (main.mainId && GITHUB_ACCOUNT_MAP[main.mainId]) {
@@ -174,10 +176,8 @@ export function treeMaintainer(maintainer, main) {
 function startForest() {
   const field = document.getElementById("forest-field"),
     list = document.getElementById("main-list");
-  const status = document.getElementById("main-status"),
-    more = document.getElementById("more-mains");
-  const sprout = document.getElementById("forest-sprout"),
-    arrange = document.getElementById("arrange-trees");
+  const status = document.getElementById("main-status");
+  const sprout = document.getElementById("forest-sprout");
   const panel = document.getElementById("book-panel"),
     panelTitle = document.getElementById("panel-title");
   const panelMeta = document.getElementById("panel-meta"),
@@ -188,93 +188,143 @@ function startForest() {
     join = document.getElementById("panel-join");
   let generation = 0,
     active = null,
-    opener = null,
-    z = 1;
+    opener = null;
   let cursor = null,
     started = false,
-    loading = false;
+    loading = false,
+    finished = false,
+    failed = false;
   const seen = new Set(),
     cursors = new Set(),
     draggable = new WeakSet();
 
-  function layout() {
-    const trees = [...list.querySelectorAll(".forest-tree")],
-      width = field.clientWidth;
-    if (!width) return;
-    field.classList.add("is-arranged");
-    const cols = Math.min(
-      Math.max(1, trees.length),
-      Math.max(1, Math.min(4, Math.floor(width / 210))),
+  // The native page scroll is the walk. No wheel interception or moving horizon.
+  const viewport = document.getElementById("forest-viewport");
+  const stage = document.getElementById("forest-stage");
+  const origin = document.getElementById("forest-origin");
+  const reduced = matchMedia("(prefers-reduced-motion: reduce)");
+  const places = new Map();
+  let camera = 0,
+    target = 0,
+    endDepth = 0,
+    frame = 0;
+  let restoreFocus = false;
+  const perspective = 650;
+  const scrollRatio = 0.7;
+
+  function paint() {
+    field.style.setProperty("--camera-depth", camera.toFixed(2) + "px");
+    for (const [node, place] of places) {
+      const distance = place.depth - camera;
+      const scale = perspective / (perspective + Math.max(-180, distance));
+      const visible = distance >= -180;
+      // A moved tree stays within reach as it grows nearer or the viewport narrows.
+      const half = field.clientWidth / 2;
+      const margin = Math.min(half, (node.offsetWidth * scale) / 2 + 8);
+      place.renderX =
+        Math.max(-half + margin, Math.min(half - margin, place.x * scale)) /
+        scale;
+      node.style.setProperty("--tree-x", place.renderX + "px");
+      node.style.setProperty("--tree-y", place.y + "px");
+      node.style.setProperty("--tree-z", -distance + "px");
+      node.style.opacity = visible
+        ? String(Math.max(0.38, Math.min(1, scale)))
+        : "0";
+      node.style.pointerEvents = visible ? "auto" : "none";
+      node.style.filter = distance > 1800 ? "blur(0.3px)" : "none";
+      node.style.zIndex = String(10000000 - Math.round(place.depth));
+      place.scale = scale;
+    }
+  }
+  function tick() {
+    frame = 0;
+    camera = reduced.matches ? target : camera + (target - camera) * 0.18;
+    if (Math.abs(camera - target) < 0.4) camera = target;
+    paint();
+    if (camera !== target) frame = requestAnimationFrame(tick);
+  }
+  function wake() {
+    if (!frame) frame = requestAnimationFrame(tick);
+  }
+  function scrollStart() {
+    return stage.getBoundingClientRect().top + window.scrollY;
+  }
+  function walkTo(depth) {
+    window.scrollTo({
+      top: scrollStart() + Math.max(0, Math.min(endDepth, depth)) * scrollRatio,
+      behavior: "instant",
+    });
+    syncScroll();
+  }
+  function approach(node) {
+    const place = places.get(node);
+    if (place) walkTo(place.depth);
+  }
+  function syncScroll() {
+    if (panel.open) return;
+    target = Math.max(
+      0,
+      Math.min(endDepth, (window.scrollY - scrollStart()) / scrollRatio),
     );
-    const cell = width / cols;
-    let y = 45;
-    for (let row = 0; row < trees.length; row += cols) {
-      const group = trees.slice(row, row + cols);
-      const height = Math.max(...group.map((t) => t.offsetHeight));
-      group.forEach((tree, column) => {
-        const offset = cols > 1 ? (((row + column) % 3) - 1) * 18 : 0;
-        tree.style.left =
-          clampPosition(
-            cell * (column + 0.5) - tree.offsetWidth / 2 + offset,
-            width,
-            tree.offsetWidth,
-          ) + "px";
-        tree.style.top = y + height - tree.offsetHeight + "px";
-        tree.style.zIndex = "1";
+    wake();
+  }
+  function layout() {
+    const trees = [...list.querySelectorAll(".forest-tree")].sort(
+      (a, b) => Number(a.dataset.catalogOrder) - Number(b.dataset.catalogOrder),
+    );
+    // The public catalog is in creation order. Walk newest -> oldest, then the seed.
+    const ordered = [...trees].reverse();
+    field.classList.add("is-depth");
+    const width = field.clientWidth;
+    ordered.forEach((node, index) => {
+      node.dataset.walkIndex = String(index);
+      const previous = places.get(node);
+      const lane = index % 2 === 0 ? -1 : 1;
+      places.set(node, {
+        depth: index * 620,
+        baseX: lane * width * 0.25,
+        baseY: 210,
+        x: lane * width * 0.25 + (previous?.offsetX || 0),
+        y: 210 + (previous?.offsetY || 0),
+        offsetX: previous?.offsetX || 0,
+        offsetY: previous?.offsetY || 0,
       });
-      y += height + 40;
+    });
+    const seedDepth = Math.max(1800, ordered.length * 620 + 900);
+    for (const [node, depth, baseX, baseY] of [
+      [origin, seedDepth, 0, 100],
+      [sprout, 0, width * 0.2, 255],
+      [stone, 0, -width * 0.38, 265],
+    ]) {
+      const previous = places.get(node);
+      places.set(node, {
+        depth,
+        baseX,
+        baseY,
+        x: baseX + (previous?.offsetX || 0),
+        y: baseY + (previous?.offsetY || 0),
+        offsetX: previous?.offsetX || 0,
+        offsetY: previous?.offsetY || 0,
+      });
     }
-    // 1枚の絵として手前の丘に新芽と石ころを美しく調和させる
-    if (trees.length <= 2 && trees.length <= cols) {
-      sprout.style.left =
-        clampPosition(
-          width * 0.62 - sprout.offsetWidth / 2,
-          width,
-          sprout.offsetWidth,
-        ) + "px";
-      sprout.style.top = "260px";
-      sprout.style.zIndex = "1";
-
-      const stoneNode = document.getElementById("forest-stone");
-      if (stoneNode) {
-        stoneNode.style.bottom = "auto";
-        stoneNode.style.right = "auto";
-        stoneNode.style.left =
-          clampPosition(width * 0.12, width, stoneNode.offsetWidth) + "px";
-        stoneNode.style.top = "330px";
-        stoneNode.style.zIndex = "1";
-      }
-      field.style.height = "480px";
-    } else {
-      sprout.style.left =
-        clampPosition(
-          width * 0.55 - sprout.offsetWidth / 2,
-          width,
-          sprout.offsetWidth,
-        ) + "px";
-      sprout.style.top = y + "px";
-      sprout.style.zIndex = "1";
-      field.style.height = Math.max(480, y + sprout.offsetHeight + 24) + "px";
-
-      const stoneNode = document.getElementById("forest-stone");
-      if (stoneNode) {
-        stoneNode.style.bottom = "auto";
-        stoneNode.style.right = "auto";
-        stoneNode.style.left = "36px";
-        stoneNode.style.top =
-          Math.max(0, field.clientHeight - stoneNode.offsetHeight - 24) + "px";
-        stoneNode.style.zIndex = "1";
-      }
-    }
-    z = 1;
+    endDepth = seedDepth;
+    stage.style.height = window.innerHeight + endDepth * scrollRatio + "px";
+    // DOM/tab order follows the path too, including the reachable seed landmark.
+    ordered.forEach((node) => list.append(node));
+    list.after(origin);
+    // Preserve catalog creation order for subsequent pages/layouts.
+    trees.forEach(
+      (node, index) => (node.dataset.catalogOrder ||= String(index)),
+    );
+    syncScroll();
+    paint();
   }
   function makeDraggable(node) {
     if (draggable.has(node)) return;
     draggable.add(node);
     node.setAttribute("draggable", "false");
-    node.addEventListener("dragstart", (e) => e.preventDefault());
+    node.addEventListener("dragstart", (event) => event.preventDefault());
     let down = null,
-      moved = false,
       suppressClick = false;
     node.addEventListener("pointerdown", (event) => {
       if (
@@ -286,73 +336,77 @@ function startForest() {
         event.shiftKey
       )
         return;
-      node.style.bottom = "auto";
-      node.style.right = "auto";
-      const treeRect = node.getBoundingClientRect();
-      const fieldRect = field.getBoundingClientRect();
+      const place = places.get(node);
+      if (!place) return;
       down = {
         id: event.pointerId,
         x: event.clientX,
         y: event.clientY,
-        left: treeRect.left - fieldRect.left,
-        top: treeRect.top - fieldRect.top,
+        startX: place.renderX,
+        startY: place.y,
+        scale: place.scale,
+        moved: false,
       };
-      moved = false;
       suppressClick = false;
-      node.style.zIndex = String(++z);
-      try {
-        node.setPointerCapture(event.pointerId);
-      } catch (_) {}
     });
     node.addEventListener("pointermove", (event) => {
       if (!down || down.id !== event.pointerId) return;
       const dx = event.clientX - down.x,
         dy = event.clientY - down.y;
-      if (!moved && Math.hypot(dx, dy) > 5) {
-        moved = true;
-        node.classList.add("is-dragging");
-      }
-      if (moved) {
-        node.style.left =
-          clampPosition(down.left + dx, field.clientWidth, node.offsetWidth) +
-          "px";
-        node.style.top =
-          clampPosition(down.top + dy, field.clientHeight, node.offsetHeight) +
-          "px";
-      }
+      if (!down.moved && Math.hypot(dx, dy) <= 6) return;
+      // Vertical touch gestures remain native scroll; horizontal gestures pick up a tree.
+      if (
+        !down.moved &&
+        event.pointerType === "touch" &&
+        Math.abs(dy) > Math.abs(dx)
+      )
+        return;
+      down.moved = true;
+      suppressClick = true;
+      node.setPointerCapture(event.pointerId);
+      node.classList.add("is-dragging");
+      const place = places.get(node);
+      const half = field.clientWidth / 2;
+      const margin = Math.min(half, (node.offsetWidth * down.scale) / 2 + 8);
+      const screenX = Math.max(
+        -half + margin,
+        Math.min(half - margin, down.startX * down.scale + dx),
+      );
+      const screenY = Math.max(
+        30,
+        Math.min(viewport.clientHeight * 0.53, down.startY * down.scale + dy),
+      );
+      place.x = screenX / down.scale;
+      place.y = screenY / down.scale;
+      place.offsetX = place.x - place.baseX;
+      place.offsetY = place.y - place.baseY;
+      paint();
     });
     function end(event) {
       if (!down || down.id !== event.pointerId) return;
-      try {
-        if (node.hasPointerCapture(event.pointerId))
-          node.releasePointerCapture(event.pointerId);
-      } catch (_) {}
-      suppressClick = moved;
+      suppressClick = down.moved || event.type === "pointercancel";
       down = null;
       node.classList.remove("is-dragging");
+      if (node.hasPointerCapture(event.pointerId))
+        node.releasePointerCapture(event.pointerId);
     }
     node.addEventListener("pointerup", end);
     node.addEventListener("pointercancel", end);
-    node.addEventListener("lostpointercapture", () => {
-      if (down) {
-        down = null;
-        suppressClick = moved;
-        node.classList.remove("is-dragging");
-      }
-    });
+    node.addEventListener("lostpointercapture", end);
     node.addEventListener(
       "click",
       (event) => {
-        if (suppressClick) {
+        if (suppressClick && event.detail > 0) {
           suppressClick = false;
-          if (event.detail > 0) {
-            event.preventDefault();
-            event.stopImmediatePropagation();
-          }
+          event.preventDefault();
+          event.stopImmediatePropagation();
         }
       },
       true,
     );
+    node.addEventListener("focus", () => {
+      if (!down && !restoreFocus && !panel.open) approach(node);
+    });
   }
   function open(title, meta, source) {
     generation++;
@@ -367,7 +421,9 @@ function startForest() {
     read.hidden = true;
     nextEpisodes.hidden = true;
     join.classList.remove("is-guide");
+    approach(source);
     if (!panel.open) panel.show();
+    document.getElementById("panel-close").focus({ preventScroll: true });
     return generation;
   }
   function ordinaryClick(event) {
@@ -443,11 +499,7 @@ function startForest() {
           const card = el("div", undefined, "ep-row is-disabled");
           const top = el("div", undefined, "ep-row-top");
           top.append(el("span", epLabel, "ep-row-num"));
-          const title = el(
-            "div",
-            "現在は案内を停止している話",
-            "ep-row-title",
-          );
+          const title = el("div", "現在は案内を停止している話", "ep-row-title");
           card.append(top, title);
           row.append(card);
         }
@@ -576,7 +628,10 @@ function startForest() {
   panel.addEventListener("close", () => {
     generation++;
     active = null;
-    if (opener?.isConnected) opener.focus();
+    restoreFocus = true;
+    if (opener?.isConnected) opener.focus({ preventScroll: true });
+    restoreFocus = false;
+    syncScroll();
   });
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && panel.open) {
@@ -585,14 +640,34 @@ function startForest() {
     }
   });
   nextEpisodes.addEventListener("click", loadEpisodes);
-  arrange.hidden = false;
-  arrange.addEventListener("click", layout);
+  makeDraggable(origin);
+  origin.addEventListener("click", (event) => {
+    if (!ordinaryClick(event)) return;
+    event.preventDefault();
+    open("三割の午後", "はじまりの一話", origin);
+    join.append(anchor("はじまりの一話を読む", "/read/ep-001/", "btn-sketch"));
+  });
+  viewport.addEventListener("click", (event) => {
+    if (event.target.closest("a, button, dialog")) return;
+    if (panel.open) panel.close();
+    window.scrollTo({ top: 0, behavior: "instant" });
+    syncScroll();
+  });
+  window.addEventListener("scroll", syncScroll, { passive: true });
+  reduced.addEventListener("change", () => {
+    syncScroll();
+  });
   list.querySelectorAll(".forest-tree").forEach(makeDraggable);
   layout();
-  let lastWidth = field.clientWidth;
+  let lastWidth = field.clientWidth,
+    lastHeight = viewport.clientHeight;
   new ResizeObserver(() => {
-    if (field.clientWidth !== lastWidth) {
+    if (
+      field.clientWidth !== lastWidth ||
+      viewport.clientHeight !== lastHeight
+    ) {
       lastWidth = field.clientWidth;
+      lastHeight = viewport.clientHeight;
       layout();
     }
   }).observe(field);
@@ -609,6 +684,7 @@ function startForest() {
       "forest-tree",
     );
     node.dataset.mainId = main.mainId;
+    node.dataset.catalogOrder = String(seen.size);
     node.dataset.art = treeArtwork(main.mainId);
     node.setAttribute("aria-haspopup", "dialog");
     const image = el("img", undefined, "tree-artwork");
@@ -641,7 +717,7 @@ function startForest() {
   async function loadTrees() {
     if (loading) return;
     loading = true;
-    more.disabled = true;
+
     try {
       const data = await get(
         "mains" + (cursor ? "?cursor=" + encodeURIComponent(cursor) : ""),
@@ -657,28 +733,33 @@ function startForest() {
         }
       }
       if (!started) {
+        places.clear();
         list.replaceChildren();
         started = true;
       }
       list.append(fragment);
       cursor = data.continueCursor;
       cursors.add(cursor);
-      more.hidden = data.isDone;
+      finished = data.isDone;
       status.textContent = seen.size ? "" : "木は、まだ登録されていません。";
       layout();
     } catch {
       status.textContent = started
         ? "ほかの木を読み込めませんでした。もう一度お試しください。"
         : "保存済みの木を案内しています。";
-      more.hidden = false;
-      more.textContent = "木の一覧を読み直す";
+      failed = true;
     } finally {
       loading = false;
-      more.disabled = false;
     }
   }
-  more.addEventListener("click", loadTrees);
-  loadTrees();
+  // Load sequentially without traversal buttons. A failed page never discards saved trees.
+  async function fillForest() {
+    for (let page = 0; page < 100 && !finished && !failed; page++)
+      await loadTrees();
+    if (!finished && !failed)
+      status.textContent = "森が大きいため、ここまでの木を案内しています。";
+  }
+  fillForest();
 }
 
 async function startJoinContext() {
