@@ -208,7 +208,8 @@ function startForest() {
     target = 0,
     endDepth = 0,
     frame = 0;
-  let restoreFocus = false;
+  let restoreFocus = false,
+    grabbed = null;
   const perspective = 650;
   const scrollRatio = 0.7;
   const passDistance = 580;
@@ -240,13 +241,14 @@ function startForest() {
   }
   function tick() {
     frame = 0;
+    if (grabbed) return;
     camera = reduced.matches ? target : camera + (target - camera) * 0.18;
     if (Math.abs(camera - target) < 0.4) camera = target;
     paint();
     if (camera !== target) frame = requestAnimationFrame(tick);
   }
   function wake() {
-    if (!frame) frame = requestAnimationFrame(tick);
+    if (!frame && !grabbed) frame = requestAnimationFrame(tick);
   }
   function scrollStart() {
     return stage.getBoundingClientRect().top + window.scrollY;
@@ -263,7 +265,12 @@ function startForest() {
     if (place) walkTo(place.depth);
   }
   function syncScroll() {
-    if (panel.open) return;
+    if (panel.open || grabbed) return;
+    // Expand only while the heading leaves; world positions stay fixed on the walk.
+    viewport.style.setProperty(
+      "--forest-entry-inset",
+      Math.max(0, viewport.getBoundingClientRect().top) + "px",
+    );
     target = Math.max(
       0,
       Math.min(endDepth, (window.scrollY - scrollStart()) / scrollRatio),
@@ -277,7 +284,10 @@ function startForest() {
     // The public catalog is in creation order. Walk newest -> oldest, then the seed.
     const ordered = [...trees].reverse();
     field.classList.add("is-depth");
-    viewport.style.setProperty("--forest-intro-height", scrollStart() + "px");
+    viewport.style.setProperty(
+      "--forest-entry-inset",
+      Math.max(0, viewport.getBoundingClientRect().top) + "px",
+    );
     const height = field.clientHeight;
     field.style.setProperty(
       "--tree-art-height",
@@ -298,30 +308,32 @@ function startForest() {
       const previous = places.get(node);
       const lane = index % 2 === 0 ? -1 : 1;
       const baseX = fitX(lane * width * 0.3, node);
-      const baseY = height * 0.42;
+      const baseY = fitY(height * 0.42, node);
       places.set(node, {
         depth: index * 620,
         baseX,
         baseY,
-        x: fitX(baseX + (previous?.offsetX || 0), node),
-        y: fitY(baseY + (previous?.offsetY || 0), node),
+        x: baseX + (previous?.offsetX || 0),
+        y: baseY + (previous?.offsetY || 0),
         offsetX: previous?.offsetX || 0,
         offsetY: previous?.offsetY || 0,
       });
     });
     const seedDepth = Math.max(1800, ordered.length * 620 + 900);
-    for (const [node, depth, baseX, baseY] of [
+    for (const [node, depth, laneX, laneY] of [
       [origin, seedDepth, 0, height * 0.36],
       [sprout, 0, width * 0.2, height * 0.51],
       [stone, 0, -width * 0.38, height * 0.51],
     ]) {
       const previous = places.get(node);
+      const baseX = fitX(laneX, node),
+        baseY = fitY(laneY, node);
       places.set(node, {
         depth,
         baseX,
         baseY,
-        x: fitX(baseX + (previous?.offsetX || 0), node),
-        y: fitY(baseY + (previous?.offsetY || 0), node),
+        x: baseX + (previous?.offsetX || 0),
+        y: baseY + (previous?.offsetY || 0),
         offsetX: previous?.offsetX || 0,
         offsetY: previous?.offsetY || 0,
       });
@@ -329,8 +341,12 @@ function startForest() {
     endDepth = seedDepth;
     stage.style.height = window.innerHeight + endDepth * scrollRatio + "px";
     // DOM/tab order follows the path too, including the reachable seed landmark.
-    ordered.forEach((node) => list.append(node));
-    list.after(origin);
+    // Height changes must not detach a focused or captured tree.
+    ordered.forEach((node, index) => {
+      if (list.children[index] !== node)
+        list.insertBefore(node, list.children[index] || null);
+    });
+    if (list.nextElementSibling !== origin) list.after(origin);
     // Preserve catalog creation order for subsequent pages/layouts.
     trees.forEach(
       (node, index) => (node.dataset.catalogOrder ||= String(index)),
@@ -366,6 +382,7 @@ function startForest() {
         scale: place.scale,
         moved: false,
       };
+      node.setPointerCapture(event.pointerId);
       suppressClick = false;
     });
     node.addEventListener("pointermove", (event) => {
@@ -373,36 +390,29 @@ function startForest() {
       const dx = event.clientX - down.x,
         dy = event.clientY - down.y;
       if (!down.moved && Math.hypot(dx, dy) <= 6) return;
-      // Vertical touch gestures remain native scroll; horizontal gestures pick up a tree.
-      if (
-        !down.moved &&
-        event.pointerType === "touch" &&
-        Math.abs(dy) > Math.abs(dx)
-      )
-        return;
-      down.moved = true;
+      if (!down.moved) {
+        const place = places.get(node);
+        grabbed = node;
+        if (frame) cancelAnimationFrame(frame);
+        frame = 0;
+        down.startX = place.x;
+        down.startY = place.y;
+        down.scale = place.scale;
+        down.moved = true;
+      }
       suppressClick = true;
       node.setPointerCapture(event.pointerId);
       node.classList.add("is-dragging");
       const place = places.get(node);
-      const half = field.clientWidth / 2;
-      const margin = Math.min(half, (node.offsetWidth * down.scale) / 2 + 8);
-      const screenX = Math.max(
-        -half + margin,
-        Math.min(half - margin, down.startX * down.scale + dx),
+      // Keep the grab point reachable, without squeezing a large tree into the frame.
+      const bounds = viewport.getBoundingClientRect();
+      const pointerX = Math.max(8, Math.min(window.innerWidth - 8, event.clientX));
+      const pointerY = Math.max(
+        Math.max(8, bounds.top + 8),
+        Math.min(window.innerHeight - 8, event.clientY),
       );
-      const screenY = Math.max(
-        Math.min(
-          field.clientHeight * 0.56 - 12,
-          node.offsetHeight * down.scale - field.clientHeight * 0.44 + 8,
-        ),
-        Math.min(
-          field.clientHeight * 0.56 - 12,
-          down.startY * down.scale + dy,
-        ),
-      );
-      place.x = screenX / down.scale;
-      place.y = screenY / down.scale;
+      place.x = down.startX + (pointerX - down.x) / down.scale;
+      place.y = down.startY + (pointerY - down.y) / down.scale;
       place.offsetX = place.x - place.baseX;
       place.offsetY = place.y - place.baseY;
       paint();
@@ -410,10 +420,13 @@ function startForest() {
     function end(event) {
       if (!down || down.id !== event.pointerId) return;
       suppressClick = down.moved || event.type === "pointercancel";
+      const wasGrabbed = grabbed === node;
       down = null;
+      if (wasGrabbed) grabbed = null;
       node.classList.remove("is-dragging");
       if (node.hasPointerCapture(event.pointerId))
         node.releasePointerCapture(event.pointerId);
+      if (wasGrabbed) syncScroll();
     }
     node.addEventListener("pointerup", end);
     node.addEventListener("pointercancel", end);
@@ -679,6 +692,13 @@ function startForest() {
     syncScroll();
   });
   window.addEventListener("scroll", syncScroll, { passive: true });
+  viewport.addEventListener(
+    "wheel",
+    (event) => {
+      if (grabbed) event.preventDefault();
+    },
+    { passive: false },
+  );
   reduced.addEventListener("change", () => {
     syncScroll();
   });
@@ -686,16 +706,19 @@ function startForest() {
   layout();
   document.fonts.ready.then(layout);
   let lastWidth = field.clientWidth,
-    lastHeight = viewport.clientHeight,
+    lastHeight = field.clientHeight,
+    lastViewportHeight = viewport.clientHeight,
     lastIntro = scrollStart();
   const layoutObserver = new ResizeObserver(() => {
     if (
       field.clientWidth !== lastWidth ||
-      viewport.clientHeight !== lastHeight ||
+      field.clientHeight !== lastHeight ||
+      viewport.clientHeight !== lastViewportHeight ||
       scrollStart() !== lastIntro
     ) {
       lastWidth = field.clientWidth;
-      lastHeight = viewport.clientHeight;
+      lastHeight = field.clientHeight;
+      lastViewportHeight = viewport.clientHeight;
       lastIntro = scrollStart();
       layout();
     }
