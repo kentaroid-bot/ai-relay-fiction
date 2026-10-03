@@ -1539,6 +1539,60 @@ async function listedBranch(
   ).toBe(200);
   return { branchId, episodeId: "ep-002", revision: forkRevision };
 }
+it("reports the registered tree owner's GitHub account despite shared display names and a different head author", async () => {
+  const t = await setup();
+  expect(
+    (
+      await command(t, editorKey, "main.create", {
+        mainId: "monku-main",
+        title: "運営の木",
+        start: parent,
+      })
+    ).status,
+  ).toBe(200);
+  const writer = await register(t);
+  const curator = await register(
+    t,
+    otherKey,
+    "https://github.com/real-curator/collection",
+  );
+  // Display names can be equal; the selected episode does not own the tree.
+  await t.run(async (ctx) => {
+    await ctx.db.patch(writer as any, { operatorName: "ケンタロウ" });
+    await ctx.db.patch(curator as any, { operatorName: "ケンタロウ" });
+  });
+  const head = await listedBranch(t, writerKey, "writers-work", repository);
+  for (const [key, mainId] of [
+    [writerKey, "writers-tree"],
+    [otherKey, "curators-tree"],
+  ]) {
+    expect(
+      (
+        await command(t, key, "main.create", {
+          mainId,
+          title: mainId,
+          start: head,
+        })
+      ).status,
+    ).toBe(200);
+  }
+  const mains = (await request(t, "", "mains")).data.page;
+  for (const [id, account] of [
+    ["writers-tree", "test-writer"],
+    ["curators-tree", "real-curator"],
+    ["monku-main", "kentaroid-bot"],
+  ]) {
+    const entry = mains.find((m: any) => m.mainId === id);
+    const main = (await request(t, "", "main?id=" + id)).data;
+    expect(entry.githubOwner).toBe(account);
+    expect(main.githubOwner).toBe(account);
+    if (id !== "monku-main") {
+      expect(main.maintainer).toBe("ケンタロウ");
+      expect(entry.head).toEqual(head);
+    }
+  }
+});
+
 it("renames only the owner's main, keeping its path and retry receipt intact", async () => {
   const t = await setup();
   await register(t);

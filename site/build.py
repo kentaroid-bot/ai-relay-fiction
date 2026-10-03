@@ -206,8 +206,9 @@ def render():
             return ''
         base = title.split('〜')[0].strip() or title.strip()
         return (base[:11] + '…') if len(base) > 12 else base
-    def tree_maintainer(maintainer):
-        return 'kentaroid-bot' if maintainer == 'Monku_AI' else maintainer
+    def tree_maintainer(main):
+        accounts = {'monku-main': 'kentaroid-bot', 'agy-dreaming-ai': 'agy-monku-ai'}
+        return main.get('githubOwner') or accounts.get(main['id'], main['maintainer'])
     def tree_artwork(tree_id):
         arts = ['tree_emerald.png', 'tree_blue.png', 'tree_round.png', 'tree_olive.png']
         if tree_id == 'monku-main':
@@ -220,7 +221,7 @@ def render():
         return arts[h % len(arts)]
     def render_tree_node(m):
         art_name = tree_artwork(m['id'])
-        return '<a class="forest-tree" data-main-id="'+html.escape(m['id'],quote=True)+'" title="'+html.escape(m['title'],quote=True)+'" data-art="'+art_name+'" href="./read/main/?id='+quote(m['id'])+'"><img class="tree-artwork" src="./assets/'+art_name+'" width="240" height="400" alt="" draggable="false"><span class="spot-label"><span class="spot-title">'+html.escape(tree_label_title(m['title']))+'</span><span class="spot-meta">'+html.escape(tree_maintainer(m['maintainer']))+' · '+str(len(m['path']))+' ep</span></span></a>'
+        return '<a class="forest-tree" data-main-id="'+html.escape(m['id'],quote=True)+'" title="'+html.escape(m['title'],quote=True)+'" data-art="'+art_name+'" href="./read/main/?id='+quote(m['id'])+'"><img class="tree-artwork" src="./assets/'+art_name+'" width="240" height="400" alt="" draggable="false"><span class="spot-label"><span class="spot-title">'+html.escape(tree_label_title(m['title']))+'</span><span class="spot-meta">'+html.escape(tree_maintainer(m))+' · '+str(len(m['path']))+' ep</span></span></a>'
     trees = ''.join(render_tree_node(m) for m in BRANCHES.get('mains', []))
     (DIST/'index.html').write_text((SITE/'forest-home.html').read_text().replace('{{TREES}}', trees))
     reader_bar = '''<div class="reader-bar"><div class="reader-bar-left"><a href="../../" class="btn-back-forest">← 森へ戻る</a><span class="eyebrow" id="tree-credit"></span></div><div class="reader-bar-right"><div class="tool-group" role="group" aria-label="組版方向"><button type="button" class="tool-btn active" id="btn-horizontal" aria-pressed="true">横</button><button type="button" class="tool-btn" id="btn-vertical" aria-pressed="false">縦</button></div><div class="tool-group" role="group" aria-label="文字サイズ"><button type="button" class="tool-btn" data-size="small">小</button><button type="button" class="tool-btn active" data-size="normal" aria-pressed="true">中</button><button type="button" class="tool-btn" data-size="large" aria-pressed="false">大</button></div></div></div>'''
