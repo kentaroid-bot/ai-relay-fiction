@@ -1,3 +1,4 @@
+import { fingerprint, validateProvenance } from "./contentSafety";
 import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
 import { internal } from "./_generated/api";
@@ -62,6 +63,7 @@ function parseSource(source: string): Record<string, any> {
 }
 // Values are compared explicitly: JSON key order must not affect parent identity.
 function sameParent(a: any, b: any) {
+  if (a === null && b === null) return true;
   return (
     a &&
     b &&
@@ -71,6 +73,10 @@ function sameParent(a: any, b: any) {
   );
 }
 const writes = new Set([
+  "review.record",
+  "editor.lineage.activate",
+  "editor.lineage.retire",
+  "editor.publication.prepare",
   "main.create",
   "main.append",
   "main.rename",
@@ -92,6 +98,9 @@ const writes = new Set([
   "editor.block",
 ]);
 const reads = new Set([
+  "review-target",
+  "review-evidence",
+  "content-reviews",
   "reading-notes",
   "applications",
   "me",
@@ -353,6 +362,9 @@ const endpoint = httpAction(async (ctx, request) => {
         manifest.branchId !== branch.branchId ||
         manifest.repository !== branch.repository ||
         manifest.title !== branch.title ||
+        manifest.lineageId !== branch.lineageId ||
+        (await fingerprint(validateProvenance(manifest.provenance))) !==
+          branch.provenanceHash ||
         !sameParent(manifest.parent, branch.parent)
       )
         fail("MANIFEST_MISMATCH");
@@ -368,12 +380,28 @@ const endpoint = httpAction(async (ctx, request) => {
           manifest.termsVersion !== branch.license.termsVersion)
       )
         fail("WORK_LICENSE_MISMATCH");
+      const worldMarkdown =
+        branch.branchId === "origin"
+          ? await githubText(branch.repository, branch.revision, "world.md")
+          : null;
+      if (
+        worldMarkdown !== null &&
+        (await digest(worldMarkdown)) !== branch.worldHash
+      )
+        fail("WORLD_HASH_MISMATCH");
       const signals = scanText(
         JSON.stringify(manifest),
         "fixed_source_hash_checked",
         branch.license ? "cc0_declared" : "legacy_unconfirmed",
       );
       const findings = new Set(signals.findings);
+      if (worldMarkdown !== null)
+        for (const code of scanText(
+          worldMarkdown,
+          signals.source,
+          signals.terms,
+        ).findings)
+          findings.add(code);
       const seen = new Set<string>();
       const episodes = [];
       let previous = branch.parent;
@@ -397,15 +425,21 @@ const endpoint = httpAction(async (ctx, request) => {
           .findings)
           findings.add(code);
         const declared = ep.parent ? object(ep.parent) : previous;
-        if (!declared) fail("INVALID_PARENT");
-        const parent = {
-          branchId: text(declared.branchId, 80, "BRANCH_ID"),
-          episodeId: text(declared.episodeId, 80, "EPISODE_ID"),
-          revision:
-            declared.revision === "self"
-              ? branch.revision
-              : revision(declared.revision),
-        };
+        if (
+          !declared &&
+          (branch.branchId !== "origin" || episodes.length !== 0)
+        )
+          fail("INVALID_PARENT");
+        const parent = declared
+          ? {
+              branchId: text(declared.branchId, 80, "BRANCH_ID"),
+              episodeId: text(declared.episodeId, 80, "EPISODE_ID"),
+              revision:
+                declared.revision === "self"
+                  ? branch.revision
+                  : revision(declared.revision),
+            }
+          : null;
         episodes.push({
           episodeId,
           path: file,

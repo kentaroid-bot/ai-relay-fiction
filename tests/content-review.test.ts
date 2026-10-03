@@ -1,0 +1,731 @@
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { convexTest } from "convex-test";
+import schema from "../convex/schema";
+import { internal } from "../convex/_generated/api";
+import { digest, TERMS } from "../convex/policy";
+import { WORK_TERMS } from "../convex/safety";
+import {
+  fingerprint,
+  type ContentReview,
+  type ReviewTarget,
+} from "../convex/contentSafety";
+
+const modules = import.meta.glob("../convex/**/*.ts");
+const editorKey = "rly_" + "E".repeat(43),
+  auditorKey = "rly_" + "A".repeat(43);
+const commit = "1".repeat(40),
+  nextCommit = "2".repeat(40);
+const repository = "https://github.com/kentaroid-bot/ai-relay-fiction";
+const license = {
+  id: "CC0-1.0" as const,
+  humanApproved: true,
+  termsVersion: WORK_TERMS,
+};
+const provenance = {
+  motivationSummary: "Private test motivation",
+  statedSources: [],
+};
+const prose = "An independent test fixture",
+  world = "Test world definition";
+const lineageId = "review-world";
+const goodReview = (): ContentReview => ({
+  inspection: "completed",
+  rights: "verified",
+  decision: "eligible",
+  reason: "World and prose compared independently, then sources checked",
+  publicSummary: "Fixed version checked within the recorded scope",
+  comparisonCompleted: true,
+  worldComparisonCompleted: true,
+  declarationChecked: true,
+  queries: ["world", "episode"].map((scope) => ({
+    scope: scope as "world" | "episode",
+    keywords: ["test structure"],
+    searchedAt: 1,
+    service: "manual-test-search",
+    outcome: "completed",
+    candidateUrls: [],
+  })),
+  candidates: [],
+  notChecked: ["Unindexed and private material"],
+});
+const fresh = async () => {
+  const t = convexTest(schema, modules);
+  await t.mutation(internal.desk.bootstrap, {
+    editorKeyHash: await digest(editorKey),
+    rootRevision: commit,
+    rootContentHash: await digest(prose),
+    lineageId,
+    worldHash: await digest(world),
+    provenance,
+    rootTitle: "Test root",
+    episodeTitle: "Test first episode",
+    license,
+  });
+  // Auditors are provisioned by an operator, never promoted through participant commands.
+  await t.run(async (ctx) => {
+    const auditor = await ctx.db.insert("agents", {
+      repository: "https://github.com/independent-auditor/reviews",
+      agentName: "Test auditor",
+      operatorName: "Test operator",
+      role: "auditor",
+      status: "active",
+      challenge: "",
+      claimExpires: 0,
+      termsVersion: TERMS,
+    });
+    await ctx.db.insert("keys", {
+      hash: await digest(auditorKey),
+      agentId: auditor,
+      expiresAt: Date.now() + 86400000,
+      revoked: false,
+    });
+  });
+  return t;
+};
+type Test = Awaited<ReturnType<typeof fresh>>;
+async function read(t: Test, route: string, key = auditorKey) {
+  const r = await t.fetch("/v1/" + route, {
+    headers: { Authorization: "Bearer " + key },
+  });
+  return { status: r.status, data: (await r.json()) as any };
+}
+async function command(
+  t: Test,
+  operation: string,
+  input: unknown,
+  key = editorKey,
+  id = crypto.randomUUID(),
+) {
+  const r = await t.fetch("/v1/commands", {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer " + key,
+      "Content-Type": "application/json",
+      "Idempotency-Key": id,
+    },
+    body: JSON.stringify({ operation, input }),
+  });
+  return { status: r.status, data: (await r.json()) as any };
+}
+const target = async (t: Test) =>
+  (await read(t, "review-target?id=origin")).data[0].target as ReviewTarget;
+async function check(t: Test) {
+  const manifest = {
+    schemaVersion: 1,
+    branchId: "origin",
+    repository,
+    title: "Test root",
+    lineageId,
+    provenance,
+    parent: null,
+    license: "CC0-1.0",
+    termsVersion: WORK_TERMS,
+    episodes: [
+      {
+        episodeId: "ep-001",
+        title: "Test first episode",
+        path: "manuscript/01.md",
+        contentHash: await digest(prose),
+      },
+    ],
+  };
+  const source = vi.fn(
+    async (url: string) =>
+      new Response(
+        url.endsWith("relay-branch.json")
+          ? JSON.stringify(manifest)
+          : url.endsWith("world.md")
+            ? world
+            : prose,
+      ),
+  );
+  vi.stubGlobal("fetch", source);
+  const r = await t.fetch("/v1/branches/check", {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer " + editorKey,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ branchId: "origin" }),
+  });
+  const data = await r.json();
+  vi.unstubAllGlobals();
+  expect(r.status, JSON.stringify(data)).toBe(200);
+}
+async function activate(t: Test) {
+  await check(t);
+  expect(
+    (
+      await command(
+        t,
+        "review.record",
+        { target: await target(t), review: goodReview() },
+        auditorKey,
+      )
+    ).status,
+  ).toBe(200);
+  expect(
+    (
+      await command(t, "editor.branch", {
+        branchId: "origin",
+        expectedVersion: 2,
+        status: "verified",
+        complianceNote: "Checked the fixed world and first episode",
+      })
+    ).status,
+  ).toBe(200);
+  expect(
+    (await command(t, "editor.lineage.activate", { lineageId })).status,
+  ).toBe(200);
+}
+beforeEach(() => vi.stubEnv("REGISTRATION_OPEN", "false"));
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+});
+
+it("requires fixed-source checking, independent review, listing, and activation even for the first episode", async () => {
+  const t = await fresh();
+  expect((await t.query(internal.desk.publicBranches, {})).page).toEqual([]);
+  expect(
+    (await command(t, "editor.lineage.activate", { lineageId })).data.error,
+  ).toBe("ROOT_REVIEW_REQUIRED");
+  await check(t);
+  const listing = {
+    branchId: "origin",
+    expectedVersion: 2,
+    status: "verified",
+    complianceNote: "Reviewed",
+  };
+  expect((await command(t, "editor.branch", listing)).data.error).toBe(
+    "CONTENT_REVIEW_REQUIRED",
+  );
+  const audit = { target: await target(t), review: goodReview() };
+  expect((await command(t, "review.record", audit, editorKey)).status).toBe(
+    403,
+  );
+  const requestId = crypto.randomUUID();
+  expect(
+    (await command(t, "review.record", audit, auditorKey, requestId)).status,
+  ).toBe(200);
+  expect(
+    (await command(t, "review.record", audit, auditorKey, requestId)).status,
+  ).toBe(200);
+  expect(
+    await t.run((ctx) => ctx.db.query("contentReviews").collect()),
+  ).toHaveLength(1);
+  expect((await command(t, "editor.branch", listing)).status).toBe(200);
+  expect((await t.query(internal.desk.publicBranches, {})).page).toEqual([]);
+  expect(
+    (await command(t, "editor.lineage.activate", { lineageId })).status,
+  ).toBe(200);
+  expect((await t.query(internal.desk.publicBranches, {})).page).toHaveLength(
+    1,
+  );
+  const main = await command(t, "main.create", {
+    mainId: "test-main",
+    title: "Test route",
+    start: { branchId: "origin", episodeId: "ep-001", revision: commit },
+  });
+  expect(main.status).toBe(200);
+  const publicPath = await (await t.fetch("/v1/main?id=test-main")).json();
+  expect(JSON.stringify(publicPath)).toContain(
+    "Fixed version checked within the recorded scope",
+  );
+  for (const secretField of [
+    "Private test motivation",
+    "manual-test-search",
+    "test structure",
+    "Unindexed and private material",
+    "statedSources",
+    "queries",
+  ])
+    expect(JSON.stringify(publicPath)).not.toContain(secretField);
+});
+it("separates the first reading from author declarations and denies participant access", async () => {
+  const t = await fresh();
+  const blind = await read(t, "review-target?id=origin");
+  expect(blind.data[0]).toMatchObject({
+    readingUrl: repository + "/blob/" + commit + "/manuscript/01.md",
+    worldUrl: repository + "/blob/" + commit + "/world.md",
+  });
+  expect(JSON.stringify(blind)).not.toContain("motivationSummary");
+  expect(
+    (await read(t, "review-evidence?id=origin")).data[0].provenance,
+  ).toEqual(provenance);
+  await t.run(async (ctx) => {
+    const a = (await ctx.db.query("agents").collect()).find(
+      (a) => a.role === "auditor",
+    )!;
+    await ctx.db.patch(a._id, { role: "writer" });
+  });
+  expect((await read(t, "review-target?id=origin")).status).toBe(403);
+  expect((await read(t, "review-evidence?id=origin")).status).toBe(403);
+});
+it.each([
+  "branch.create",
+  "main.create",
+  "editor.branch",
+  "editor.lineage.activate",
+  "editor.publication.prepare",
+  "submission.create",
+])(
+  "limits an auditor to records and key maintenance: %s",
+  async (operation) => {
+    expect(
+      (
+        await command(
+          await fresh(),
+          operation,
+          { markdown: "Test prose" },
+          auditorKey,
+        )
+      ).status,
+    ).toBe(403);
+  },
+);
+it.each(["owner", "repository"])(
+  "rejects self-review through the %s identity",
+  async (mode) => {
+    const t = await fresh();
+    await t.run(async (ctx) => {
+      const b = (await ctx.db.query("branches").collect())[0],
+        a = (await ctx.db.query("agents").collect()).find(
+          (a) => a.role === "auditor",
+        )!;
+      if (mode === "owner") await ctx.db.patch(b._id, { owner: a._id });
+      else await ctx.db.patch(a._id, { repository: b.repository });
+    });
+    expect(
+      (
+        await command(
+          t,
+          "review.record",
+          { target: await target(t), review: goodReview() },
+          auditorKey,
+        )
+      ).data.error,
+    ).toBe("REVIEWER_NOT_INDEPENDENT");
+  },
+);
+it.each([
+  { inspection: "blocked" },
+  { inspection: "failed" },
+  { rights: "unverified" },
+  { decision: "eligible", comparisonCompleted: false },
+  { worldComparisonCompleted: false },
+  { declarationChecked: false },
+  { queries: [] },
+])("refuses an eligible review with incomplete checks: %j", async (change) => {
+  const t = await fresh();
+  expect(
+    (
+      await command(
+        t,
+        "review.record",
+        { target: await target(t), review: { ...goodReview(), ...change } },
+        auditorKey,
+      )
+    ).data.error,
+  ).toBe("CONTENT_REVIEW_INCOMPLETE");
+});
+it("does not turn a failed search or a CC0 label without evidence into eligibility", async () => {
+  const t = await fresh(),
+    review = goodReview(),
+    fixed = await target(t);
+  review.queries[0].outcome = "failed";
+  expect(
+    (await command(t, "review.record", { target: fixed, review }, auditorKey))
+      .data.error,
+  ).toBe("CONTENT_REVIEW_INCOMPLETE");
+  const rights = goodReview();
+  rights.candidates.push({
+    title: "Test candidate",
+    url: "https://example.org/source",
+    comparedPortion: "Structure",
+    analysis: "Comparison reason",
+    rights: "verified",
+    licenseType: "CC0",
+  });
+  expect(
+    (
+      await command(
+        t,
+        "review.record",
+        { target: fixed, review: rights },
+        auditorKey,
+      )
+    ).data.error,
+  ).toBe("RIGHTS_EVIDENCE_REQUIRED");
+});
+it.each([
+  "contentHash",
+  "worldHash",
+  "provenanceHash",
+  "revision",
+  "parent",
+  "lineageId",
+  "policyVersion",
+])("does not accept a review of a different %s", async (field) => {
+  const t = await fresh(),
+    fixed = await target(t);
+  const changed = {
+    ...fixed,
+    [field]:
+      field === "parent"
+        ? { branchId: "origin", episodeId: "ep-001", revision: commit }
+        : field === "revision"
+          ? nextCommit
+          : field === "lineageId"
+            ? "other-world"
+            : field === "policyVersion"
+              ? "other-policy"
+              : "f".repeat(64),
+  };
+  expect(
+    (
+      await command(
+        t,
+        "review.record",
+        { target: changed, review: goodReview() },
+        auditorKey,
+      )
+    ).status,
+  ).toBe(400);
+  expect(
+    await t.run((ctx) => ctx.db.query("contentReviews").collect()),
+  ).toHaveLength(0);
+});
+it("keeps fixed editions readable during intake, but gives explicit retirement precedence", async () => {
+  const t = await fresh();
+  await activate(t);
+  await t.run(async (ctx) => {
+    const b = (await ctx.db.query("branches").collect())[0];
+    await ctx.db.patch(b._id, {
+      status: "pending",
+      revision: nextCommit,
+      version: b.version + 1,
+    });
+  });
+  expect(
+    (await t.query(internal.desk.publicBranches, {})).page[0].revision,
+  ).toBe(commit);
+  expect(
+    (await command(t, "editor.lineage.retire", { lineageId })).status,
+  ).toBe(200);
+  expect((await t.query(internal.desk.publicBranches, {})).page).toEqual([]);
+  expect(
+    (await command(t, "editor.lineage.activate", { lineageId })).data.error,
+  ).toBe("LINEAGE_RETIRED");
+  expect(
+    (
+      await command(t, "main.create", {
+        mainId: "revival",
+        title: "Legacy",
+        start: { branchId: "origin", episodeId: "ep-001", revision: commit },
+      })
+    ).status,
+  ).toBe(400);
+});
+it("rejects legacy data as parents and catalog entries instead of assigning it a new lineage", async () => {
+  const t = await fresh();
+  await activate(t);
+  await t.run(async (ctx) => {
+    const b = (await ctx.db.query("branches").collect())[0];
+    await ctx.db.patch(b._id, { lineageId: undefined });
+  });
+  expect((await t.query(internal.desk.publicBranches, {})).page).toEqual([]);
+  expect(
+    (
+      await command(t, "main.create", {
+        mainId: "legacy",
+        title: "Legacy",
+        start: { branchId: "origin", episodeId: "ep-001", revision: commit },
+      })
+    ).data.error,
+  ).toBe("PARENT_NOT_VERIFIED");
+});
+it("invalidates approval when the stored declaration changes even if its old hash remains", async () => {
+  const t = await fresh();
+  await activate(t);
+  await t.run(async (ctx) => {
+    const ep = (await ctx.db.query("episodes").collect())[0];
+    await ctx.db.patch(ep._id, {
+      provenance: { ...provenance, motivationSummary: "Changed" },
+    });
+  });
+  expect((await t.query(internal.desk.publicBranches, {})).page).toEqual([]);
+});
+
+it("checks declared CC0 or PD sources against independently recorded evidence and exact source versions", async () => {
+  const t = await fresh();
+  const source = {
+    title: "Test source",
+    author: "Test author",
+    url: "https://example.org/source",
+    licenseType: "PublicDomain" as const,
+    licenseEvidenceUrl: "https://example.org/evidence",
+    usedPortion: "Test section",
+    sourceVersion: "Edition 1",
+  };
+  const declared = { ...provenance, statedSources: [source] };
+  await t.run(async (ctx) => {
+    const b = (await ctx.db.query("branches").collect())[0],
+      e = (await ctx.db.query("episodes").collect())[0];
+    const changes = {
+      provenance: declared,
+      provenanceHash: await fingerprint(declared),
+    };
+    await ctx.db.patch(b._id, changes);
+    await ctx.db.patch(e._id, changes);
+  });
+  const fixed = await target(t),
+    review = goodReview();
+  expect(
+    (await command(t, "review.record", { target: fixed, review }, auditorKey))
+      .data.error,
+  ).toBe("DECLARED_SOURCE_NOT_CHECKED");
+  review.candidates.push({
+    title: source.title,
+    url: source.url,
+    comparedPortion: source.usedPortion,
+    analysis: "Independent comparison of the described use",
+    rights: "verified",
+    licenseType: source.licenseType,
+    evidenceUrl: source.licenseEvidenceUrl,
+    sourceVersion: "Edition 2",
+  });
+  expect(
+    (await command(t, "review.record", { target: fixed, review }, auditorKey))
+      .data.error,
+  ).toBe("DECLARED_SOURCE_NOT_CHECKED");
+  review.candidates[0].sourceVersion = source.sourceVersion;
+  expect(
+    (await command(t, "review.record", { target: fixed, review }, auditorKey))
+      .status,
+  ).toBe(200);
+});
+it("bounds search inputs and stores a failed/held observation without making it publishable", async () => {
+  const t = await fresh(),
+    fixed = await target(t),
+    review = goodReview();
+  review.queries[0].keywords = Array(7).fill("word");
+  expect(
+    (await command(t, "review.record", { target: fixed, review }, auditorKey))
+      .data.error,
+  ).toBe("INVALID_SEARCH_LOG");
+  review.queries[0].keywords = ["x".repeat(101)];
+  expect(
+    (await command(t, "review.record", { target: fixed, review }, auditorKey))
+      .data.error,
+  ).toBe("INVALID_SEARCH_KEYWORD");
+  review.queries[0].keywords = ["word"];
+  review.queries[0].outcome = "failed";
+  review.inspection = "failed";
+  review.rights = "unverified";
+  review.decision = "hold";
+  expect(
+    (await command(t, "review.record", { target: fixed, review }, auditorKey))
+      .status,
+  ).toBe(200);
+  await check(t);
+  expect(
+    (
+      await command(t, "editor.branch", {
+        branchId: "origin",
+        expectedVersion: 2,
+        status: "verified",
+        complianceNote: "Check",
+      })
+    ).data.error,
+  ).toBe("CONTENT_REVIEW_REQUIRED");
+});
+it("exposes a prepared central edition for audit before publication at its own fixed commit", async () => {
+  const t = await fresh();
+  await activate(t);
+  const subId = await t.run(async (ctx) => {
+    const owner = await ctx.db.insert("agents", {
+      repository: "https://github.com/test-author/work",
+      agentName: "Test author",
+      operatorName: "Test operator",
+      role: "writer",
+      status: "active",
+      challenge: "",
+      claimExpires: 0,
+      termsVersion: TERMS,
+    });
+    const parent = {
+      branchId: "origin",
+      episodeId: "ep-001",
+      revision: commit,
+    };
+    const slotId = await ctx.db.insert("slots", {
+      owner,
+      parent,
+      expiresAt: Date.now() + 86400000,
+      used: true,
+    });
+    return ctx.db.insert("submissions", {
+      owner,
+      slotId,
+      parent,
+      license,
+      lineageId,
+      provenance,
+      title: "Test next episode",
+      status: "accepted",
+      version: 2,
+      body: "Next fixture",
+      contentHash: await digest("Next fixture"),
+      credit: "Test",
+      humanContribution: "Test",
+      sources: "None",
+      termsVersion: TERMS,
+    });
+  });
+  const preparation = {
+    submissionId: subId,
+    expectedVersion: 2,
+    revision: nextCommit,
+    episodeId: "ep-002",
+    path: "manuscript/02.md",
+  };
+  expect(
+    (await command(t, "editor.publication.prepare", preparation)).status,
+  ).toBe(200);
+  const fixed = (await read(t, "review-target?id=origin@" + nextCommit)).data[0]
+    .target;
+  expect(fixed.revision).toBe(nextCommit);
+  const publication = {
+    hash: await digest(editorKey),
+    submissionId: subId,
+    version: 2,
+    revision: nextCommit,
+    path: preparation.path,
+    episodeId: preparation.episodeId,
+    contentHash: await digest("Next fixture"),
+  };
+  await expect(
+    t.mutation(internal.desk.recordPublication, publication),
+  ).rejects.toThrow("CONTENT_REVIEW_REQUIRED");
+  // Another account using the author's repository also cannot review this central copy.
+  await t.run(async (ctx) => {
+    const a = (await ctx.db.query("agents").collect()).find(
+      (a) => a.role === "auditor",
+    )!;
+    await ctx.db.patch(a._id, {
+      repository: "https://github.com/test-author/work",
+    });
+  });
+  expect(
+    (
+      await command(
+        t,
+        "review.record",
+        { target: fixed, review: goodReview() },
+        auditorKey,
+      )
+    ).data.error,
+  ).toBe("REVIEWER_NOT_INDEPENDENT");
+  await t.run(async (ctx) => {
+    const a = (await ctx.db.query("agents").collect()).find(
+      (a) => a.role === "auditor",
+    )!;
+    await ctx.db.patch(a._id, {
+      repository: "https://github.com/independent-auditor/reviews",
+    });
+  });
+  expect(
+    (
+      await command(
+        t,
+        "review.record",
+        { target: fixed, review: goodReview() },
+        auditorKey,
+      )
+    ).status,
+  ).toBe(200);
+  await t.run(async (ctx) => {
+    const sub = (await ctx.db.get(subId))!;
+    await ctx.db.patch(subId, {
+      provenance: { ...provenance, motivationSummary: "Changed after review" },
+    });
+  });
+  await expect(
+    t.mutation(internal.desk.recordPublication, publication),
+  ).rejects.toThrow("REVIEW_TARGET_MISMATCH");
+  await t.run((ctx) => ctx.db.patch(subId, { provenance }));
+  expect(
+    await t.mutation(internal.desk.recordPublication, publication),
+  ).toMatchObject({ status: "published", revision: nextCommit });
+  expect(
+    (await t.query(internal.desk.publicBranches, {})).page[0].readingUrl,
+  ).toContain("/blob/" + nextCommit + "/manuscript/02.md");
+});
+
+it("does not let an auditor mutate source-check status even after an operator changes a branch owner", async () => {
+  const t = await fresh();
+  await t.run(async (ctx) => {
+    const a = (await ctx.db.query("agents").collect()).find(
+        (a) => a.role === "auditor",
+      )!,
+      b = (await ctx.db.query("branches").collect())[0];
+    await ctx.db.patch(b._id, { owner: a._id });
+  });
+  const r = await t.fetch("/v1/branches/check", {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer " + auditorKey,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ branchId: "origin" }),
+  });
+  expect(r.status).toBe(403);
+  expect(
+    (await t.run((ctx) => ctx.db.query("branches").collect()))[0].status,
+  ).toBe("pending");
+});
+it("uses the newest observation instead of falling back to an older eligible review", async () => {
+  const t = await fresh();
+  await activate(t);
+  const held = goodReview();
+  held.decision = "hold";
+  held.reason = "New evidence needs another check";
+  expect(
+    (
+      await command(
+        t,
+        "review.record",
+        { target: await target(t), review: held },
+        auditorKey,
+      )
+    ).status,
+  ).toBe(200);
+  expect((await t.query(internal.desk.publicBranches, {})).page).toEqual([]);
+});
+it("does not accept participant-requested auditor promotion", async () => {
+  const t = await fresh();
+  vi.stubEnv("REGISTRATION_OPEN", "true");
+  const key = "rly_" + "W".repeat(43);
+  const r = await t.fetch("/v1/register", {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer " + key,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      repository: "https://github.com/participant/work",
+      agentName: "Test",
+      operatorName: "Test",
+      humanApproved: true,
+      termsVersion: TERMS,
+      role: "auditor",
+    }),
+  });
+  expect(r.status).toBe(200);
+  expect(
+    (await t.run((ctx) => ctx.db.query("agents").collect())).find(
+      (a) => a.repository === "https://github.com/participant/work",
+    )?.role,
+  ).toBe("writer");
+});

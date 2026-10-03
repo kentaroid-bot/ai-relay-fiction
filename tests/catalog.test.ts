@@ -96,7 +96,7 @@ it("retries when a branch is withdrawn during verification", async () => {
       : undefined,
   );
   await expect(verifyCatalog(fetcher)).rejects.toThrow(
-    "PUBLIC_VERSION_CHANGED",
+    /PUBLIC_VERSION_CHANGED|SITE_CATALOG_MISMATCH/,
   );
 });
 it("rejects an invisible candidate, repeated pagination cursor, and changed main version", async () => {
@@ -118,4 +118,139 @@ it("rejects an invisible candidate, repeated pagination cursor, and changed main
     ),
   ])
     await expect(verifyCatalog(fetcher)).rejects.toThrow();
+});
+
+const resetNotice =
+  "つづきの森：旧作品と旧世界設定の公開を終了しました。執筆・入稿・掲載受付は停止しています。";
+function resetFixture(
+  override?: (url: URL, count: number) => Response | undefined,
+) {
+  return fixture((url, count) => {
+    const changed = override?.(url, count);
+    if (changed) return changed;
+    if (/\/(catalog|mains)$/.test(url.pathname))
+      return Response.json({ page: [], isDone: true });
+    if (url.pathname === "/.well-known/ai-relay.json")
+      return Response.json({
+        contentStatus: "reset",
+        seedWork: null,
+        registrationOpen: false,
+      });
+    if (
+      ["/", "/world/", "/join/", "/branches/", "/read/main/"].includes(
+        url.pathname,
+      )
+    )
+      return new Response(resetNotice);
+    if (
+      [
+        "/read/ep-001/",
+        "/read/ep-002/",
+        "/texts/ep-001.md",
+        "/texts/ep-002.md",
+      ].includes(url.pathname)
+    )
+      return new Response(null, { status: 404 });
+  });
+}
+it("certifies an empty forest only with reset discovery, all five notices, and the four withdrawn routes", async () => {
+  const fetcher = resetFixture();
+  expect(await verifyCatalog(fetcher)).toMatchObject({
+    outcome: "confirmed",
+    mode: "reset",
+    branches: [],
+    mains: 0,
+  });
+  for (const route of [
+    "/world/",
+    "/join/",
+    "/read/ep-001/",
+    "/read/ep-002/",
+    "/texts/ep-001.md",
+    "/texts/ep-002.md",
+  ])
+    expect(fetcher.mock.calls.some((c) => c[0].endsWith(route))).toBe(true);
+});
+it.each(["/", "/world/", "/join/", "/branches/", "/read/main/"])(
+  "refuses empty-state certification without a stop notice at %s",
+  async (route) => {
+    await expect(
+      verifyCatalog(
+        resetFixture((url) =>
+          url.pathname === route ? new Response("つづきの森") : undefined,
+        ),
+      ),
+    ).rejects.toThrow("SITE_RESET_NOTICE_MISSING");
+  },
+);
+it.each([
+  "/read/ep-001/",
+  "/read/ep-002/",
+  "/texts/ep-001.md",
+  "/texts/ep-002.md",
+])("refuses reset while old content at %s is reachable", async (route) => {
+  await expect(
+    verifyCatalog(
+      resetFixture((url) =>
+        url.pathname === route ? new Response("old content") : undefined,
+      ),
+    ),
+  ).rejects.toThrow("WITHDRAWN_ROUTE_STILL_PUBLIC");
+});
+it.each([
+  { contentStatus: "active", seedWork: null, registrationOpen: false },
+  { contentStatus: "reset", seedWork: "old", registrationOpen: false },
+  { contentStatus: "reset", seedWork: null, registrationOpen: true },
+])("requires every discovery reset flag", async (state) => {
+  await expect(
+    verifyCatalog(
+      resetFixture((url) =>
+        url.pathname === "/.well-known/ai-relay.json"
+          ? Response.json(state)
+          : undefined,
+      ),
+    ),
+  ).rejects.toThrow("EMPTY_FOREST_NOT_DECLARED");
+});
+it.each([
+  () => new Response(null, { status: 503 }),
+  () => new Response("broken JSON"),
+  () => Response.json({ page: [], isDone: false }),
+  () => Response.json({ page: [], isDone: "true" }),
+])(
+  "does not interpret retrieval or pagination failures as an empty catalog",
+  async (response) => {
+    await expect(
+      verifyCatalog(
+        resetFixture((url) =>
+          url.pathname.endsWith("/catalog") ? response() : undefined,
+        ),
+      ),
+    ).rejects.toThrow();
+  },
+);
+it("detects a site proxy that becomes stale during the final catalog read", async () => {
+  await expect(
+    verifyCatalog(
+      resetFixture((url, count) =>
+        url.pathname === "/api/v1/catalog" && count > 1
+          ? Response.json({ page: [origin], isDone: true })
+          : undefined,
+      ),
+    ),
+  ).rejects.toThrow("SITE_CATALOG_MISMATCH");
+});
+it("detects a main published while an empty site is being checked", async () => {
+  await expect(
+    verifyCatalog(
+      resetFixture((url, count) =>
+        url.pathname.endsWith("/mains") && count > 1
+          ? Response.json({
+              page: [{ mainId: "new", version: 1 }],
+              isDone: true,
+            })
+          : undefined,
+      ),
+    ),
+  ).rejects.toThrow("PUBLIC_VERSION_CHANGED");
 });

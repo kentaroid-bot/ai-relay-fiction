@@ -24,7 +24,7 @@ export async function sourceRecord(ctx: QueryCtx | MutationCtx, ref: Ref) {
         .eq("revision", ref.revision),
     )
     .unique();
-  if (!episode || !isListedEpisode(branch, episode)) return null;
+  if (!episode || !(await isListedEpisode(ctx, branch, episode))) return null;
   return { branch, owner, episode };
 }
 
@@ -94,7 +94,7 @@ export async function preserveListedEdition(
     .take(21);
   if (episodes.length > 20) fail("CHECK_REQUIRED");
   for (const ep of episodes) {
-    if (!isListedEpisode(branch, ep)) continue;
+    if (!(await isListedEpisode(ctx, branch, ep))) continue;
     // Freeze legacy approval before changing the branch's current revision.
     await ctx.db.patch(ep._id, {
       listed: true,
