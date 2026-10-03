@@ -5,6 +5,7 @@ import { v } from "convex/values";
 import { parent, audit } from "./desk";
 import { fail, text } from "./policy";
 import { publicSource } from "./provenance";
+import { canReadListedBranch, isListedEpisode } from "./visibility";
 
 type Ref = { branchId: string; episodeId: string; revision: string };
 const same = (a: Ref | null | undefined, b: Ref) =>
@@ -28,15 +29,11 @@ async function visible(ctx: QueryCtx | MutationCtx, ref: Ref) {
     .query("branches")
     .withIndex("branchId", (q) => q.eq("branchId", ref.branchId))
     .unique();
-  if (!branch || branch.status !== "verified") return null;
+  if (!branch || !(await canReadListedBranch(ctx, branch))) return null;
   const owner = await ctx.db.get(branch.owner);
   if (owner?.status !== "active") return null;
   const ep = await episode(ctx, ref);
-  if (!ep || ep.lifecycle === "withdrawn" || ep.withdrawnAt !== undefined)
-    return null;
-  return ep.listed === true ||
-    (ep.listed === undefined &&
-      (branch.branchId === "origin" || branch.revision === ref.revision))
+  return ep && isListedEpisode(branch, ep)
     ? {
         ...ref,
         title: ep.title,
