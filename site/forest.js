@@ -211,26 +211,38 @@ function startForest() {
   let restoreFocus = false;
   const perspective = 650;
   const scrollRatio = 0.7;
+  const passDistance = 180;
+  const unit = (value) => Math.max(0, Math.min(1, value));
+  const ease = (value) => value * value * (3 - 2 * value);
 
   function paint() {
     field.style.setProperty("--camera-depth", camera.toFixed(2) + "px");
     for (const [node, place] of places) {
       const distance = place.depth - camera;
-      const scale = perspective / (perspective + Math.max(-180, distance));
-      const visible = distance >= -180;
-      // A moved tree stays within reach as it grows nearer or the viewport narrows.
+      const scale =
+        perspective / (perspective + Math.max(-passDistance, distance));
+      const passing = node === origin ? 0 : unit(-distance / passDistance);
+      const fade = 1 - ease(passing);
+      // Fit the approach, then let the tree pass outside the frame. Clamping the
+      // final screen position would pin a passing tree to the viewport edge.
       const half = field.clientWidth / 2;
-      const margin = Math.min(half, (node.offsetWidth * scale) / 2 + 8);
+      const approachScale = Math.min(1, scale);
+      const margin = Math.min(half, (node.offsetWidth * approachScale) / 2 + 8);
+      place.anchorX =
+        Math.max(
+          -half + margin,
+          Math.min(half - margin, place.x * approachScale),
+        ) / approachScale;
+      const projectedX = place.anchorX * scale;
+      const exitTravel =
+        half + (node.offsetWidth * scale) / 2 + 24 + Math.abs(projectedX);
       place.renderX =
-        Math.max(-half + margin, Math.min(half - margin, place.x * scale)) /
-        scale;
+        (projectedX + place.lane * exitTravel * ease(passing)) / scale;
       node.style.setProperty("--tree-x", place.renderX + "px");
       node.style.setProperty("--tree-y", place.y + "px");
       node.style.setProperty("--tree-z", -distance + "px");
-      node.style.opacity = visible
-        ? String(Math.max(0.38, Math.min(1, scale)))
-        : "0";
-      node.style.pointerEvents = visible ? "auto" : "none";
+      node.style.opacity = String(Math.max(0.38, Math.min(1, scale)) * fade);
+      node.style.pointerEvents = fade > 0.05 ? "auto" : "none";
       node.style.filter = distance > 1800 ? "blur(0.3px)" : "none";
       node.style.zIndex = String(10000000 - Math.round(place.depth));
       place.scale = scale;
@@ -282,6 +294,7 @@ function startForest() {
       const lane = index % 2 === 0 ? -1 : 1;
       places.set(node, {
         depth: index * 620,
+        lane: previous?.lane || lane,
         baseX: lane * width * 0.25,
         baseY: 210,
         x: lane * width * 0.25 + (previous?.offsetX || 0),
@@ -299,6 +312,7 @@ function startForest() {
       const previous = places.get(node);
       places.set(node, {
         depth,
+        lane: Math.sign(baseX),
         baseX,
         baseY,
         x: baseX + (previous?.offsetX || 0),
@@ -342,7 +356,7 @@ function startForest() {
         id: event.pointerId,
         x: event.clientX,
         y: event.clientY,
-        startX: place.renderX,
+        startX: place.anchorX,
         startY: place.y,
         scale: place.scale,
         moved: false,
@@ -367,16 +381,20 @@ function startForest() {
       node.classList.add("is-dragging");
       const place = places.get(node);
       const half = field.clientWidth / 2;
-      const margin = Math.min(half, (node.offsetWidth * down.scale) / 2 + 8);
+      const approachScale = Math.min(1, down.scale);
+      const margin = Math.min(half, (node.offsetWidth * approachScale) / 2 + 8);
       const screenX = Math.max(
         -half + margin,
-        Math.min(half - margin, down.startX * down.scale + dx),
+        Math.min(
+          half - margin,
+          down.startX * approachScale + (dx * approachScale) / down.scale,
+        ),
       );
       const screenY = Math.max(
         30,
         Math.min(viewport.clientHeight * 0.53, down.startY * down.scale + dy),
       );
-      place.x = screenX / down.scale;
+      place.x = screenX / approachScale;
       place.y = screenY / down.scale;
       place.offsetX = place.x - place.baseX;
       place.offsetY = place.y - place.baseY;
@@ -384,6 +402,10 @@ function startForest() {
     });
     function end(event) {
       if (!down || down.id !== event.pointerId) return;
+      const place = places.get(node);
+      // Choosing a new side while already passing would jump across the path.
+      if (down.moved && place.depth >= camera && node !== origin)
+        place.lane = Math.sign(place.x) || place.lane;
       suppressClick = down.moved || event.type === "pointercancel";
       down = null;
       node.classList.remove("is-dragging");
