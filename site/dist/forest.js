@@ -174,10 +174,13 @@ export function treeMaintainer(maintainer, main) {
 function startForest() {
   const field = document.getElementById("forest-field"),
     list = document.getElementById("main-list");
+  const stage = document.getElementById("forest-stage"),
+    camera = document.getElementById("forest-camera");
   const status = document.getElementById("main-status"),
     more = document.getElementById("more-mains");
   const sprout = document.getElementById("forest-sprout"),
-    arrange = document.getElementById("arrange-trees");
+    stone = document.getElementById("forest-stone");
+  const guide = document.getElementById("walkGuide");
   const panel = document.getElementById("book-panel"),
     panelTitle = document.getElementById("panel-title");
   const panelMeta = document.getElementById("panel-meta"),
@@ -186,6 +189,7 @@ function startForest() {
     nextEpisodes = document.getElementById("more-episodes");
   const read = document.getElementById("read-tree"),
     join = document.getElementById("panel-join");
+
   let generation = 0,
     active = null,
     opener = null,
@@ -197,85 +201,91 @@ function startForest() {
     cursors = new Set(),
     draggable = new WeakSet();
 
-  function layout() {
-    const trees = [...list.querySelectorAll(".forest-tree")],
-      width = field.clientWidth;
-    if (!width) return;
-    field.classList.add("is-arranged");
-    const cols = Math.min(
-      Math.max(1, trees.length),
-      Math.max(1, Math.min(4, Math.floor(width / 210))),
+  // カメラ・仮想スクロール管理
+  const MIN_Z = -50;
+  const MAX_Z = 880;
+  let targetZ = 0;
+  let currentZ = 0;
+  let targetMouseX = 0;
+  let targetMouseY = 0;
+  let currentMouseX = 0;
+  let currentMouseY = 0;
+  let isMovingToTarget = false;
+
+  function parseTranslate3d(el) {
+    const style = el.style.transform;
+    const match = style.match(
+      /translate3d\(\s*(-?[\d.]+)px\s*,\s*(-?[\d.]+)px\s*,\s*(-?[\d.]+)px\s*\)/,
     );
-    const cell = width / cols;
-    let y = 45;
-    for (let row = 0; row < trees.length; row += cols) {
-      const group = trees.slice(row, row + cols);
-      const height = Math.max(...group.map((t) => t.offsetHeight));
-      group.forEach((tree, column) => {
-        const offset = cols > 1 ? (((row + column) % 3) - 1) * 18 : 0;
-        tree.style.left =
-          clampPosition(
-            cell * (column + 0.5) - tree.offsetWidth / 2 + offset,
-            width,
-            tree.offsetWidth,
-          ) + "px";
-        tree.style.top = y + height - tree.offsetHeight + "px";
-        tree.style.zIndex = "1";
-      });
-      y += height + 40;
+    if (match) {
+      return {
+        x: parseFloat(match[1]),
+        y: parseFloat(match[2]),
+        z: parseFloat(match[3]),
+      };
     }
-    // 1枚の絵として手前の丘に新芽と石ころを美しく調和させる
-    if (trees.length <= 2 && trees.length <= cols) {
-      sprout.style.left =
-        clampPosition(
-          width * 0.62 - sprout.offsetWidth / 2,
-          width,
-          sprout.offsetWidth,
-        ) + "px";
-      sprout.style.top = "260px";
-      sprout.style.zIndex = "1";
-
-      const stoneNode = document.getElementById("forest-stone");
-      if (stoneNode) {
-        stoneNode.style.bottom = "auto";
-        stoneNode.style.right = "auto";
-        stoneNode.style.left =
-          clampPosition(width * 0.12, width, stoneNode.offsetWidth) + "px";
-        stoneNode.style.top = "330px";
-        stoneNode.style.zIndex = "1";
-      }
-      field.style.height = "480px";
-    } else {
-      sprout.style.left =
-        clampPosition(
-          width * 0.55 - sprout.offsetWidth / 2,
-          width,
-          sprout.offsetWidth,
-        ) + "px";
-      sprout.style.top = y + "px";
-      sprout.style.zIndex = "1";
-      field.style.height = Math.max(480, y + sprout.offsetHeight + 24) + "px";
-
-      const stoneNode = document.getElementById("forest-stone");
-      if (stoneNode) {
-        stoneNode.style.bottom = "auto";
-        stoneNode.style.right = "auto";
-        stoneNode.style.left = "36px";
-        stoneNode.style.top =
-          Math.max(0, field.clientHeight - stoneNode.offsetHeight - 24) + "px";
-        stoneNode.style.zIndex = "1";
-      }
-    }
-    z = 1;
+    return { x: 0, y: 0, z: 0 };
   }
+
+  // 3D空間への木の配置（手前: 最新 〜 奥: 原点）
+  function layout() {
+    const trees = [...list.querySelectorAll(".forest-tree")];
+    if (!trees.length) return;
+
+    // 最新（index 0）を手前に、古い木（末尾）を奥に配置
+    const total = trees.length;
+    trees.forEach((tree, i) => {
+      // 既に手動ドラッグされた木は再配置をスキップ
+      if (tree.dataset.manualMoved === "true") return;
+
+      let zPos, xPos, yPos, depth;
+      if (total === 1) {
+        xPos = 0;
+        yPos = 0;
+        zPos = -100;
+        depth = "near";
+      } else {
+        const ratio = i / (total - 1); // 0 (最新) 〜 1 (最奥)
+        zPos = 150 - ratio * 900; // +150px 〜 -750px
+        // 小道の蛇行に沿って左右に配分
+        const wave = Math.sin(ratio * Math.PI * 2.2);
+        xPos = (i % 2 === 0 ? -1 : 1) * (140 + Math.abs(wave) * 70);
+        if (i === total - 1) xPos = 30; // 最奥は丘の中央付近
+        yPos = 90 - ratio * 170; // 手前は下寄り(90px)、奥は丘の上(-80px)
+
+        if (zPos > 50) depth = "near";
+        else if (zPos > -300) depth = "mid-near";
+        else if (zPos > -600) depth = "mid-deep";
+        else depth = "deepest";
+      }
+
+      tree.dataset.depth = depth;
+      tree.style.transform = `translate3d(${xPos.toFixed(1)}px, ${yPos.toFixed(1)}px, ${zPos.toFixed(1)}px)`;
+      tree.style.zIndex = String(Math.round(1000 + zPos));
+    });
+
+    // スプラウト（若芽）と道標の石の配置
+    if (sprout && sprout.dataset.manualMoved !== "true") {
+      sprout.style.transform = "translate3d(240px, 130px, 120px)";
+      sprout.style.zIndex = "1120";
+    }
+    if (stone && stone.dataset.manualMoved !== "true") {
+      stone.style.transform = "translate3d(-380px, 160px, 160px)";
+      stone.style.zIndex = "1160";
+    }
+  }
+
+  // 3Dドラッグ移動（つかんで配置できるインタラクティブ機能）
   function makeDraggable(node) {
     if (draggable.has(node)) return;
     draggable.add(node);
     node.setAttribute("draggable", "false");
     node.addEventListener("dragstart", (e) => e.preventDefault());
+
     let down = null,
       moved = false,
       suppressClick = false;
+
     node.addEventListener("pointerdown", (event) => {
       if (
         !event.isPrimary ||
@@ -286,41 +296,48 @@ function startForest() {
         event.shiftKey
       )
         return;
-      node.style.bottom = "auto";
-      node.style.right = "auto";
-      const treeRect = node.getBoundingClientRect();
-      const fieldRect = field.getBoundingClientRect();
+
+      const pos = parseTranslate3d(node);
       down = {
         id: event.pointerId,
-        x: event.clientX,
-        y: event.clientY,
-        left: treeRect.left - fieldRect.left,
-        top: treeRect.top - fieldRect.top,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        initialX: pos.x,
+        initialY: pos.y,
+        initialZ: pos.z,
       };
       moved = false;
       suppressClick = false;
-      node.style.zIndex = String(++z);
+      node.style.zIndex = String(++z + 2000);
+
       try {
         node.setPointerCapture(event.pointerId);
       } catch (_) {}
     });
+
     node.addEventListener("pointermove", (event) => {
       if (!down || down.id !== event.pointerId) return;
-      const dx = event.clientX - down.x,
-        dy = event.clientY - down.y;
+      const dx = event.clientX - down.clientX;
+      const dy = event.clientY - down.clientY;
+
       if (!moved && Math.hypot(dx, dy) > 5) {
         moved = true;
         node.classList.add("is-dragging");
       }
+
       if (moved) {
-        node.style.left =
-          clampPosition(down.left + dx, field.clientWidth, node.offsetWidth) +
-          "px";
-        node.style.top =
-          clampPosition(down.top + dy, field.clientHeight, node.offsetHeight) +
-          "px";
+        // カメラの現在Zと木のZに応じたスケーリングで移動
+        const effectiveScale = Math.max(
+          0.35,
+          (800 + down.initialZ + currentZ) / 800,
+        );
+        const newX = down.initialX + dx / effectiveScale;
+        const newY = down.initialY + dy / effectiveScale;
+        node.style.transform = `translate3d(${newX.toFixed(1)}px, ${newY.toFixed(1)}px, ${down.initialZ}px)`;
+        node.dataset.manualMoved = "true";
       }
     });
+
     function end(event) {
       if (!down || down.id !== event.pointerId) return;
       try {
@@ -331,6 +348,7 @@ function startForest() {
       down = null;
       node.classList.remove("is-dragging");
     }
+
     node.addEventListener("pointerup", end);
     node.addEventListener("pointercancel", end);
     node.addEventListener("lostpointercapture", () => {
@@ -340,6 +358,7 @@ function startForest() {
         node.classList.remove("is-dragging");
       }
     });
+
     node.addEventListener(
       "click",
       (event) => {
@@ -354,6 +373,80 @@ function startForest() {
       true,
     );
   }
+
+  // 1. スクロールで小道を歩く
+  window.addEventListener(
+    "wheel",
+    (e) => {
+      if (panel.open) return;
+      const delta = e.deltaY * 0.7;
+      targetZ = Math.max(MIN_Z, Math.min(MAX_Z, targetZ + delta));
+      isMovingToTarget = false;
+      if (guide) guide.style.opacity = "0";
+    },
+    { passive: true },
+  );
+
+  // 2. スマホ・タッチスワイプ
+  let touchStartY = 0;
+  window.addEventListener(
+    "touchstart",
+    (e) => {
+      if (e.touches.length === 1) {
+        touchStartY = e.touches[0].clientY;
+      }
+    },
+    { passive: true },
+  );
+
+  window.addEventListener(
+    "touchmove",
+    (e) => {
+      if (panel.open) return;
+      if (e.touches.length === 1) {
+        const touchY = e.touches[0].clientY;
+        const delta = (touchStartY - touchY) * 1.3;
+        touchStartY = touchY;
+        targetZ = Math.max(MIN_Z, Math.min(MAX_Z, targetZ + delta));
+        isMovingToTarget = false;
+        if (guide) guide.style.opacity = "0";
+      }
+    },
+    { passive: true },
+  );
+
+  // 3. マウス微細パララックス（酔い防止：数ピクセルのみ）
+  window.addEventListener("mousemove", (e) => {
+    const x = e.clientX / window.innerWidth - 0.5;
+    const y = e.clientY / window.innerHeight - 0.5;
+    targetMouseX = x * 7;
+    targetMouseY = y * 4;
+  });
+
+  // 4. 背景タップで入り口に戻る
+  if (stage) {
+    stage.addEventListener("click", (e) => {
+      // 木やボタン以外の余白をクリックした場合
+      if (e.target === stage || e.target.classList.contains("forest-field")) {
+        targetZ = 0;
+        isMovingToTarget = true;
+      }
+    });
+  }
+
+  // アニメーションループ（慣性イージング）
+  function renderLoop() {
+    if (camera) {
+      const zEase = isMovingToTarget ? 0.08 : 0.16;
+      currentZ += (targetZ - currentZ) * zEase;
+      currentMouseX += (targetMouseX - currentMouseX) * 0.08;
+      currentMouseY += (targetMouseY - currentMouseY) * 0.08;
+
+      camera.style.transform = `translate3d(${currentMouseX.toFixed(2)}px, ${currentMouseY.toFixed(2)}px, ${currentZ.toFixed(2)}px)`;
+    }
+    requestAnimationFrame(renderLoop);
+  }
+  requestAnimationFrame(renderLoop);
   function open(title, meta, source) {
     generation++;
     active = null;
@@ -474,6 +567,11 @@ function startForest() {
     }
   }
   function showTree(main, source) {
+    if (source) {
+      const pos = parseTranslate3d(source);
+      targetZ = Math.max(MIN_Z, Math.min(MAX_Z, -pos.z - 80));
+      isMovingToTarget = true;
+    }
     const maintainerName = treeMaintainer(main.maintainer, main);
     const token = open(main.title, "compiled by " + maintainerName, source);
     panelStatus.textContent = "";
@@ -494,6 +592,11 @@ function startForest() {
     loadEpisodes();
   }
   function showSprout(source) {
+    if (source) {
+      const pos = parseTranslate3d(source);
+      targetZ = Math.max(MIN_Z, Math.min(MAX_Z, -pos.z - 80));
+      isMovingToTarget = true;
+    }
     open("あなたの木（新芽）", "branch / create your story", source);
     for (const [label, title, note, href] of [
       [
@@ -527,6 +630,11 @@ function startForest() {
     }
   }
   function showStone(source) {
+    if (source) {
+      const pos = parseTranslate3d(source);
+      targetZ = Math.max(MIN_Z, Math.min(MAX_Z, -pos.z - 80));
+      isMovingToTarget = true;
+    }
     open("この森について", "道標 / About", source);
     join.classList.add("is-guide");
     join.append(
@@ -550,7 +658,6 @@ function startForest() {
       anchor("参加案内へ", "/join/", "btn-sketch"),
     );
   }
-  const stone = document.getElementById("forest-stone");
   if (stone) {
     makeDraggable(stone);
     stone.addEventListener("click", (event) => {
@@ -585,9 +692,24 @@ function startForest() {
     }
   });
   nextEpisodes.addEventListener("click", loadEpisodes);
-  arrange.hidden = false;
-  arrange.addEventListener("click", layout);
-  list.querySelectorAll(".forest-tree").forEach(makeDraggable);
+  list.querySelectorAll(".forest-tree").forEach((tree) => {
+    makeDraggable(tree);
+    tree.addEventListener("click", (event) => {
+      if (ordinaryClick(event)) {
+        const pos = parseTranslate3d(tree);
+        targetZ = Math.max(MIN_Z, Math.min(MAX_Z, -pos.z - 80));
+        isMovingToTarget = true;
+      }
+    });
+  });
+  list.addEventListener("focusin", (event) => {
+    const tree = event.target.closest(".forest-tree");
+    if (tree) {
+      const pos = parseTranslate3d(tree);
+      targetZ = Math.max(MIN_Z, Math.min(MAX_Z, -pos.z - 80));
+      isMovingToTarget = true;
+    }
+  });
   layout();
   let lastWidth = field.clientWidth;
   new ResizeObserver(() => {
@@ -611,12 +733,14 @@ function startForest() {
     node.dataset.mainId = main.mainId;
     node.dataset.art = treeArtwork(main.mainId);
     node.setAttribute("aria-haspopup", "dialog");
+    const wrap = el("div", undefined, "tree-artwork-wrap");
     const image = el("img", undefined, "tree-artwork");
     image.src = "/assets/" + node.dataset.art;
     image.alt = "";
     image.draggable = false;
     image.width = 240;
     image.height = 400;
+    wrap.append(image);
     const label = el("span", undefined, "spot-label");
     const displayTitle = treeLabelTitle(main.title);
     label.append(
@@ -627,7 +751,7 @@ function startForest() {
         "spot-meta",
       ),
     );
-    node.append(image, label);
+    node.append(wrap, label);
     node.title = main.title;
     makeDraggable(node);
     node.addEventListener("click", (event) => {

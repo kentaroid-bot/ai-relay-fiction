@@ -160,6 +160,30 @@ h1 {
 .forest-aside {
   text-align: right;
   flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.8rem;
+}
+.walk-guide {
+  font-family: var(--serif);
+  font-size: 0.85rem;
+  color: var(--pencil);
+  letter-spacing: 0.08em;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  transition: opacity 0.6s ease;
+  pointer-events: none;
+}
+.walk-guide::after {
+  content: "↓";
+  font-size: 0.95rem;
+  animation: guide-nudge 2s infinite ease-in-out;
+}
+@keyframes guide-nudge {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(4px); }
 }
 .hommage-badge {
   font-family: var(--mono);
@@ -174,38 +198,113 @@ h1 {
   margin: 0;
   background: rgba(255, 255, 255, 0.4);
 }
-.forest-stage {
+
+/* 3Dステージ・ビューポート */
+.forest-stage.forest-viewport-3d {
   position: relative;
-  margin-top: 0.5rem;
-  padding-bottom: 28px;
-}
-.hill-lines {
-  position: absolute;
-  top: 0;
-  left: 0;
   width: 100%;
-  height: 560px;
+  height: calc(100vh - 180px);
+  min-height: 600px;
+  perspective: 800px;
+  perspective-origin: 50% 48%;
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
+}
+
+/* カメラステージ（Z軸移動と微細パララックス） */
+.forest-world-camera {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+  will-change: transform;
   pointer-events: none;
 }
+
+/* 背景の丘（手前・中景・遠景の3層レイヤー） */
+.hill-plane {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 1800px;
+  height: 800px;
+  margin-left: -900px;
+  margin-top: -240px;
+  pointer-events: none;
+  transform-style: preserve-3d;
+}
+.hill-layer {
+  position: absolute;
+  inset: 0;
+}
+.hill-layer-far {
+  transform: translate3d(0, -60px, -900px) scale(2.1);
+  opacity: 0.42;
+}
+.hill-layer-mid {
+  transform: translate3d(0, -10px, -450px) scale(1.55);
+  opacity: 0.72;
+}
+.hill-layer-near {
+  transform: translate3d(0, 45px, 60px) scale(1.05);
+  opacity: 0.95;
+}
+
+/* 小道の点線スケッチ（手前から奥へ続く路） */
+.forest-path-svg {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 1400px;
+  height: 1200px;
+  margin-left: -700px;
+  margin-top: -450px;
+  transform: translate3d(0, 100px, -450px) rotateX(68deg);
+  pointer-events: none;
+  opacity: 0.5;
+}
+
 .forest-field {
-  position: relative;
-  width: calc(100% - 48px);
-  max-width: 1180px;
-  margin: auto;
-  padding: 60px 0 28px;
-  min-height: 450px;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  pointer-events: none;
+  transform-style: preserve-3d;
 }
+
 .forest-trees {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 48px;
-  justify-items: center;
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+  pointer-events: none;
 }
+
+/* そよ風の微細な呼吸アニメーション */
+@keyframes gentle-sway {
+  0%, 100% { transform: rotate(0deg); }
+  35% { transform: rotate(0.8deg); }
+  75% { transform: rotate(-0.6deg); }
+}
+
+.tree-artwork-wrap {
+  transform-origin: 50% 95%;
+  animation: gentle-sway 8s infinite ease-in-out;
+  display: flex;
+  justify-content: center;
+}
+
 .forest-tree {
+  position: absolute;
+  left: 50%;
+  top: 50%;
   display: flex;
   flex-direction: column;
   align-items: center;
-  width: 180px;
+  width: 200px;
   padding: 0;
   color: var(--ink);
   text-decoration: none;
@@ -219,33 +318,73 @@ h1 {
   -webkit-user-drag: none;
   touch-action: none;
   border-radius: 6px;
-  transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+  transform-style: preserve-3d;
+  pointer-events: auto;
+  transition: filter 0.4s ease;
 }
-.forest-tree:hover {
-  transform: translateY(-6px);
+
+.forest-tree:nth-child(2n) .tree-artwork-wrap {
+  animation-delay: -3.5s;
+  animation-duration: 9.5s;
 }
-.forest-tree * {
-  pointer-events: none;
+.forest-tree:nth-child(3n) .tree-artwork-wrap {
+  animation-delay: -5.8s;
+  animation-duration: 11s;
 }
+
+.forest-tree:active,
+.forest-tree.is-dragging {
+  cursor: grabbing;
+  z-index: 999 !important;
+}
+
+.forest-tree:hover .tree-artwork {
+  transform: scale(1.06) translateY(-4px);
+  filter: drop-shadow(0 14px 22px rgba(44, 40, 37, 0.14));
+}
+
 .tree-artwork {
   display: block;
   width: auto;
-  height: 170px;
-  max-width: 150px;
+  height: 180px;
+  max-width: 170px;
   object-fit: contain;
   mix-blend-mode: multiply;
   pointer-events: none;
-  transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: transform 0.3s ease, filter 0.3s ease;
+  filter: drop-shadow(0 6px 12px rgba(44, 40, 37, 0.07));
 }
+
 .forest-tree[data-art="tree_blue.png"] .tree-artwork {
-  height: 155px;
+  height: 175px;
 }
 .forest-tree[data-art="tree_round.png"] .tree-artwork {
-  height: 150px;
+  height: 170px;
 }
 .forest-tree[data-art="tree_olive.png"] .tree-artwork {
-  height: 145px;
+  height: 165px;
 }
+.forest-tree[data-art="tree_emerald.png"] .tree-artwork {
+  height: 180px;
+}
+
+/* 遠近のメリハリ（深さごとの空気遠近法） */
+.forest-tree[data-depth="deepest"] {
+  filter: opacity(0.65) blur(0.4px);
+}
+.forest-tree[data-depth="deepest"]:hover {
+  filter: opacity(1) blur(0);
+}
+.forest-tree[data-depth="mid-deep"] {
+  filter: opacity(0.78);
+}
+.forest-tree[data-depth="mid-near"] {
+  filter: opacity(0.9);
+}
+.forest-tree[data-depth="near"] {
+  filter: opacity(1);
+}
+
 .spot-label {
   display: block;
   max-width: 180px;
@@ -282,18 +421,27 @@ h1 {
   box-shadow: 0 3px 10px rgba(0, 0, 0, 0.06);
 }
 .forest-sprout {
-  margin: 56px auto 0;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  margin: 0;
+  width: 160px;
+  transform-style: preserve-3d;
+  pointer-events: auto;
 }
 .forest-sprout .tree-artwork {
-  height: 65px;
+  width: 135px;
+  height: auto;
+  max-width: 140px;
 }
 .forest-sprout .spot-title {
-  font-size: 0.8rem;
+  font-size: 0.82rem;
 }
 .forest-stone-spot {
   position: absolute;
-  left: 36px;
-  bottom: auto;
+  left: 50%;
+  top: 50%;
+  margin: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -305,6 +453,8 @@ h1 {
   -webkit-user-select: none;
   -webkit-user-drag: none;
   touch-action: none;
+  transform-style: preserve-3d;
+  pointer-events: auto;
   transition: transform 0.25s ease;
   z-index: 5;
 }
@@ -319,16 +469,31 @@ h1 {
 .forest-stone-spot * {
   pointer-events: none;
 }
+.forest-stone-spot:active,
 .forest-stone-spot.is-dragging {
   cursor: grabbing;
-  transition: none !important;
-  transform: scale(1.1) translateY(-6px);
   z-index: 1000 !important;
   filter: drop-shadow(0 12px 12px rgba(60, 45, 30, 0.15));
 }
 .forest-stone-spot .stone-artwork {
-  width: 54px;
+  width: 65px;
   height: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tree-artwork-wrap {
+    animation: none !important;
+  }
+  .forest-tree,
+  .forest-sprout,
+  .forest-stone-spot,
+  .hill-layer,
+  .forest-path-svg,
+  .forest-world-camera {
+    transition: none !important;
+  }
+}
+.stone-artwork {
   mix-blend-mode: multiply;
   pointer-events: none;
 }

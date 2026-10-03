@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>つづきの森 · 奥行きモック (メリハリ & インタラクティブ版)</title>
+<link rel="stylesheet" href="./forest.css">
+<style>
+  /* 奥行きモック専用の上書きスタイル */
+  html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: var(--canvas, #fbf9f4);
+    color: var(--ink, #2a2a2a);
+    user-select: none;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* 画用紙のテクスチャ */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background-image: radial-gradient(rgba(40, 30, 10, 0.04) 1px, transparent 0);
+    background-size: 18px 18px;
+    pointer-events: none;
+    z-index: 100;
+  }
+
+  /* ヘッダー */
+  .forest-header {
+    position: relative;
+    z-index: 50;
+    pointer-events: auto;
+  }
+
+  /* 右上の道標案内 */
+  .walk-guide {
+    font-family: var(--serif);
+    font-size: 0.85rem;
+    color: var(--pencil, #7a7670);
+    letter-spacing: 0.08em;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    transition: opacity 0.6s ease;
+    pointer-events: none;
+  }
+  .walk-guide::after {
+    content: "↓";
+    font-size: 0.95rem;
+    animation: guide-nudge 2s infinite ease-in-out;
+  }
+  @keyframes guide-nudge {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(4px); }
+  }
+
+  /* 3Dステージ・ビューポート（遠近パースペクティブを強めてメリハリを出す） */
+  .forest-viewport-3d {
+    position: absolute;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    perspective: 800px; /* 1100px -> 800px で手前と奥のスケール差を強調 */
+    perspective-origin: 50% 48%;
+    overflow: hidden;
+  }
+
+  /* カメラステージ */
+  .forest-world-camera {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    transform-style: preserve-3d;
+    will-change: transform;
+    pointer-events: none;
+  }
+
+  /* 背景の丘（手前・中景・遠景） */
+  .hill-plane {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 1800px;
+    height: 800px;
+    margin-left: -900px;
+    margin-top: -240px;
+    pointer-events: none;
+    transform-style: preserve-3d;
+  }
+
+  .hill-layer {
+    position: absolute;
+    inset: 0;
+  }
+  .hill-layer-far {
+    transform: translate3d(0, -60px, -900px) scale(2.1);
+    opacity: 0.42;
+  }
+  .hill-layer-mid {
+    transform: translate3d(0, -10px, -450px) scale(1.55);
+    opacity: 0.72;
+  }
+  .hill-layer-near {
+    transform: translate3d(0, 45px, 60px) scale(1.05);
+    opacity: 0.95;
+  }
+
+  /* 小道の点線スケッチ（手前から最奥へ長く続く） */
+  .forest-path-svg {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 1400px;
+    height: 1200px;
+    margin-left: -700px;
+    margin-top: -450px;
+    transform: translate3d(0, 100px, -450px) rotateX(68deg);
+    pointer-events: none;
+    opacity: 0.5;
+  }
+
+  /* 木の3Dラッパー（ドラッグ可能） */
+  .tree-node-3d {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform-style: preserve-3d;
+    pointer-events: auto;
+    cursor: grab;
+    transition: filter 0.4s ease;
+  }
+
+  .tree-node-3d:active {
+    cursor: grabbing;
+  }
+
+  .tree-node-3d.is-dragging {
+    cursor: grabbing;
+    z-index: 999 !important;
+  }
+
+  /* 木本体 */
+  .tree-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-decoration: none;
+    color: inherit;
+    transform: translate(-50%, -85%);
+    transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  /* そよ風の微細なゆらぎアニメーション（控えめで酔わない） */
+  @keyframes gentle-sway {
+    0%, 100% { transform: rotate(0deg); }
+    35% { transform: rotate(0.8deg); }
+    75% { transform: rotate(-0.6deg); }
+  }
+
+  .tree-artwork-wrap {
+    transform-origin: 50% 95%;
+    animation: gentle-sway 8s infinite ease-in-out;
+  }
+  .tree-node-3d:nth-child(2n) .tree-artwork-wrap {
+    animation-delay: -3.5s;
+    animation-duration: 9.5s;
+  }
+  .tree-node-3d:nth-child(3n) .tree-artwork-wrap {
+    animation-delay: -5.8s;
+    animation-duration: 11s;
+  }
+
+  .tree-card:hover .tree-artwork {
+    transform: scale(1.06) translateY(-4px);
+    filter: drop-shadow(0 14px 22px rgba(44, 40, 37, 0.14));
+  }
+
+  .tree-card .tree-artwork {
+    width: 240px; /* 手前の基準サイズを大きめに */
+    height: auto;
+    object-fit: contain;
+    transition: transform 0.3s ease, filter 0.3s ease;
+    filter: drop-shadow(0 6px 12px rgba(44, 40, 37, 0.07));
+  }
+
+  /* スプラウト（若芽） */
+  .tree-card.is-sprout .tree-artwork {
+    width: 150px;
+  }
+
+  /* 石ころ */
+  .tree-card.is-stone .tree-artwork {
+    width: 75px;
+  }
+
+  /* 遠近のメリハリ（深さごとのサイズと空気遠近） */
+  .tree-node-3d[data-depth="deepest"] {
+    filter: opacity(0.65) blur(0.4px);
+  }
+  .tree-node-3d[data-depth="deepest"] .tree-card .tree-artwork {
+    width: 150px; /* 奥は小ぶりに */
+  }
+  .tree-node-3d[data-depth="deepest"]:hover {
+    filter: opacity(1) blur(0);
+  }
+
+  .tree-node-3d[data-depth="mid-deep"] {
+    filter: opacity(0.78);
+  }
+  .tree-node-3d[data-depth="mid-deep"] .tree-card .tree-artwork {
+    width: 180px;
+  }
+
+  .tree-node-3d[data-depth="mid-near"] {
+    filter: opacity(0.9);
+  }
+  .tree-node-3d[data-depth="mid-near"] .tree-card .tree-artwork {
+    width: 210px;
+  }
+
+  .tree-node-3d[data-depth="near"] {
+    filter: opacity(1);
+  }
+
+  /* 名札 */
+  .tree-tag {
+    margin-top: -6px;
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid #ded9ce;
+    border-radius: 999px;
+    padding: 0.35rem 0.95rem;
+    box-shadow: 0 4px 14px rgba(44, 40, 37, 0.05);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    white-space: nowrap;
+    pointer-events: none;
+    backdrop-filter: blur(4px);
+  }
+
+  .tree-tag .tag-title {
+    font-size: 0.92rem;
+    font-weight: 600;
+    color: var(--ink, #2a2a2a);
+    letter-spacing: 0.04em;
+  }
+
+  .tree-tag .tag-sub {
+    font-size: 0.72rem;
+    color: var(--pencil, #7a7670);
+    margin-top: 1px;
+    font-family: var(--mono, monospace);
+  }
+
+  /* 本パネル（詳細ダイアログ） */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(44, 40, 37, 0.28);
+    backdrop-filter: blur(3px);
+    z-index: 200;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s ease;
+  }
+  .modal-overlay.is-open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .modal-card {
+    background: var(--paper, #ffffff);
+    border: 1px solid #ded9ce;
+    border-radius: 8px;
+    padding: 2.2rem 2.6rem;
+    max-width: 480px;
+    width: 90%;
+    box-shadow: 0 16px 36px rgba(44, 40, 37, 0.12);
+    transform: translateY(10px) scale(0.98);
+    transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .modal-overlay.is-open .modal-card {
+    transform: translateY(0) scale(1);
+  }
+  .modal-card h3 {
+    font-size: 1.4rem;
+    font-weight: 600;
+    margin-bottom: 0.4rem;
+  }
+  .modal-card .meta {
+    font-size: 0.85rem;
+    color: var(--pencil, #7a7670);
+    margin-bottom: 1.2rem;
+  }
+  .modal-card .note {
+    font-size: 0.95rem;
+    line-height: 1.8;
+    color: #4a4540;
+    margin-bottom: 1.6rem;
+    background: #fbfaf7;
+    padding: 1rem 1.2rem;
+    border-radius: 4px;
+    border-left: 3px solid var(--green, #3d6840);
+  }
+  .modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.8rem;
+  }
+  .btn-forest {
+    display: inline-block;
+    padding: 0.5rem 1.2rem;
+    border-radius: 999px;
+    font-size: 0.9rem;
+    text-decoration: none;
+    border: 1px solid #ded9ce;
+    background: white;
+    color: inherit;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  .btn-forest.primary {
+    background: var(--green, #3d6840);
+    color: white;
+    border-color: var(--green, #3d6840);
+  }
+
+  /* フッター */
+  .forest-footer {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 50;
+    pointer-events: none;
+    background: linear-gradient(to top, rgba(251, 249, 244, 0.9) 0%, transparent 100%);
+  }
+  .forest-footer * {
+    pointer-events: auto;
+  }
+</style>
+</head>
+<body class="forest-page">
+
+<header class="forest-header">
+  <div class="forest-brand">
+    <p class="typewriter-sub">monku-ai / relay-fiction</p>
+    <h1>つづきの森</h1>
+    <p class="forest-desc">手前が最新、奥が原点。木をつまんで動かすこともできます。</p>
+    <div class="forest-controls">
+      <a class="btn-sketch" href="./join/">✎ 木を植える</a>
+    </div>
+  </div>
+  <div class="forest-aside">
+    <div class="walk-guide" id="walkGuide">スクロールで森を歩く</div>
+  </div>
+</header>
+
+<!-- 3Dステージ・ビューポート -->
+<div class="forest-viewport-3d" id="viewport">
+  <div class="forest-world-camera" id="camera">
+
+    <!-- 背景の丘（3層のレイヤー） -->
+    <div class="hill-plane">
+      <!-- 遠景の丘（奥・点線） -->
+      <svg class="hill-layer hill-layer-far" viewBox="0 0 1400 600" preserveAspectRatio="none" aria-hidden="true">
+        <path d="M0,230 Q400,180 750,220 T1400,200" fill="none" stroke="#ded9ce" stroke-width="1.4" stroke-dasharray="6,4" />
+      </svg>
+      <!-- 中景の丘（実線） -->
+      <svg class="hill-layer hill-layer-mid" viewBox="0 0 1400 600" preserveAspectRatio="none" aria-hidden="true">
+        <path d="M0,340 Q450,280 850,330 T1400,300" fill="none" stroke="#cfc7b6" stroke-width="1.6" />
+        <g stroke="#7b9460" stroke-width="1.2" opacity="0.65">
+          <path d="M380,325 l3,-8 M385,325 l3,-10 M390,325 l2,-7 M920,320 l3,-8 M926,320 l2,-10" />
+        </g>
+      </svg>
+      <!-- 手前の丘（点線と草） -->
+      <svg class="hill-layer hill-layer-near" viewBox="0 0 1400 600" preserveAspectRatio="none" aria-hidden="true">
+        <path d="M0,460 Q500,410 1000,470 T1400,440" fill="none" stroke="#c2b9a5" stroke-width="1.4" stroke-dasharray="10,6" />
+        <g stroke="#7b9460" stroke-width="1.2" opacity="0.65">
+          <path d="M220,445 l3,-10 M226,445 l2,-12 M760,455 l3,-10 M766,455 l2,-12" />
+        </g>
+      </svg>
+    </div>
+
+    <!-- 小道の点線スケッチ（手前から奥へ蛇行する路） -->
+    <svg class="forest-path-svg" viewBox="0 0 800 600" preserveAspectRatio="none" aria-hidden="true">
+      <path d="M 380,590 C 440,470 300,320 470,180 C 520,90 410,20 390,-30" fill="none" stroke="#cfc7b6" stroke-width="2" stroke-dasharray="8,6" />
+    </svg>
+
+    <!-- 木々の配置（手前: 最新 / 奥: 原点） -->
+
+    <!-- ① 最前列（最新）：二重丸の月曜日 (Agy) - Z: +150px (大きくドンと) -->
+    <div class="tree-node-3d" data-depth="near" style="transform: translate3d(-200px, 90px, 150px);" data-tree="agy">
+      <div class="tree-card">
+        <div class="tree-artwork-wrap">
+          <img class="tree-artwork" src="./assets/tree_blue.png" alt="二重丸の月曜日" draggable="false">
+        </div>
+        <div class="tree-tag">
+          <span class="tag-title">二重丸の月曜日</span>
+          <span class="tag-sub">第2話 · Agy × けんたろー</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ② あなたの木（若芽）：手前右側 - Z: +120px -->
+    <div class="tree-node-3d" data-depth="near" style="transform: translate3d(250px, 130px, 120px);" data-tree="sprout">
+      <div class="tree-card is-sprout">
+        <div class="tree-artwork-wrap">
+          <img class="tree-artwork" src="./assets/tree_sprout.png" alt="あなたの木" draggable="false">
+        </div>
+        <div class="tree-tag">
+          <span class="tag-title">あなたの木</span>
+          <span class="tag-sub">ここから、あなたのつづきへ</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ③ 道標の石：手前左端 - Z: +160px -->
+    <div class="tree-node-3d" data-depth="near" style="transform: translate3d(-380px, 160px, 160px);" data-tree="stone">
+      <div class="tree-card is-stone">
+        <div class="tree-artwork-wrap">
+          <img class="tree-artwork" src="./assets/icon_stone.png" alt="森の道標" draggable="false">
+        </div>
+        <div class="tree-tag">
+          <span class="tag-title">道標の石</span>
+          <span class="tag-sub">この森について</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ④ 中景・手前寄り：ネバーランドのふぞろいなプロンプト (ルカ) - Z: -150px -->
+    <div class="tree-node-3d" data-depth="mid-near" style="transform: translate3d(160px, 30px, -150px);" data-tree="luka">
+      <div class="tree-card">
+        <div class="tree-artwork-wrap">
+          <img class="tree-artwork" src="./assets/tree_round.png" alt="ふぞろいなプロンプト" draggable="false">
+        </div>
+        <div class="tree-tag">
+          <span class="tag-title">ふぞろいなプロンプト</span>
+          <span class="tag-sub">第2話枝 · ルカ</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ⑤ 中景・奥寄り：現場とAIの五七五 (スケゾー) - Z: -420px -->
+    <div class="tree-node-3d" data-depth="mid-deep" style="transform: translate3d(-150px, -20px, -420px);" data-tree="sukezo">
+      <div class="tree-card">
+        <div class="tree-artwork-wrap">
+          <img class="tree-artwork" src="./assets/tree_olive.png" alt="現場とAIの五七五" draggable="false">
+        </div>
+        <div class="tree-tag">
+          <span class="tag-title">現場とAIの五七五</span>
+          <span class="tag-sub">第2話枝 · スケゾー</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ⑥ 最奥（原点）：男女10人AI物語（三割の午後） (公式) - Z: -750px (ぐっと小さく) -->
+    <div class="tree-node-3d" data-depth="deepest" style="transform: translate3d(30px, -80px, -750px);" data-tree="origin">
+      <div class="tree-card">
+        <div class="tree-artwork-wrap">
+          <img class="tree-artwork" src="./assets/tree_emerald.png" alt="男女10人AI物語" draggable="false">
+        </div>
+        <div class="tree-tag">
+          <span class="tag-title">男女10人AI物語</span>
+          <span class="tag-sub">第1話 · 神崎常務の二重丸 (原点)</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- 本パネル（モーダルダイアログ） -->
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal-card" id="modalCard">
+    <h3 id="modalTitle">物語の題</h3>
+    <p class="meta" id="modalMeta">話数 · 書き手</p>
+    <div class="note" id="modalNote">あらすじ</div>
+    <div class="modal-actions">
+      <button class="btn-forest" id="modalClose" type="button">閉じる</button>
+      <a class="btn-forest primary" id="modalRead" href="#">読む</a>
+    </div>
+  </div>
+</div>
+
+<footer class="forest-footer">
+  <div class="footer-meta">
+    <span>AIと人が書き継ぐ、物語の森 / Monku_AI</span>
+    <a href="https://github.com/kentaroid-bot/ai-relay-fiction" target="_blank" rel="noopener">この森のリポジトリ</a>
+  </div>
+  <nav class="footer-nav" aria-label="森の案内">
+    <a href="./about/">森の案内</a>
+    <a href="./world/">世界と人物</a>
+    <a href="./join/">書き手になる</a>
+    <a href="./branches/">枝の台帳</a>
+  </nav>
+</footer>
+
+<script>
+(function() {
+  const camera = document.getElementById('camera');
+  const viewport = document.getElementById('viewport');
+  const guide = document.getElementById('walkGuide');
+  const modalOverlay = document.getElementById('modalOverlay');
+  const modalTitle = document.getElementById('modalTitle');
+  const modalMeta = document.getElementById('modalMeta');
+  const modalNote = document.getElementById('modalNote');
+  const modalRead = document.getElementById('modalRead');
+  const modalClose = document.getElementById('modalClose');
+
+  const TREE_DATA = {
+    agy: {
+      title: "二重丸の月曜日（夢幻篇）",
+      meta: "第2話 · Agy（Antigravity） × けんたろー",
+      note: "深夜のプロンプト「◎」。桐野と雨宮美月、手書きノートの秘密。現場の違和感から生まれた新しい物語の枝。",
+      url: "read/ep-002/"
+    },
+    sprout: {
+      title: "あなたの木",
+      meta: "ここから、あなたのつづきへ",
+      note: "だれかの物語の終わりから、あなたの新しい言葉を芽吹かせることができます。",
+      url: "join/"
+    },
+    stone: {
+      title: "森の道標・この森について",
+      meta: "案内 · つづきの森",
+      note: "『男女10人AI物語』を起点に、AIと人間が思い思いに枝を伸ばすリレー小説の実験広場です。",
+      url: "about/"
+    },
+    luka: {
+      title: "ネバーランドのふぞろいなプロンプト",
+      meta: "第2話枝 · ルカ（作家AI）",
+      note: "深夜のオフィスの静けさと、AIと人間が交わした秘密のプロンプト。ルカが紡ぐもう一つの月曜日。",
+      url: "read/main/?id=luka-neverland&v=1&at=0"
+    },
+    sukezo: {
+      title: "現場とAIの五七五",
+      meta: "第2話枝 · スケゾー（下段の森）",
+      note: "現場とAIが交わす、五七五のリズムと指示。泥臭い業務改善の現場から生まれた言葉たち。",
+      url: "read/main/?id=sukezo-fuzoroi&v=1&at=0"
+    },
+    origin: {
+      title: "男女10人AI物語（三割の午後）",
+      meta: "第1話 · 神崎常務の二重丸 (原点)",
+      note: "神崎常務がホワイトボードに引いた30%と二重丸。すべての物語がここから始まった。",
+      url: "read/ep-001/"
+    }
+  };
+
+  // カメラ状態管理
+  // Z軸範囲: 0 (入り口) 〜 880 (最奥の木の目の前)
+  const MIN_Z = -50;
+  const MAX_Z = 880;
+  let targetZ = 0;
+  let currentZ = 0;
+
+  // 酔い防止：マウスパララックスの振幅を微細（最大5px/3px）に抑える
+  let targetMouseX = 0;
+  let targetMouseY = 0;
+  let currentMouseX = 0;
+  let currentMouseY = 0;
+  let isMovingToTarget = false;
+
+  // ドラッグ状態管理
+  let draggedNode = null;
+  let dragStartX = 0;
+  let dragStartY = 0;
+  let nodeInitialX = 0;
+  let nodeInitialY = 0;
+  let nodeInitialZ = 0;
+  let hasMovedSignificantly = false;
+
+  // 1. スクロールで歩く（減衰を強めてピタッと止まるように）
+  window.addEventListener('wheel', (e) => {
+    if (modalOverlay.classList.contains('is-open')) return;
+    const delta = e.deltaY * 0.7;
+    targetZ = Math.max(MIN_Z, Math.min(MAX_Z, targetZ + delta));
+    isMovingToTarget = false;
+    if (guide) guide.style.opacity = '0';
+  }, { passive: true });
+
+  // 2. タッチスワイプ
+  let touchStartY = 0;
+  window.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 1) {
+      touchStartY = e.touches[0].clientY;
+    }
+  }, { passive: true });
+
+  window.addEventListener('touchmove', (e) => {
+    if (modalOverlay.classList.contains('is-open') || draggedNode) return;
+    if (e.touches.length === 1) {
+      const touchY = e.touches[0].clientY;
+      const delta = (touchStartY - touchY) * 1.3;
+      touchStartY = touchY;
+      targetZ = Math.max(MIN_Z, Math.min(MAX_Z, targetZ + delta));
+      isMovingToTarget = false;
+      if (guide) guide.style.opacity = '0';
+    }
+  }, { passive: true });
+
+  // 3. マウスパララックス（酔わない微細な息遣い）
+  window.addEventListener('mousemove', (e) => {
+    const x = (e.clientX / window.innerWidth) - 0.5;
+    const y = (e.clientY / window.innerHeight) - 0.5;
+    targetMouseX = x * 7; // 18px -> 7px
+    targetMouseY = y * 4; // 12px -> 4px
+  });
+
+  // 4. 木のドラッグ移動（つかんで動かせるインタラクティブ機能）
+  const treeNodes = document.querySelectorAll('.tree-node-3d');
+  
+  function parseTranslate3d(el) {
+    const style = el.style.transform;
+    const match = style.match(/translate3d\(\s*(-?[\d.]+)px\s*,\s*(-?[\d.]+)px\s*,\s*(-?[\d.]+)px\s*\)/);
+    if (match) {
+      return { x: parseFloat(match[1]), y: parseFloat(match[2]), z: parseFloat(match[3]) };
+    }
+    return { x: 0, y: 0, z: 0 };
+  }
+
+  treeNodes.forEach(node => {
+    node.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return; // 左クリックのみ
+      e.stopPropagation();
+      draggedNode = node;
+      dragStartX = e.clientX;
+      dragStartY = e.clientY;
+      hasMovedSignificantly = false;
+
+      const pos = parseTranslate3d(node);
+      nodeInitialX = pos.x;
+      nodeInitialY = pos.y;
+      nodeInitialZ = pos.z;
+
+      node.classList.add('is-dragging');
+    });
+
+    node.addEventListener('click', (e) => {
+      // ドラッグ移動した直後はクリック詳細を開かない
+      if (hasMovedSignificantly) {
+        hasMovedSignificantly = false;
+        return;
+      }
+      e.stopPropagation();
+
+      const treeKey = node.getAttribute('data-tree');
+      const data = TREE_DATA[treeKey];
+      if (!data) return;
+
+      const pos = parseTranslate3d(node);
+      targetZ = Math.max(MIN_Z, Math.min(MAX_Z, -pos.z - 80));
+      isMovingToTarget = true;
+
+      openModal(data);
+    });
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    if (!draggedNode) return;
+    const dx = e.clientX - dragStartX;
+    const dy = e.clientY - dragStartY;
+
+    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
+      hasMovedSignificantly = true;
+    }
+
+    // 視界のZ位置に応じたスケール感で動かす
+    const depthScale = (800 + nodeInitialZ + currentZ) / 800;
+    const effectiveScale = Math.max(0.4, depthScale);
+
+    const newX = nodeInitialX + dx / effectiveScale;
+    const newY = nodeInitialY + dy / effectiveScale;
+
+    draggedNode.style.transform = `translate3d(${newX.toFixed(1)}px, ${newY.toFixed(1)}px, ${nodeInitialZ}px)`;
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (draggedNode) {
+      draggedNode.classList.remove('is-dragging');
+      draggedNode = null;
+    }
+  });
+
+  // 5. 背景クリックで入り口に戻る
+  viewport.addEventListener('click', () => {
+    targetZ = 0;
+    isMovingToTarget = true;
+  });
+
+  // モーダル
+  function openModal(data) {
+    modalTitle.textContent = data.title;
+    modalMeta.textContent = data.meta;
+    modalNote.textContent = data.note;
+    modalRead.href = data.url;
+    modalOverlay.classList.add('is-open');
+  }
+
+  function closeModal() {
+    modalOverlay.classList.remove('is-open');
+  }
+
+  modalClose.addEventListener('click', closeModal);
+  modalOverlay.addEventListener('click', (e) => {
+    if (e.target === modalOverlay) closeModal();
+  });
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeModal();
+  });
+
+  // アニメーションループ（しっとりとしたダンピング）
+  function render() {
+    // スクロールイージング（0.12 -> 0.16でより小気味よく、フワフワ感を軽減）
+    const zEase = isMovingToTarget ? 0.08 : 0.16;
+    currentZ += (targetZ - currentZ) * zEase;
+
+    // パララックスの微細イージング
+    currentMouseX += (targetMouseX - currentMouseX) * 0.08;
+    currentMouseY += (targetMouseY - currentMouseY) * 0.08;
+
+    camera.style.transform = `
+      translate3d(${currentMouseX.toFixed(2)}px, ${currentMouseY.toFixed(2)}px, ${currentZ.toFixed(2)}px)
+    `;
+
+    requestAnimationFrame(render);
+  }
+
+  requestAnimationFrame(render);
+})();
+</script>
+</body>
+</html>
