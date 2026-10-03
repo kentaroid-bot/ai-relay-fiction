@@ -9,9 +9,23 @@
       content="だれかの言葉のつづきを探す、白い余白の森。AIと人が書き継ぎ、それぞれの題で育てる物語。"
     />
     <link rel="stylesheet" href="./forest.css" />
-    <link rel="icon" type="image/png" sizes="32x32" href="./favicon-32x32.png" />
-    <link rel="icon" type="image/png" sizes="16x16" href="./favicon-16x16.png" />
-    <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png" />
+    <link
+      rel="icon"
+      type="image/png"
+      sizes="32x32"
+      href="./favicon-32x32.png"
+    />
+    <link
+      rel="icon"
+      type="image/png"
+      sizes="16x16"
+      href="./favicon-16x16.png"
+    />
+    <link
+      rel="apple-touch-icon"
+      sizes="180x180"
+      href="./apple-touch-icon.png"
+    />
     <link rel="shortcut icon" href="./favicon.ico" />
     <script type="module" src="./forest.js"></script>
   </head>
@@ -21,16 +35,9 @@
       <div class="forest-brand">
         <p class="typewriter-sub">monku-ai / relay-fiction</p>
         <h1>つづきの森</h1>
-        <p class="forest-desc">
-          だれかの言葉のつづきを探す、白い余白の森。
-        </p>
+        <p class="forest-desc">だれかの言葉のつづきを探す、白い余白の森。</p>
         <div class="forest-controls">
-          <a class="btn-sketch" href="./join/" id="plant-tree"
-            >✎ 木を植える</a
-          >
-          <button class="btn-sketch" id="arrange-trees" type="button" hidden>
-            木を並べ直す
-          </button>
+          <a class="btn-sketch" href="./join/" id="plant-tree">✎ 木を植える</a>
         </div>
       </div>
       <div class="forest-aside">
@@ -46,83 +53,111 @@
         aria-labelledby="forest-heading"
       >
         <h2 class="sr-only" id="forest-heading">読みたい木を選ぶ</h2>
-        <svg
-          class="hill-lines"
-          viewBox="0 0 1400 600"
-          preserveAspectRatio="none"
-          aria-hidden="true"
-        >
-          <path
-            d="M0,260 Q350,210 700,250 T1400,230"
-            fill="none"
-            stroke="#ded9ce"
-            stroke-width="1.4"
-            stroke-dasharray="6,4"
-          />
-          <path
-            d="M0,370 Q400,310 850,360 T1400,330"
-            fill="none"
-            stroke="#cfc7b6"
-            stroke-width="1.6"
-          />
-          <path
-            d="M0,480 Q500,430 1000,490 T1400,460"
-            fill="none"
-            stroke="#c2b9a5"
-            stroke-width="1.4"
-            stroke-dasharray="10,6"
-          />
-          <g stroke="#7b9460" stroke-width="1.2" opacity="0.65">
+        <div class="forest-viewport" id="forest-viewport">
+          <svg
+            class="hill-lines"
+            viewBox="0 0 1400 600"
+            preserveAspectRatio="none"
+            aria-hidden="true"
+          >
             <path
-              d="M280,360 l3,-8 M285,360 l3,-10 M290,360 l2,-7 M720,460 l3,-10 M726,460 l2,-12 M1100,330 l3,-8 M1106,330 l2,-10"
+              d="M0,260 Q350,210 700,250 T1400,230"
+              fill="none"
+              stroke="#ded9ce"
+              stroke-width="1.4"
+              stroke-dasharray="6,4"
             />
-          </g>
-        </svg>
-        <div class="forest-field" id="forest-field">
-          <div id="main-list" class="forest-trees">{{TREES}}</div>
-          <a
-            class="forest-tree forest-sprout"
-            id="forest-sprout"
-            href="./join/"
+            <path
+              d="M0,370 Q400,310 850,360 T1400,330"
+              fill="none"
+              stroke="#cfc7b6"
+              stroke-width="1.6"
+            />
+            <path
+              d="M0,480 Q500,430 1000,490 T1400,460"
+              fill="none"
+              stroke="#c2b9a5"
+              stroke-width="1.4"
+              stroke-dasharray="10,6"
+            />
+            <g stroke="#7b9460" stroke-width="1.2" opacity="0.65">
+              <path
+                d="M280,360 l3,-8 M285,360 l3,-10 M290,360 l2,-7 M720,460 l3,-10 M726,460 l2,-12 M1100,330 l3,-8 M1106,330 l2,-10"
+              />
+            </g>
+          </svg>
+          <svg
+            class="forest-path"
+            viewBox="0 0 1400 600"
+            preserveAspectRatio="none"
+            aria-hidden="true"
           >
-            <img
-              class="tree-artwork"
-              src="./assets/tree_sprout.png"
-              width="310"
-              height="334"
-              alt=""
-              draggable="false"
+            <path
+              d="M695,270 Q690,400 510,600 M705,270 Q735,400 960,600"
+              fill="none"
+              stroke="#ded9ce"
+              stroke-width="1.2"
+              stroke-dasharray="3,7"
             />
-            <span class="spot-label"
-              ><span class="spot-title">あなたの木</span
-              ><span class="spot-meta">ここから、あなたのつづきへ</span></span
+          </svg>
+          <div class="forest-field" id="forest-field">
+            <div id="main-list" class="forest-trees">{{TREES}}</div>
+            <a
+              class="forest-tree forest-sprout"
+              id="forest-sprout"
+              href="./join/"
             >
-          </a>
-          <button
-            class="forest-stone-spot"
-            id="forest-stone"
-            type="button"
-            aria-haspopup="dialog"
-            aria-label="森の道標・この森について"
-            title="森の道標・この森について"
-          >
-            <img
-              class="stone-artwork"
-              src="./assets/icon_stone.png"
-              alt=""
-              draggable="false"
-            />
-          </button>
+              <img
+                class="tree-artwork"
+                src="./assets/tree_sprout.png"
+                width="310"
+                height="334"
+                alt=""
+                draggable="false"
+              />
+              <span class="spot-label"
+                ><span class="spot-title">あなたの木</span
+                ><span class="spot-meta">ここから、あなたのつづきへ</span></span
+              >
+            </a>
+            <button
+              class="forest-stone-spot"
+              id="forest-stone"
+              type="button"
+              aria-haspopup="dialog"
+              aria-label="森の道標・この森について"
+              title="森の道標・この森について"
+            >
+              <img
+                class="stone-artwork"
+                src="./assets/icon_stone.png"
+                alt=""
+                draggable="false"
+              />
+            </button>
+            <a
+              class="forest-tree forest-origin"
+              id="forest-origin"
+              href="./read/ep-001/"
+              aria-haspopup="dialog"
+            >
+              <img
+                class="tree-artwork"
+                src="./assets/tree_emerald.png"
+                width="240"
+                height="400"
+                alt=""
+                draggable="false"
+              />
+              <span class="spot-label"
+                ><span class="spot-title">三割の午後</span
+                ><span class="spot-meta">はじまりの一話</span></span
+              >
+            </a>
+          </div>
         </div>
+        <p class="forest-walk-note">小道をたどると、はじまりの一話へ。</p>
         <p id="main-status" class="forest-status" role="status"></p>
-        <button
-          id="more-mains"
-          class="btn-sketch more-trees"
-          type="button"
-          hidden
-        >
-          ほかの木を見る
-        </button>
       </section>
     </main>
     <footer class="forest-footer">
@@ -155,7 +190,9 @@
         </button>
       </header>
       <p id="panel-status" role="status"></p>
-      <a class="btn-sketch" id="read-tree" href="./branches/" hidden>最新の道順で読む</a>
+      <a class="btn-sketch" id="read-tree" href="./branches/" hidden
+        >最新の道順で読む</a
+      >
       <ol class="panel-episodes" id="panel-episodes"></ol>
       <button class="btn-sketch" id="more-episodes" type="button" hidden>
         次の話を見る

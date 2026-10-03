@@ -613,3 +613,123 @@ h1 {
     transform: translateY(0);
   }
 }
+
+/* A paper forest: fixed horizon, straight travel, original drawings. */
+.forest-viewport {
+  position: relative;
+}
+.forest-walk-note {
+  color: var(--pencil);
+  font-size: 0.75rem;
+  text-align: center;
+  margin: 0;
+  letter-spacing: 0.08em;
+}
+.forest-stage:has(.is-depth) {
+  padding-bottom: 0;
+}
+.forest-stage:has(.is-depth) .forest-viewport {
+  position: sticky;
+  top: 0;
+  height: clamp(420px, 78svh, 760px);
+  overflow: clip;
+}
+.forest-stage:has(.is-depth) .hill-lines {
+  height: 100%;
+}
+.forest-field.is-depth {
+  width: 100%;
+  max-width: 1180px;
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+  perspective: 650px;
+  perspective-origin: 50% 44%;
+}
+.is-depth .forest-trees {
+  display: contents;
+}
+.is-depth .forest-tree,
+.is-depth .forest-stone-spot {
+  position: absolute;
+  left: 50%;
+  top: 44%;
+  bottom: auto;
+  right: auto;
+  margin: 0;
+  transform-origin: 50% 100%;
+  transform: translate3d(
+    calc(-50% + var(--tree-x, 0px)),
+    calc(-100% + var(--tree-y, 210px)),
+    var(--tree-z, 0px)
+  );
+  transition: none;
+  touch-action: pan-y;
+}
+.is-depth .forest-tree .tree-artwork {
+  height: 230px;
+  max-width: 180px;
+  transition: none;
+  transform-origin: 50% 100%;
+}
+.is-depth .forest-sprout .tree-artwork {
+  height: 65px;
+}
+.is-depth .forest-tree:hover .tree-artwork {
+  transform: none;
+}
+.is-depth .is-dragging,
+.is-depth .forest-tree.is-dragging {
+  cursor: grabbing;
+}
+.is-depth .forest-tree:focus-visible {
+  outline-offset: 8px;
+}
+.forest-stage:has(.is-depth) .forest-walk-note,
+.forest-stage:has(.is-depth) .forest-status {
+  position: absolute;
+  top: 14px;
+  left: 0;
+  width: 100%;
+  pointer-events: none;
+}
+.forest-stage:has(.is-depth) .forest-status {
+  top: 40px;
+  margin: 0;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .is-depth .forest-tree:not(.is-dragging) .tree-artwork {
+    animation: forest-breath 11s ease-in-out infinite alternate;
+  }
+  .is-depth .forest-tree:nth-child(2n) .tree-artwork {
+    animation-delay: -5s;
+    animation-duration: 13s;
+  }
+}
+@keyframes forest-breath {
+  from {
+    transform: rotate(-0.25deg);
+  }
+  to {
+    transform: rotate(0.25deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .forest-page *,
+  .forest-page *::before {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+.forest-path {
+  display: none;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.forest-stage:has(.is-depth) .forest-path {
+  display: block;
+}
