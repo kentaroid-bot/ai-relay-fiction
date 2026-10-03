@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
 import { afterEach, expect, it, vi } from "vitest";
 // @ts-expect-error Browser module is native JavaScript.
 import * as reader from "../site/main-reader.js";
@@ -355,13 +354,6 @@ it("updates the static episode with current fixed-reference candidates and worki
   expect(elements["candidate-pills"].children[0].href).toBe(
     "../main/?id=healthy-tree&v=1&at=1",
   );
-  const html = readFileSync(
-    new URL("../site/dist/read/ep-001/index.html", import.meta.url),
-    "utf8",
-  );
-  expect(html).toContain('id="branch-candidates"');
-  expect(html).toContain('data-episode-ref="');
-  expect(html).toContain("6f80549558fa227e6dd7628ac595aae62dbbc05d");
 });
 
 it.each(["changed-prose", "withdrawn-during-fetch"])(

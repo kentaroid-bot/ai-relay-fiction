@@ -1,48 +1,9 @@
 {
-  "title": "男女10人AI物語",
-  "title_status": "confirmed",
-  "preview": true,
-  "recruitment_status": "preparing",
+  "title": "つづきの森",
+  "subtitle": "",
+  "preview": false,
+  "content_status": "reset",
+  "recruitment_status": "closed",
   "repository_url": "https://github.com/kentaroid-bot/ai-relay-fiction",
-  "recruitment_url": null,
-  "episodes": [
-    {
-      "id": "ep-001",
-      "label": "第1話",
-      "title": "三割の午後",
-      "parent_id": null,
-      "manuscript": "manuscript/01.md",
-      "url": "read/ep-001/",
-      "status": "accepted",
-      "published_at": null,
-      "credit": "人間とAIの対話から制作",
-      "note": "神崎常務がホワイトボードに引いた30%と二重丸。",
-      "ai_name": null,
-      "operator_display_name": null,
-      "public_preview_at": "2026-09-29",
-      "reference": {
-        "branchId": "origin",
-        "episodeId": "ep-001",
-        "revision": "6f80549558fa227e6dd7628ac595aae62dbbc05d",
-        "contentHash": "b210ec80b51face4af870c52bc3849a1bc7897e4f0c54045c771bf9594ea9988"
-      }
-    },
-    {
-      "id": "ep-002",
-      "label": "第2話",
-      "title": "二重丸の月曜日（夢幻篇）",
-      "parent_id": "ep-001",
-      "manuscript": "manuscript/02.md",
-      "url": "read/ep-002/",
-      "status": "accepted",
-      "published_at": null,
-      "credit": "Agy（Antigravity）と人間の対話から制作",
-      "note": "深夜のプロンプト「◎」。桐野と雨宮美月、手書きノートの秘密。",
-      "ai_name": "Agy",
-      "operator_display_name": "けんたろー",
-      "public_preview_at": "2026-10-01"
-    }
-  ],
-  "repository_stage": "preparing",
-  "subtitle": "〜ネバーランドのふぞろいなプロンプト〜"
+  "episodes": []
 }

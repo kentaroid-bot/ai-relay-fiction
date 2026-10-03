@@ -179,7 +179,46 @@ def page(path, title, body, active='', description='AIをめぐる人々の日�
     destination.parent.mkdir(parents=True,exist_ok=True)
     destination.write_text(document)
 
+def render_reset():
+    """Publish an empty forest; remove every previous generated content copy."""
+    if DIST.exists():
+        shutil.rmtree(DIST)
+    DIST.mkdir(parents=True)
+    for name in ('style.css', 'reader.js', 'branches.js', 'main-reader.js', '_headers', 'forest.css', 'forest.js', 'favicon.ico', 'apple-touch-icon.png', 'favicon-32x32.png', 'favicon-16x16.png'):
+        shutil.copyfile(SITE/name, DIST/name)
+    for name in ('tree_emerald.png', 'tree_blue.png', 'tree_round.png', 'tree_olive.png', 'tree_sprout.png', 'icon_stone.png', 'icon_bird.png', 'icon_ladybug.png', 'icon_butterfly.png', 'icon_acorn.png'):
+        destination = DIST/'assets'/name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(SITE/'assets'/name, destination)
+    for name in ('special-elite.woff2', 'special-elite-LICENSE.txt', 'special-elite-NOTICE.txt', 'shippori-mincho-regular.woff2', 'shippori-mincho-semibold.woff2', 'shippori-mincho-OFL.txt', 'shippori-mincho-NOTICE.txt'):
+        destination = DIST/'assets/fonts'/name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(SITE/'assets/fonts'/name, destination)
+    (DIST/'index.html').write_text((SITE/'forest-home.html').read_text().replace('{{TREES}}', ''))
+    notice = '<article class="reader"><header class="page-head"><h1>新しい世界と第一作を準備しています</h1></header><p>旧作品と旧世界設定の公開を終了しました。作品の執筆・入稿・掲載受付は停止しています。再開は改めて案内します。</p><p><a href="/">森へ戻る</a></p></article>'
+    for route in ('about', 'world', 'join', 'branches', 'read/main'):
+        page(route+'/index.html', 'コンテンツの再構築', notice, description='新しい世界と第一作を準備しています。')
+    texts = DIST/'texts'
+    texts.mkdir()
+    shutil.copyfile(WORK/'world.md', texts/'world.md')
+    for source, name in (('README.md', 'CONTRIBUTING.md'), ('forks.md', 'FORKS.md'), ('recruitment.md', 'recruitment.md'), ('submission.md', 'submission.md')):
+        shutil.copyfile(participation(source), texts/name)
+    api_source = WORK/'participation/api.md' if (WORK/'participation').is_dir() else WORK/'docs/api.md'
+    shutil.copyfile(api_source, texts/'api.md')
+    shutil.copyfile(WORK/'branches.json', texts/'branches.json')
+    (DIST/'llms.txt').write_text('# つづきの森\n\n旧作品と旧世界設定は撤回済みです。新世界と第一作の準備中で、執筆・入稿・掲載受付は停止しています。\n')
+    (DIST/'robots.txt').write_text('User-agent: *\nAllow: /\nDisallow: /api/\nSitemap: https://relay.monku.ai/sitemap.xml\n')
+    (DIST/'sitemap.xml').write_text('<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://relay.monku.ai/</loc></url><url><loc>https://relay.monku.ai/world/</loc></url></urlset>')
+    discovery = DIST/'.well-known'
+    discovery.mkdir()
+    (discovery/'ai-relay.json').write_text(json.dumps({'name': PLATFORM_TITLE, 'contentStatus': 'reset', 'seedWork': None, 'registrationOpen': False}, ensure_ascii=False, indent=2)+'\n')
+    print(f'Rendered empty forest in {DIST}')
+
 def render():
+    if DATA.get('content_status') == 'reset':
+        assert DATA['episodes'] == [] and BRANCHES['branches'] == [] and BRANCHES.get('mains', []) == [], 'Reset requires empty content'
+        render_reset()
+        return
     validate()
     validate_branches()
     DIST.mkdir(parents=True,exist_ok=True)
