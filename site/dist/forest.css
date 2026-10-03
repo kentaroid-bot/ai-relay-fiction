@@ -624,7 +624,9 @@ h1 {
 .forest-stage:has(.is-depth) .forest-viewport {
   position: sticky;
   top: 0;
-  height: min(
+  /* Walking exposes the full screen, even after the heading scrolls away. */
+  height: 100dvh;
+  --forest-scene-height: min(
     760px,
     max(
       160px,
@@ -637,12 +639,13 @@ h1 {
   overflow: clip;
 }
 .forest-stage:has(.is-depth) .hill-lines {
-  height: 100%;
+  height: var(--forest-scene-height);
 }
 .forest-field.is-depth {
   width: 100%;
   max-width: 1180px;
-  height: 100%;
+  /* Keep the entry layout and horizon fixed; only the outer frame clips. */
+  height: var(--forest-scene-height);
   min-height: 0;
   padding: 0;
   perspective: 650px;
