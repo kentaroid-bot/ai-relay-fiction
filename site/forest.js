@@ -211,7 +211,7 @@ function startForest() {
   let restoreFocus = false;
   const perspective = 650;
   const scrollRatio = 0.7;
-  const passDistance = 180;
+  const passDistance = 580;
   const unit = (value) => Math.max(0, Math.min(1, value));
   const ease = (value) => value * value * (3 - 2 * value);
 
@@ -223,24 +223,14 @@ function startForest() {
         perspective / (perspective + Math.max(-passDistance, distance));
       const passing = node === origin ? 0 : unit(-distance / passDistance);
       const fade = 1 - ease(passing);
-      // Fit the approach, then let the tree pass outside the frame. Clamping the
-      // final screen position would pin a passing tree to the viewport edge.
-      const half = field.clientWidth / 2;
-      const approachScale = Math.min(1, scale);
-      const margin = Math.min(half, (node.offsetWidth * approachScale) / 2 + 8);
-      place.anchorX =
-        Math.max(
-          -half + margin,
-          Math.min(half - margin, place.x * approachScale),
-        ) / approachScale;
-      const projectedX = place.anchorX * scale;
-      const exitTravel =
-        half + (node.offsetWidth * scale) / 2 + 24 + Math.abs(projectedX);
-      place.renderX =
-        (projectedX + place.lane * exitTravel * ease(passing)) / scale;
-      node.style.setProperty("--tree-x", place.renderX + "px");
+      // The world position stays fixed: perspective alone widens the lanes.
+      // Keep fully faded objects in front of the projection's singularity.
+      node.style.setProperty("--tree-x", place.x + "px");
       node.style.setProperty("--tree-y", place.y + "px");
-      node.style.setProperty("--tree-z", -distance + "px");
+      node.style.setProperty(
+        "--tree-z",
+        -Math.max(-passDistance, distance) + "px",
+      );
       node.style.opacity = String(Math.max(0.38, Math.min(1, scale)) * fade);
       node.style.pointerEvents = fade > 0.05 ? "auto" : "none";
       node.style.filter = distance > 1800 ? "blur(0.3px)" : "none";
@@ -287,36 +277,51 @@ function startForest() {
     // The public catalog is in creation order. Walk newest -> oldest, then the seed.
     const ordered = [...trees].reverse();
     field.classList.add("is-depth");
+    viewport.style.setProperty("--forest-intro-height", scrollStart() + "px");
+    const height = viewport.clientHeight;
+    field.style.setProperty(
+      "--tree-art-height",
+      Math.min(230, height * 0.48) + "px",
+    );
     const width = field.clientWidth;
+    const fitX = (x, node) => {
+      const reach = Math.max(0, width / 2 - node.offsetWidth / 2 - 12);
+      return Math.max(-reach, Math.min(reach, x));
+    };
+    const fitY = (y, node) => {
+      const bottom = height * 0.56 - 12;
+      const top = Math.min(bottom, node.offsetHeight - height * 0.44 + 8);
+      return Math.max(top, Math.min(bottom, y));
+    };
     ordered.forEach((node, index) => {
       node.dataset.walkIndex = String(index);
       const previous = places.get(node);
       const lane = index % 2 === 0 ? -1 : 1;
+      const baseX = fitX(lane * width * 0.3, node);
+      const baseY = height * 0.42;
       places.set(node, {
         depth: index * 620,
-        lane: previous?.lane || lane,
-        baseX: lane * width * 0.25,
-        baseY: 210,
-        x: lane * width * 0.25 + (previous?.offsetX || 0),
-        y: 210 + (previous?.offsetY || 0),
+        baseX,
+        baseY,
+        x: fitX(baseX + (previous?.offsetX || 0), node),
+        y: fitY(baseY + (previous?.offsetY || 0), node),
         offsetX: previous?.offsetX || 0,
         offsetY: previous?.offsetY || 0,
       });
     });
     const seedDepth = Math.max(1800, ordered.length * 620 + 900);
     for (const [node, depth, baseX, baseY] of [
-      [origin, seedDepth, 0, 100],
-      [sprout, 0, width * 0.2, 255],
-      [stone, 0, -width * 0.38, 265],
+      [origin, seedDepth, 0, height * 0.36],
+      [sprout, 0, width * 0.2, height * 0.51],
+      [stone, 0, -width * 0.38, height * 0.51],
     ]) {
       const previous = places.get(node);
       places.set(node, {
         depth,
-        lane: Math.sign(baseX),
         baseX,
         baseY,
-        x: baseX + (previous?.offsetX || 0),
-        y: baseY + (previous?.offsetY || 0),
+        x: fitX(baseX + (previous?.offsetX || 0), node),
+        y: fitY(baseY + (previous?.offsetY || 0), node),
         offsetX: previous?.offsetX || 0,
         offsetY: previous?.offsetY || 0,
       });
@@ -356,7 +361,7 @@ function startForest() {
         id: event.pointerId,
         x: event.clientX,
         y: event.clientY,
-        startX: place.anchorX,
+        startX: place.x,
         startY: place.y,
         scale: place.scale,
         moved: false,
@@ -381,20 +386,22 @@ function startForest() {
       node.classList.add("is-dragging");
       const place = places.get(node);
       const half = field.clientWidth / 2;
-      const approachScale = Math.min(1, down.scale);
-      const margin = Math.min(half, (node.offsetWidth * approachScale) / 2 + 8);
+      const margin = Math.min(half, (node.offsetWidth * down.scale) / 2 + 8);
       const screenX = Math.max(
         -half + margin,
-        Math.min(
-          half - margin,
-          down.startX * approachScale + (dx * approachScale) / down.scale,
-        ),
+        Math.min(half - margin, down.startX * down.scale + dx),
       );
       const screenY = Math.max(
-        30,
-        Math.min(viewport.clientHeight * 0.53, down.startY * down.scale + dy),
+        Math.min(
+          viewport.clientHeight * 0.56 - 12,
+          node.offsetHeight * down.scale - viewport.clientHeight * 0.44 + 8,
+        ),
+        Math.min(
+          viewport.clientHeight * 0.56 - 12,
+          down.startY * down.scale + dy,
+        ),
       );
-      place.x = screenX / approachScale;
+      place.x = screenX / down.scale;
       place.y = screenY / down.scale;
       place.offsetX = place.x - place.baseX;
       place.offsetY = place.y - place.baseY;
@@ -402,10 +409,6 @@ function startForest() {
     });
     function end(event) {
       if (!down || down.id !== event.pointerId) return;
-      const place = places.get(node);
-      // Choosing a new side while already passing would jump across the path.
-      if (down.moved && place.depth >= camera && node !== origin)
-        place.lane = Math.sign(place.x) || place.lane;
       suppressClick = down.moved || event.type === "pointercancel";
       down = null;
       node.classList.remove("is-dragging");
@@ -681,18 +684,24 @@ function startForest() {
   });
   list.querySelectorAll(".forest-tree").forEach(makeDraggable);
   layout();
+  document.fonts.ready.then(layout);
   let lastWidth = field.clientWidth,
-    lastHeight = viewport.clientHeight;
-  new ResizeObserver(() => {
+    lastHeight = viewport.clientHeight,
+    lastIntro = scrollStart();
+  const layoutObserver = new ResizeObserver(() => {
     if (
       field.clientWidth !== lastWidth ||
-      viewport.clientHeight !== lastHeight
+      viewport.clientHeight !== lastHeight ||
+      scrollStart() !== lastIntro
     ) {
       lastWidth = field.clientWidth;
       lastHeight = viewport.clientHeight;
+      lastIntro = scrollStart();
       layout();
     }
-  }).observe(field);
+  });
+  layoutObserver.observe(field);
+  layoutObserver.observe(document.querySelector(".forest-header"));
   const hintEl = document.getElementById("forest-hint");
   if (hintEl) {
     hintEl.textContent =

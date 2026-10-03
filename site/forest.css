@@ -624,7 +624,16 @@ h1 {
 .forest-stage:has(.is-depth) .forest-viewport {
   position: sticky;
   top: 0;
-  height: clamp(420px, 78svh, 760px);
+  height: min(
+    760px,
+    max(
+      160px,
+      calc(
+        100svh - var(--forest-intro-height, 0px) - 16px -
+          env(safe-area-inset-bottom)
+      )
+    )
+  );
   overflow: clip;
 }
 .forest-stage:has(.is-depth) .hill-lines {
@@ -659,9 +668,15 @@ h1 {
   transition: none;
   touch-action: pan-y;
 }
+.is-depth .forest-tree {
+  width: clamp(128px, 40vw, 180px);
+}
+.is-depth .spot-label {
+  max-width: 100%;
+}
 .is-depth .forest-tree .tree-artwork {
-  height: 230px;
-  max-width: 180px;
+  height: var(--tree-art-height, 230px);
+  max-width: 100%;
   transition: none;
   transform-origin: 50% 100%;
 }
