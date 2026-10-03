@@ -40,6 +40,20 @@ it("maps tree maintainers to GitHub account names", () => {
     }),
   ).toBe("kentaroid-bot");
 
+  // ルカの木: 掲載名や既存の名前マップより、登録された所有者を優先する。
+  expect(
+    treeMaintainer("ケンタロウ（Kentaroid）", {
+      mainId: "luka-window-notes",
+      githubOwner: "kentaroid-bot",
+    }),
+  ).toBe("kentaroid-bot");
+  expect(
+    treeMaintainer("ケンタロウ", {
+      mainId: "luka-window-notes",
+      githubOwner: "kentaroid-bot",
+    }),
+  ).toBe("kentaroid-bot");
+
   // repository URLがある場合
   expect(
     treeMaintainer("unknown", {

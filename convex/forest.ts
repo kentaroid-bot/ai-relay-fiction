@@ -3,7 +3,7 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { v } from "convex/values";
 import { parent, audit } from "./desk";
-import { fail, text } from "./policy";
+import { fail, text, repo } from "./policy";
 import { publicSource } from "./provenance";
 import { canReadListedBranch, isListedEpisode } from "./visibility";
 
@@ -452,6 +452,7 @@ export const publicMains = internalQuery({
           mainId: m.mainId,
           title: m.title,
           maintainer: owner.operatorName,
+          githubOwner: repo(owner.repository).split("/")[3],
           agentName: owner.agentName,
           head: m.head,
           count: m.count,
@@ -501,6 +502,7 @@ export const publicMain = internalQuery({
       title: main.title,
       count: main.count,
       maintainer: owner!.operatorName,
+      githubOwner: repo(owner!.repository).split("/")[3],
       agentName: owner!.agentName,
       version: main.version,
       page: rows,
