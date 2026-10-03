@@ -390,16 +390,33 @@ function startForest() {
         startX: place.x,
         startY: place.y,
         scale: place.scale,
+        touch: event.pointerType === "touch",
+        scrolling: false,
+        traveled: false,
         moved: false,
       };
       node.setPointerCapture(event.pointerId);
       suppressClick = false;
+      // Avoid compatibility mouse focus moving the tree before its touch click.
+      // Native panning is still governed by touch-action, not this cancellation.
+      if (down.touch) event.preventDefault();
     });
     node.addEventListener("pointermove", (event) => {
       if (!down || down.id !== event.pointerId) return;
       const dx = event.clientX - down.x,
         dy = event.clientY - down.y;
-      if (!down.moved && Math.hypot(dx, dy) <= 6) return;
+      if (down.touch && !down.moved) {
+        down.traveled ||= Math.hypot(dx, dy) > 10;
+        // A vertical gesture belongs to the native page scroll for its lifetime.
+        down.scrolling ||=
+          Math.abs(dy) > 10 && Math.abs(dy) >= Math.abs(dx) * 0.8;
+        if (
+          down.scrolling ||
+          Math.abs(dx) < 24 ||
+          Math.abs(dx) < Math.abs(dy) * 1.5
+        )
+          return;
+      } else if (!down.moved && Math.hypot(dx, dy) <= 6) return;
       if (!down.moved) {
         const place = places.get(node);
         grabbed = node;
@@ -416,7 +433,10 @@ function startForest() {
       const place = places.get(node);
       // Keep the grab point reachable, without squeezing a large tree into the frame.
       const bounds = viewport.getBoundingClientRect();
-      const pointerX = Math.max(8, Math.min(window.innerWidth - 8, event.clientX));
+      const pointerX = Math.max(
+        8,
+        Math.min(window.innerWidth - 8, event.clientX),
+      );
       const pointerY = Math.max(
         Math.max(8, bounds.top + 8),
         Math.min(window.innerHeight - 8, event.clientY),
@@ -429,7 +449,8 @@ function startForest() {
     });
     function end(event) {
       if (!down || down.id !== event.pointerId) return;
-      suppressClick = down.moved || event.type === "pointercancel";
+      suppressClick =
+        down.moved || down.traveled || event.type === "pointercancel";
       const wasGrabbed = grabbed === node;
       down = null;
       if (wasGrabbed) grabbed = null;

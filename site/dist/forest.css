@@ -666,7 +666,7 @@ h1 {
     var(--tree-z, 0px)
   );
   transition: none;
-  touch-action: none;
+  touch-action: pan-y pinch-zoom;
   cursor: grab;
 }
 .is-depth .forest-tree {
