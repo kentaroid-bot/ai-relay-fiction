@@ -626,14 +626,11 @@ h1 {
   top: 0;
   /* Walking exposes the full screen, even after the heading scrolls away. */
   height: 100dvh;
-  --forest-scene-height: min(
-    760px,
-    max(
-      160px,
-      calc(
-        100svh - var(--forest-intro-height, 0px) - 16px -
-          env(safe-area-inset-bottom)
-      )
+  --forest-scene-height: max(
+    160px,
+    calc(
+      100dvh - var(--forest-entry-inset, 0px) - 16px -
+        env(safe-area-inset-bottom)
     )
   );
   overflow: clip;
@@ -644,7 +641,7 @@ h1 {
 .forest-field.is-depth {
   width: 100%;
   max-width: 1180px;
-  /* Keep the entry layout and horizon fixed; only the outer frame clips. */
+  /* Fill the visible screen as the heading leaves, before depth travel starts. */
   height: var(--forest-scene-height);
   min-height: 0;
   padding: 0;
@@ -669,7 +666,8 @@ h1 {
     var(--tree-z, 0px)
   );
   transition: none;
-  touch-action: pan-y;
+  touch-action: none;
+  cursor: grab;
 }
 .is-depth .forest-tree {
   width: clamp(128px, 40vw, 180px);
