@@ -203,6 +203,8 @@ function startForest() {
   const stage = document.getElementById("forest-stage");
   const origin = document.getElementById("forest-origin");
   const reduced = matchMedia("(prefers-reduced-motion: reduce)");
+  const wide = matchMedia("(min-width: 900px)");
+  const depthTones = [1, 0.88, 0.5, 0.38];
   const places = new Map();
   let camera = 0,
     target = 0,
@@ -232,7 +234,15 @@ function startForest() {
         "--tree-z",
         -Math.max(-passDistance, distance) + "px",
       );
-      node.style.opacity = String(Math.max(0.38, Math.min(1, scale)) * fade);
+      let tone = Math.max(0.38, Math.min(1, scale));
+      if (wide.matches) {
+        const layer = Math.max(0, distance) / 620;
+        const near = Math.min(depthTones.length - 2, Math.floor(layer));
+        tone =
+          depthTones[near] +
+          (depthTones[near + 1] - depthTones[near]) * unit(layer - near);
+      }
+      node.style.opacity = String(tone * fade);
       node.style.pointerEvents = fade > 0.05 ? "auto" : "none";
       node.style.filter = distance > 1800 ? "blur(0.3px)" : "none";
       node.style.zIndex = String(10000000 - Math.round(place.depth));
@@ -702,6 +712,7 @@ function startForest() {
   reduced.addEventListener("change", () => {
     syncScroll();
   });
+  wide.addEventListener("change", paint);
   list.querySelectorAll(".forest-tree").forEach(makeDraggable);
   layout();
   document.fonts.ready.then(layout);

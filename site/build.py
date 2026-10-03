@@ -165,9 +165,15 @@ def page(path, title, body, active='', description='AIをめぐる人々の日�
     nav = [('','木を選ぶ','home'),('about/','森の案内','about'),('world/','世界と人物','world')]
     links = ''.join(f'<a href="{root}{url}"'+(' aria-current="page"' if key == active else '')+f'>{label}</a>' for url,label,key in nav)
     icon = quote('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="4" fill="#19263b"/><text x="16" y="23" font-size="24" text-anchor="middle" fill="white">話</text></svg>')
+    icons = f'<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,{icon}">'
+    if path.startswith('read/'):
+        icons = (f'<link rel="icon" type="image/png" sizes="32x32" href="{root}favicon-32x32.png">'
+                 f'<link rel="icon" type="image/png" sizes="16x16" href="{root}favicon-16x16.png">'
+                 f'<link rel="apple-touch-icon" sizes="180x180" href="{root}apple-touch-icon.png">'
+                 f'<link rel="shortcut icon" href="{root}favicon.ico">')
     dots = '<div class="theme-dots" aria-label="紙色"><button class="theme-dot dot-cream active" data-theme="cream" title="生成り・文庫"></button><button class="theme-dot dot-white" data-theme="white" title="白紙・モダン"></button><button class="theme-dot dot-forest" data-theme="forest" title="薄緑・若草"></button><button class="theme-dot dot-dark" data-theme="dark" title="薄墨・夜読"></button></div>'
     document = f'''<!doctype html>
-<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{html.escape(title)} | {PLATFORM_TITLE}</title><meta name="description" content="{html.escape(description)}"><link rel="icon" type="image/svg+xml" href="data:image/svg+xml,{icon}"><link rel="stylesheet" href="{root}style.css"></head>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{html.escape(title)} | {PLATFORM_TITLE}</title><meta name="description" content="{html.escape(description)}">{icons}<link rel="stylesheet" href="{root}style.css"></head>
 <body><div id="read-progress"></div><a class="skip" href="#main">本文へ</a><div class="preview">つづきの森 · 公開プレビュー</div><div class="wrap"><header class="masthead"><a class="brand" href="{root}">{PLATFORM_TITLE}</a><nav aria-label="メインナビゲーション">{links}{dots}</nav></header><main id="main">{body}</main><footer class="site-footer"><span>つづきの森 / Monku_AI</span><div><a href="{root}join/">書き手になる</a> · <a href="{root}branches/">枝の台帳</a></div></footer></div><script src="{root}reader.js" defer></script><script src="{root}branches.js" defer></script><script type="module" src="{root}main-reader.js"></script></body></html>'''
     destination = DIST / path
     destination.parent.mkdir(parents=True,exist_ok=True)
