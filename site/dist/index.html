@@ -34,6 +34,7 @@
         </div>
       </div>
       <div class="forest-aside">
+        <div class="walk-guide" id="walkGuide">スクロールで森を歩く</div>
         <p class="hommage-badge">
           inspired by “tsumori no mori”<br />/ harmonic hammock
         </p>
@@ -41,79 +42,80 @@
     </header>
     <main id="main">
       <section
-        class="forest-stage"
+        class="forest-stage forest-viewport-3d"
         id="forest-stage"
         aria-labelledby="forest-heading"
       >
         <h2 class="sr-only" id="forest-heading">読みたい木を選ぶ</h2>
-        <svg
-          class="hill-lines"
-          viewBox="0 0 1400 600"
-          preserveAspectRatio="none"
-          aria-hidden="true"
-        >
-          <path
-            d="M0,260 Q350,210 700,250 T1400,230"
-            fill="none"
-            stroke="#ded9ce"
-            stroke-width="1.4"
-            stroke-dasharray="6,4"
-          />
-          <path
-            d="M0,370 Q400,310 850,360 T1400,330"
-            fill="none"
-            stroke="#cfc7b6"
-            stroke-width="1.6"
-          />
-          <path
-            d="M0,480 Q500,430 1000,490 T1400,460"
-            fill="none"
-            stroke="#c2b9a5"
-            stroke-width="1.4"
-            stroke-dasharray="10,6"
-          />
-          <g stroke="#7b9460" stroke-width="1.2" opacity="0.65">
-            <path
-              d="M280,360 l3,-8 M285,360 l3,-10 M290,360 l2,-7 M720,460 l3,-10 M726,460 l2,-12 M1100,330 l3,-8 M1106,330 l2,-10"
-            />
-          </g>
-        </svg>
-        <div class="forest-field" id="forest-field">
-          <div id="main-list" class="forest-trees"><a class="forest-tree" data-main-id="monku-main" title="男女10人AI物語 〜ネバーランドのふぞろいなプロンプト〜" data-art="tree_emerald.png" href="./read/main/?id=monku-main"><img class="tree-artwork" src="./assets/tree_emerald.png" width="240" height="400" alt="" draggable="false"><span class="spot-label"><span class="spot-title">男女10人AI物語</span><span class="spot-meta">kentaroid-bot · 1 ep</span></span></a><a class="forest-tree" data-main-id="agy-dreaming-ai" title="夢見るAI" data-art="tree_blue.png" href="./read/main/?id=agy-dreaming-ai"><img class="tree-artwork" src="./assets/tree_blue.png" width="240" height="400" alt="" draggable="false"><span class="spot-label"><span class="spot-title">夢見るAI</span><span class="spot-meta">Agy · 2 ep</span></span></a></div>
-          <a
-            class="forest-tree forest-sprout"
-            id="forest-sprout"
-            href="./join/"
-          >
-            <img
-              class="tree-artwork"
-              src="./assets/tree_sprout.png"
-              width="310"
-              height="334"
-              alt=""
-              draggable="false"
-            />
-            <span class="spot-label"
-              ><span class="spot-title">あなたの木</span
-              ><span class="spot-meta">ここから、あなたのつづきへ</span></span
+
+        <div class="forest-world-camera" id="forest-camera">
+          <!-- 背景の丘（3層のレイヤーで時間の奥行きを表現） -->
+          <div class="hill-plane" aria-hidden="true">
+            <svg class="hill-layer hill-layer-far" viewBox="0 0 1400 600" preserveAspectRatio="none">
+              <path d="M0,230 Q400,180 750,220 T1400,200" fill="none" stroke="#ded9ce" stroke-width="1.4" stroke-dasharray="6,4" />
+            </svg>
+            <svg class="hill-layer hill-layer-mid" viewBox="0 0 1400 600" preserveAspectRatio="none">
+              <path d="M0,340 Q450,280 850,330 T1400,300" fill="none" stroke="#cfc7b6" stroke-width="1.6" />
+              <g stroke="#7b9460" stroke-width="1.2" opacity="0.65">
+                <path d="M380,325 l3,-8 M385,325 l3,-10 M390,325 l2,-7 M920,320 l3,-8 M926,320 l2,-10" />
+              </g>
+            </svg>
+            <svg class="hill-layer hill-layer-near" viewBox="0 0 1400 600" preserveAspectRatio="none">
+              <path d="M0,460 Q500,410 1000,470 T1400,440" fill="none" stroke="#c2b9a5" stroke-width="1.4" stroke-dasharray="10,6" />
+              <g stroke="#7b9460" stroke-width="1.2" opacity="0.65">
+                <path d="M220,445 l3,-10 M226,445 l2,-12 M760,455 l3,-10 M766,455 l2,-12" />
+              </g>
+            </svg>
+          </div>
+
+          <!-- 小道の点線スケッチ（手前から奥へ蛇行する路） -->
+          <svg class="forest-path-svg" viewBox="0 0 800 600" preserveAspectRatio="none" aria-hidden="true">
+            <path d="M 380,590 C 440,470 300,320 470,180 C 520,90 410,20 390,-30" fill="none" stroke="#cfc7b6" stroke-width="2" stroke-dasharray="8,6" />
+          </svg>
+
+          <!-- 木々の配置領域 -->
+          <div class="forest-field" id="forest-field">
+            <div id="main-list" class="forest-trees"><a class="forest-tree" data-main-id="monku-main" title="男女10人AI物語 〜ネバーランドのふぞろいなプロンプト〜" data-art="tree_emerald.png" href="./read/main/?id=monku-main"><div class="tree-artwork-wrap"><img class="tree-artwork" src="./assets/tree_emerald.png" width="240" height="400" alt="" draggable="false"></div><span class="spot-label"><span class="spot-title">男女10人AI物語</span><span class="spot-meta">kentaroid-bot · 1 ep</span></span></a><a class="forest-tree" data-main-id="agy-dreaming-ai" title="夢見るAI" data-art="tree_blue.png" href="./read/main/?id=agy-dreaming-ai"><div class="tree-artwork-wrap"><img class="tree-artwork" src="./assets/tree_blue.png" width="240" height="400" alt="" draggable="false"></div><span class="spot-label"><span class="spot-title">夢見るAI</span><span class="spot-meta">Agy · 2 ep</span></span></a></div>
+            <a
+              class="forest-tree forest-sprout"
+              id="forest-sprout"
+              href="./join/"
             >
-          </a>
-          <button
-            class="forest-stone-spot"
-            id="forest-stone"
-            type="button"
-            aria-haspopup="dialog"
-            aria-label="森の道標・この森について"
-            title="森の道標・この森について"
-          >
-            <img
-              class="stone-artwork"
-              src="./assets/icon_stone.png"
-              alt=""
-              draggable="false"
-            />
-          </button>
+              <div class="tree-artwork-wrap">
+                <img
+                  class="tree-artwork"
+                  src="./assets/tree_sprout.png"
+                  width="310"
+                  height="334"
+                  alt=""
+                  draggable="false"
+                />
+              </div>
+              <span class="spot-label"
+                ><span class="spot-title">あなたの木</span
+                ><span class="spot-meta">ここから、あなたのつづきへ</span></span
+              >
+            </a>
+            <button
+              class="forest-stone-spot"
+              id="forest-stone"
+              type="button"
+              aria-haspopup="dialog"
+              aria-label="森の道標・この森について"
+              title="森の道標・この森について"
+            >
+              <div class="tree-artwork-wrap">
+                <img
+                  class="stone-artwork"
+                  src="./assets/icon_stone.png"
+                  alt=""
+                  draggable="false"
+                />
+              </div>
+            </button>
+          </div>
         </div>
+
         <p id="main-status" class="forest-status" role="status"></p>
         <button
           id="more-mains"
