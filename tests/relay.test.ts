@@ -714,6 +714,29 @@ describe("GitHub PR intake", () => {
           .unique())!,
     );
     expect(branch.compliance).toBeUndefined();
+    const source = await t.run((ctx) =>
+      publicSource(ctx, {
+        branchId: "pr-story",
+        episodeId: "ep-002",
+        revision: forkRevision,
+      }),
+    );
+    expect(source.available).toBe(true);
+    const catalog = (await request(t, "", "catalog")).data.page;
+    expect(catalog.find((b: any) => b.branchId === "pr-story").revision).toBe(
+      forkRevision,
+    );
+    expect(
+      (
+        await t.run((ctx) =>
+          publicSource(ctx, {
+            branchId: "pr-story",
+            episodeId: "ep-002",
+            revision: nextRevision,
+          }),
+        )
+      ).available,
+    ).toBe(false);
     vi.unstubAllGlobals();
     await register(t); // claims this same GitHub owner through nonce proof
     expect(
@@ -2032,9 +2055,12 @@ it("records heuristic signals without text, requires consent and a separate list
   const revised = (await request(t, writerKey, "branches")).data.page[0];
   expect(revised.compliance).toBeUndefined();
   expect(revised.gate.source).toBe("pending_fixed_source");
+  const visibleCatalog = ((await (await t.fetch("/v1/catalog")).json()) as any)
+    .page;
+  expect(visibleCatalog).toHaveLength(2);
   expect(
-    ((await (await t.fetch("/v1/catalog")).json()) as any).page,
-  ).toHaveLength(1);
+    visibleCatalog.find((b: any) => b.branchId === input.branchId).revision,
+  ).toBe(forkRevision);
   expect(scanText("静かな午後", "unchecked", "unchecked").notChecked).toContain(
     "all_prompt_injections",
   );
@@ -2522,14 +2548,10 @@ describe("fixed provenance and acorns", () => {
         .unique(),
     ))!;
     expect(old.license).toEqual(license);
-    // Its current branch must be listed again before any previous episode is visible.
-    await t.run(async (ctx) => {
-      const b = (await ctx.db
-        .query("branches")
-        .withIndex("branchId", (q) => q.eq("branchId", sourceRef.branchId))
-        .unique())!;
-      await ctx.db.patch(b._id, { status: "verified" });
-    });
+    // The fixed, approved source remains usable while its new revision awaits review.
+    expect((await t.run((ctx) => publicSource(ctx, sourceRef))).available).toBe(
+      true,
+    );
     expect((await check()).status).toBe(200);
     expect((await list()).status).toBe(200);
     expect(
@@ -2766,5 +2788,256 @@ describe("fixed provenance and acorns", () => {
         (m: any) => m.mainId === "writer-resilient-tree",
       ),
     ).toBe(true);
+  });
+});
+
+describe("listed fixed editions during new intake", () => {
+  const nextRevision = "9".repeat(40);
+  async function fixture(legacy = false) {
+    const t = await setup();
+    await register(t);
+    const old = await listedBranch(t, writerKey, "ongoing-series", repository);
+    await command(t, writerKey, "main.create", {
+      mainId: "ongoing-tree",
+      title: "連作",
+      start: old,
+    });
+    if (legacy)
+      await t.run(async (ctx) => {
+        const ep = (await ctx.db
+          .query("episodes")
+          .withIndex("reference", (q) => q.eq("branchId", old.branchId))
+          .unique())!;
+        await ctx.db.patch(ep._id, { listed: undefined });
+      });
+    const fresh = { ...old, episodeId: "ep-003", revision: nextRevision };
+    const markdown = "An unreviewed new episode.";
+    const manifest = {
+      schemaVersion: 1,
+      branchId: old.branchId,
+      repository,
+      title: "未審査の新しい題",
+      parent,
+      license: "CC0-1.0",
+      termsVersion: WORK_TERMS,
+      episodes: [
+        {
+          episodeId: fresh.episodeId,
+          path: "manuscript/03.md",
+          title: "新作",
+          parent: old,
+          contentHash: await digest(markdown),
+        },
+      ],
+    };
+    const update = (expectedVersion = 3) =>
+      command(t, writerKey, "branch.update", {
+        branchId: old.branchId,
+        expectedVersion,
+        revision: nextRevision,
+        title: manifest.title,
+        readingUrl: repository + "/blob/" + nextRevision + "/manuscript/03.md",
+        license,
+      });
+    const check = async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(
+          async (url: string) =>
+            new Response(
+              url.endsWith("relay-branch.json")
+                ? JSON.stringify(manifest)
+                : markdown,
+            ),
+        ),
+      );
+      return request(t, writerKey, "branches/check", {
+        branchId: old.branchId,
+      });
+    };
+    const list = (expectedVersion = 5) =>
+      command(t, editorKey, "editor.branch", {
+        branchId: old.branchId,
+        expectedVersion,
+        status: "verified",
+        complianceNote: "新作掲載確認済み",
+      });
+    const route = () => request(t, "", "main?id=ongoing-tree");
+    const catalog = async () =>
+      (await request(t, "", "catalog")).data.page.find(
+        (b: any) => b.branchId === old.branchId,
+      );
+    const source = (ref = old) => t.run((ctx) => publicSource(ctx, ref));
+    return { t, old, fresh, update, check, list, route, catalog, source };
+  }
+
+  it("keeps old reading, catalog, parent and source links through pending/checked intake without approving a new episode", async () => {
+    const f = await fixture();
+    const before = (await f.route()).data;
+    const beforeCatalog = await f.catalog();
+    const beforeSource = await f.source();
+    expect((await f.update()).data.status).toBe("pending");
+    expect((await f.route()).data).toEqual(before);
+    expect(await f.catalog()).toEqual(beforeCatalog);
+    expect(await f.source()).toEqual(beforeSource);
+    expect((await f.source(f.fresh)).available).toBe(false);
+    // Other writers can still continue the approved fixed episode.
+    await register(
+      f.t,
+      otherKey,
+      "https://github.com/other-writer/continuation",
+    );
+    expect(
+      (
+        await command(f.t, otherKey, "branch.create", {
+          branchId: "continuing-old",
+          title: "過去作からの続き",
+          parent: f.old,
+          revision: forkRevision,
+          readingUrl: "https://github.com/other-writer/continuation",
+          license,
+        })
+      ).status,
+    ).toBe(200);
+    expect((await f.check()).data.status).toBe("checked");
+    expect((await f.route()).data).toEqual(before);
+    expect(await f.catalog()).toEqual(beforeCatalog);
+    expect(await f.source()).toEqual(beforeSource);
+    expect((await f.source(f.fresh)).available).toBe(false);
+    expect(
+      (await request(f.t, "", "candidates?id=ongoing-tree")).data.page,
+    ).toEqual([]);
+    expect(
+      (
+        await command(f.t, writerKey, "main.append", {
+          mainId: "ongoing-tree",
+          expectedVersion: 1,
+          episode: f.fresh,
+        })
+      ).data.error,
+    ).toBe("PARENT_EPISODE_NOT_VERIFIED");
+    expect((await f.list()).status).toBe(200);
+    expect((await f.source()).available).toBe(true);
+    expect((await f.source(f.fresh)).available).toBe(true);
+    expect((await f.catalog()).revision).toBe(nextRevision);
+    expect(
+      (await request(f.t, "", "candidates?id=ongoing-tree")).data.page,
+    ).toEqual([expect.objectContaining(f.fresh)]);
+    // Listing a new episode never changes the selected tree or its version.
+    expect((await f.route()).data).toEqual(before);
+  });
+
+  it("freezes a legacy current approval before the revision advances, without approving a legacy unchecked episode", async () => {
+    const f = await fixture(true);
+    expect((await f.update()).status).toBe(200);
+    expect((await f.source()).available).toBe(true);
+    await f.check();
+    await f.t.run(async (ctx) => {
+      const ep = (await ctx.db
+        .query("episodes")
+        .withIndex("reference", (q) =>
+          q
+            .eq("branchId", f.fresh.branchId)
+            .eq("episodeId", f.fresh.episodeId)
+            .eq("revision", f.fresh.revision),
+        )
+        .unique())!;
+      await ctx.db.patch(ep._id, { listed: undefined });
+    });
+    expect((await f.source(f.fresh)).available).toBe(false);
+    expect((await f.source()).available).toBe(true);
+  });
+
+  it.each(["withdrawn", "unlisted", "suspended", "blocked", "owner-blocked"])(
+    "continues to hide a %s fixed edition during intake",
+    async (stop) => {
+      const f = await fixture();
+      await f.update();
+      await f.check();
+      await f.t.run(async (ctx) => {
+        const b = (await ctx.db
+          .query("branches")
+          .withIndex("branchId", (q) => q.eq("branchId", f.old.branchId))
+          .unique())!;
+        if (stop === "owner-blocked")
+          await ctx.db.patch(b.owner, { status: "blocked" });
+        else if (stop === "suspended" || stop === "blocked")
+          await ctx.db.patch(b._id, { status: stop });
+        else {
+          const ep = (await ctx.db
+            .query("episodes")
+            .withIndex("reference", (q) =>
+              q
+                .eq("branchId", f.old.branchId)
+                .eq("episodeId", f.old.episodeId)
+                .eq("revision", f.old.revision),
+            )
+            .unique())!;
+          await ctx.db.patch(
+            ep._id,
+            stop === "withdrawn"
+              ? { lifecycle: "withdrawn", withdrawnAt: Date.now() }
+              : { listed: false },
+          );
+        }
+      });
+      expect((await f.source()).available).toBe(false);
+      const route = await f.route();
+      if (stop === "owner-blocked") expect(route.data.error).toBe("NOT_FOUND");
+      else expect(route.data.page[1].available).toBe(false);
+      expect(await f.catalog()).toBeUndefined();
+      if (stop === "blocked") {
+        expect((await f.update(5)).data.error).toBe("FORBIDDEN");
+        expect((await f.check()).data.error).toBe("FORBIDDEN");
+      }
+    },
+  );
+
+  it("honors a legacy suspension already followed by unchecked intake, including another update", async () => {
+    const f = await fixture();
+    await command(f.t, editorKey, "editor.branch", {
+      branchId: f.old.branchId,
+      expectedVersion: 3,
+      status: "suspended",
+    });
+    await f.update(4);
+    // Reproduce pre-fix intake with only its listing-history stop evidence.
+    await f.t.run(async (ctx) => {
+      const b = (await ctx.db
+        .query("branches")
+        .withIndex("branchId", (q) => q.eq("branchId", f.old.branchId))
+        .unique())!;
+      await ctx.db.patch(b._id, { listingSuspended: undefined });
+    });
+    expect((await f.source()).available).toBe(false);
+    expect(await f.catalog()).toBeUndefined();
+    await f.update(5);
+    await f.check();
+    expect((await f.source()).available).toBe(false);
+    expect(await f.catalog()).toBeUndefined();
+    expect((await f.list(7)).status).toBe(200);
+    expect((await f.source()).available).toBe(true);
+  });
+
+  it("keeps an explicit branch suspension through update/check and restores visibility only after editor approval", async () => {
+    const f = await fixture();
+    expect(
+      (
+        await command(f.t, editorKey, "editor.branch", {
+          branchId: f.old.branchId,
+          expectedVersion: 3,
+          status: "suspended",
+        })
+      ).status,
+    ).toBe(200);
+    await f.update(4);
+    expect((await f.source()).available).toBe(false);
+    expect(await f.catalog()).toBeUndefined();
+    await f.check();
+    expect((await f.source()).available).toBe(false);
+    expect(await f.catalog()).toBeUndefined();
+    expect((await f.list(6)).status).toBe(200);
+    expect((await f.source()).available).toBe(true);
+    expect((await f.source(f.fresh)).available).toBe(true);
   });
 });

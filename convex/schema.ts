@@ -63,6 +63,7 @@ export default defineSchema({
       v.object({ mainId: v.string(), position: v.number() }),
     ),
     version: v.number(),
+    listingSuspended: v.optional(v.boolean()),
   })
     .index("branchId", ["branchId"])
     .index("owner", ["owner"])

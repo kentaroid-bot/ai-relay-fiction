@@ -2,6 +2,7 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { fail, text, revision, path, repo } from "./policy";
 import { WORK_TERMS } from "./safety";
+import { canReadListedBranch, isListedEpisode } from "./visibility";
 
 type Ref = { branchId: string; episodeId: string; revision: string };
 
@@ -11,7 +12,7 @@ export async function sourceRecord(ctx: QueryCtx | MutationCtx, ref: Ref) {
     .query("branches")
     .withIndex("branchId", (q) => q.eq("branchId", ref.branchId))
     .unique();
-  if (!branch || branch.status !== "verified") return null;
+  if (!branch || !(await canReadListedBranch(ctx, branch))) return null;
   const owner = await ctx.db.get(branch.owner);
   if (owner?.status !== "active") return null;
   const episode = await ctx.db
@@ -23,17 +24,7 @@ export async function sourceRecord(ctx: QueryCtx | MutationCtx, ref: Ref) {
         .eq("revision", ref.revision),
     )
     .unique();
-  if (
-    !episode ||
-    episode.lifecycle === "withdrawn" ||
-    episode.withdrawnAt !== undefined ||
-    !(
-      episode.listed === true ||
-      (episode.listed === undefined &&
-        (branch.branchId === "origin" || branch.revision === ref.revision))
-    )
-  )
-    return null;
+  if (!episode || !isListedEpisode(branch, episode)) return null;
   return { branch, owner, episode };
 }
 
@@ -81,20 +72,20 @@ export async function publicSource(ctx: QueryCtx | MutationCtx, ref: Ref) {
   };
 }
 
-// Freeze a previously confirmed current declaration before the branch advances.
-// Legacy records without that exact approval remain unchanged.
-export async function preserveSourceLicense(
+// Freeze current episode approval and confirmed license before intake advances.
+// Unreviewed episodes and unconfirmed work terms never inherit approval.
+export async function preserveListedEdition(
   ctx: MutationCtx,
   branch: Doc<"branches">,
 ) {
-  if (
+  const confirmedLicense =
     branch.compliance?.revision !== branch.revision ||
     branch.gate?.terms !== "cc0_declared" ||
     branch.license?.id !== "CC0-1.0" ||
     branch.license.termsVersion !== WORK_TERMS ||
     branch.license.humanApproved !== true
-  )
-    return;
+      ? undefined
+      : branch.license;
   const episodes = await ctx.db
     .query("episodes")
     .withIndex("branchRevision", (q) =>
@@ -102,9 +93,14 @@ export async function preserveSourceLicense(
     )
     .take(21);
   if (episodes.length > 20) fail("CHECK_REQUIRED");
-  for (const ep of episodes)
-    if (ep.listed === true && !ep.license)
-      await ctx.db.patch(ep._id, { license: branch.license });
+  for (const ep of episodes) {
+    if (!isListedEpisode(branch, ep)) continue;
+    // Freeze legacy approval before changing the branch's current revision.
+    await ctx.db.patch(ep._id, {
+      listed: true,
+      ...(confirmedLicense && !ep.license ? { license: confirmedLicense } : {}),
+    });
+  }
 }
 
 // One acorn per logical episode and fixed source: editing, retrying, relisting

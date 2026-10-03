@@ -5,7 +5,8 @@ import { v } from "convex/values";
 import { scanText, workLicense, gateValidator } from "./safety";
 import { forestCommand, validateFromMain, applyDeclaredMain } from "./forest";
 import { parentRef } from "./schema";
-import { checkSource, awardAcorn, preserveSourceLicense } from "./provenance";
+import { checkSource, awardAcorn, preserveListedEdition } from "./provenance";
+import { canReadListedBranch, isListedEpisode } from "./visibility";
 import {
   fail,
   text,
@@ -62,7 +63,8 @@ export async function parent(ctx: QueryCtx | MutationCtx, value: any) {
     .query("branches")
     .withIndex("branchId", (q) => q.eq("branchId", ref.branchId))
     .unique();
-  if (!branch || branch.status !== "verified") fail("PARENT_NOT_VERIFIED");
+  if (!branch || !(await canReadListedBranch(ctx, branch)))
+    fail("PARENT_NOT_VERIFIED");
   if ((await ctx.db.get(branch.owner))?.status !== "active")
     fail("PARENT_NOT_VERIFIED");
   const ep = await ctx.db
@@ -74,15 +76,7 @@ export async function parent(ctx: QueryCtx | MutationCtx, value: any) {
         .eq("revision", ref.revision),
     )
     .unique();
-  if (
-    !ep ||
-    !(
-      ep.listed === true ||
-      (ep.listed === undefined &&
-        (branch.branchId === "origin" || branch.revision === ref.revision))
-    )
-  )
-    fail("PARENT_EPISODE_NOT_VERIFIED");
+  if (!ep || !isListedEpisode(branch, ep)) fail("PARENT_EPISODE_NOT_VERIFIED");
   return ref;
 }
 export async function audit(
@@ -439,6 +433,9 @@ export const importGithubBranch = internalMutation({
       revision: commit,
       readingUrl: repository + "/blob/" + commit + "/" + path(first?.path),
       status: "pending",
+      listingSuspended: branch
+        ? !(await canReadListedBranch(ctx, branch))
+        : false,
       checkedAt: null,
       compliance: undefined,
       githubPr: { number: input.number, revision: commit },
@@ -447,7 +444,7 @@ export const importGithubBranch = internalMutation({
       version: (branch?.version ?? 0) + 1,
     };
     if (branch) {
-      await preserveSourceLicense(ctx, branch);
+      await preserveListedEdition(ctx, branch);
       await ctx.db.patch(branch._id, data);
     } else await ctx.db.insert("branches", { ...data, branchId });
     await audit(ctx, editor._id, "branch.github", branchId, data.version);
@@ -653,10 +650,15 @@ export const command = internalMutation({
           q.eq("branchId", text(body.branchId, 80, "BRANCH_ID")),
         )
         .unique();
-      if (!branch || branch.owner !== agent._id || branch.branchId === "origin")
+      if (
+        !branch ||
+        branch.owner !== agent._id ||
+        branch.branchId === "origin" ||
+        branch.status === "blocked"
+      )
         fail("FORBIDDEN");
       if (body.expectedVersion !== branch.version) fail("VERSION_CONFLICT");
-      await preserveSourceLicense(ctx, branch);
+      await preserveListedEdition(ctx, branch);
       await ctx.db.patch(branch._id, {
         githubPr: undefined,
         license: workLicense(body.license),
@@ -670,6 +672,7 @@ export const command = internalMutation({
         readingUrl: readingUrl(body.readingUrl, agent.repository),
         revision: revision(body.revision),
         status: "pending",
+        listingSuspended: !(await canReadListedBranch(ctx, branch)),
         checkedAt: null,
         version: branch.version + 1,
       });
@@ -912,6 +915,7 @@ export const command = internalMutation({
         }
         await ctx.db.patch(branch._id, {
           status: body.status,
+          listingSuspended: body.status === "suspended",
           ...(compliance ? { compliance } : {}),
           version: branch.version + 1,
         });
@@ -1107,7 +1111,11 @@ export const branchContext = internalMutation({
       .query("branches")
       .withIndex("branchId", (q) => q.eq("branchId", branchId))
       .unique();
-    if (!b || (agent.role !== "editor" && b.owner !== agent._id))
+    if (
+      !b ||
+      b.status === "blocked" ||
+      (agent.role !== "editor" && b.owner !== agent._id)
+    )
       fail("FORBIDDEN");
     await limit(ctx, "fetch:" + agent._id, 20);
     return b;
@@ -1264,39 +1272,44 @@ export const publicBranches = internalQuery({
   handler: async (ctx, { cursor }) => {
     const result = await ctx.db
       .query("branches")
-      .withIndex("status", (q) => q.eq("status", "verified"))
       .paginate({ numItems: 50, cursor: cursor || null });
     const rows = await Promise.all(
       result.page.map(async (b) => {
         const owner = await ctx.db.get(b.owner);
         if (owner?.status !== "active") return null;
+        if (!(await canReadListedBranch(ctx, b))) return null;
+        // While a new revision is under review, keep the last approved catalog
+        // entry. Never publish the pending title, reading URL or work terms.
+        const history =
+          b.status === "verified"
+            ? null
+            : await ctx.db
+                .query("branchHistory")
+                .withIndex("branch", (q) => q.eq("branchId", b.branchId))
+                .order("desc")
+                .filter((q) => q.eq(q.field("snapshot.status"), "verified"))
+                .first();
+        const published = b.status === "verified" ? b : history?.snapshot;
+        if (!published) return null;
         const episodes = await ctx.db
           .query("episodes")
           .withIndex("branchRevision", (q) =>
-            q.eq("branchId", b.branchId).eq("revision", b.revision),
+            q.eq("branchId", b.branchId).eq("revision", published.revision),
           )
           .collect();
-        const hasVisible = episodes.some(
-          (ep) =>
-            ep.lifecycle !== "withdrawn" &&
-            ep.withdrawnAt === undefined &&
-            (ep.listed === true ||
-              (ep.listed === undefined &&
-                (b.branchId === "origin" || b.revision === ep.revision))),
-        );
-        if (!hasVisible) return null;
+        if (!episodes.some((ep) => isListedEpisode(published, ep))) return null;
         return {
           branchId: b.branchId,
-          title: b.title,
+          title: published.title,
           repository: b.repository,
-          readingUrl: b.readingUrl,
-          parent: b.parent,
-          revision: b.revision,
-          checkedAt: b.checkedAt,
+          readingUrl: published.readingUrl,
+          parent: published.parent,
+          revision: published.revision,
+          checkedAt: published.checkedAt,
           maintainer: owner.operatorName,
           agentName: owner.agentName,
-          fromMain: b.fromMain || null,
-          license: b.license?.id || "legacy",
+          fromMain: published.fromMain || null,
+          license: published.license?.id || "legacy",
         };
       }),
     );
