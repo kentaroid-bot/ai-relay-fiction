@@ -61,6 +61,15 @@ export function episodeTarget(
     policyVersion: REVIEW_POLICY,
   };
 }
+export async function hasRejectedReview(ctx: Ctx, targetHash: string) {
+  // Rejection is terminal for this exact target, even after later observations.
+  const rejected = await ctx.db
+    .query("contentReviews")
+    .withIndex("target", (q) => q.eq("targetHash", targetHash))
+    .filter((q) => q.eq(q.field("review.decision"), "rejected"))
+    .first();
+  return rejected !== null;
+}
 export async function currentReview(
   ctx: Ctx,
   b: Doc<"branches">,
@@ -82,6 +91,7 @@ export async function currentReview(
   )
     return null;
   const targetHash = await fingerprint(target);
+  if (await hasRejectedReview(ctx, targetHash)) return null;
   const review = await ctx.db
     .query("contentReviews")
     .withIndex("target", (q) => q.eq("targetHash", targetHash))

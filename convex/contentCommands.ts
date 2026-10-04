@@ -11,6 +11,7 @@ import {
 import {
   episodeTarget,
   getLineage,
+  hasRejectedReview,
   requireContentReview,
   requireLineage,
 } from "./lineage";
@@ -68,6 +69,12 @@ export async function contentCommand(
     )
       fail("REVIEWER_NOT_INDEPENDENT");
     validateReview(body.review);
+    const targetHash = await fingerprint(body.target);
+    if (
+      body.review.decision === "eligible" &&
+      (await hasRejectedReview(ctx, targetHash))
+    )
+      fail("TARGET_REJECTED");
     if (
       body.review.decision === "eligible" &&
       episode.provenance!.statedSources.some(
@@ -85,7 +92,7 @@ export async function contentCommand(
       fail("DECLARED_SOURCE_NOT_CHECKED");
     const reviewId = await ctx.db.insert("contentReviews", {
       target: body.target,
-      targetHash: await fingerprint(body.target),
+      targetHash,
       review: body.review,
       reviewer: actor._id,
       checkedAt: Date.now(),

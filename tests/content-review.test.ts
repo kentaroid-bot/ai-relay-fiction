@@ -4,6 +4,8 @@ import schema from "../convex/schema";
 import { internal } from "../convex/_generated/api";
 import { digest, TERMS } from "../convex/policy";
 import { WORK_TERMS } from "../convex/safety";
+import { currentReview, requireContentReview } from "../convex/lineage";
+import { isListedEpisode } from "../convex/visibility";
 import {
   fingerprint,
   type ContentReview,
@@ -702,6 +704,190 @@ it("uses the newest observation instead of falling back to an older eligible rev
     ).status,
   ).toBe(200);
   expect((await t.query(internal.desk.publicBranches, {})).page).toEqual([]);
+});
+it("rejects eligibility after any rejection of the same target, including after a hold", async () => {
+  const t = await fresh();
+  await check(t);
+  const fixed = await target(t);
+  for (const decision of ["rejected", "hold"] as const) {
+    expect(
+      (
+        await command(
+          t,
+          "review.record",
+          { target: fixed, review: { ...goodReview(), decision } },
+          auditorKey,
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await command(
+          t,
+          "review.record",
+          { target: fixed, review: goodReview() },
+          auditorKey,
+        )
+      ).data.error,
+    ).toBe("TARGET_REJECTED");
+  }
+  expect(
+    (
+      await command(t, "editor.branch", {
+        branchId: "origin",
+        expectedVersion: 2,
+        status: "verified",
+        complianceNote: "Cannot override rejection",
+      })
+    ).data.error,
+  ).toBe("CONTENT_REVIEW_REQUIRED");
+  expect(
+    await t.run((ctx) => ctx.db.query("contentReviews").collect()),
+  ).toHaveLength(2);
+});
+it("blocks publication even if a later eligible record bypasses the recording guard", async () => {
+  const t = await fresh();
+  await activate(t);
+  const fixed = await target(t);
+  expect(
+    (
+      await command(
+        t,
+        "review.record",
+        { target: fixed, review: { ...goodReview(), decision: "rejected" } },
+        auditorKey,
+      )
+    ).status,
+  ).toBe(200);
+  await t.run(async (ctx) => {
+    const auditor = (await ctx.db.query("agents").collect()).find(
+      (a) => a.role === "auditor",
+    )!;
+    const targetHash = await fingerprint(fixed);
+    await ctx.db.insert("contentReviews", {
+      target: fixed,
+      targetHash,
+      review: goodReview(),
+      reviewer: auditor._id,
+      checkedAt: Date.now(),
+    });
+    const newest = await ctx.db
+      .query("contentReviews")
+      .withIndex("target", (q) => q.eq("targetHash", targetHash))
+      .order("desc")
+      .first();
+    const b = (await ctx.db.query("branches").collect())[0];
+    const ep = (await ctx.db.query("episodes").collect())[0];
+    expect(newest?.review.decision).toBe("eligible");
+    expect(await currentReview(ctx, b, ep)).toBeNull();
+    expect(await isListedEpisode(ctx, b, ep)).toBe(false);
+    await expect(requireContentReview(ctx, b, ep)).rejects.toThrow(
+      "CONTENT_REVIEW_REQUIRED",
+    );
+  });
+  expect((await t.query(internal.desk.publicBranches, {})).page).toEqual([]);
+});
+it.each(["content", "provenance", "world", "parent"] as const)(
+  "allows a fresh review when the rejected target's %s changes",
+  async (field) => {
+    const t = await fresh();
+    const rejected = await target(t);
+    expect(
+      (
+        await command(
+          t,
+          "review.record",
+          {
+            target: rejected,
+            review: { ...goodReview(), decision: "rejected" },
+          },
+          auditorKey,
+        )
+      ).status,
+    ).toBe(200);
+    await t.run(async (ctx) => {
+      const b = (await ctx.db.query("branches").collect())[0];
+      const ep = (await ctx.db.query("episodes").collect())[0];
+      if (field === "content") {
+        await ctx.db.patch(ep._id, {
+          contentHash: await digest("Rewritten fixture"),
+        });
+      } else if (field === "provenance") {
+        const changed = {
+          ...provenance,
+          motivationSummary: "Revised declaration",
+        };
+        const fields = {
+          provenance: changed,
+          provenanceHash: await fingerprint(changed),
+        };
+        await ctx.db.patch(b._id, fields);
+        await ctx.db.patch(ep._id, fields);
+      } else if (field === "world") {
+        const worldHash = await digest("Revised world");
+        const l = (await ctx.db.query("contentLineages").collect())[0];
+        await ctx.db.patch(l._id, { worldHash });
+        await ctx.db.patch(b._id, { worldHash });
+        await ctx.db.patch(ep._id, { worldHash });
+      } else {
+        await ctx.db.patch(ep._id, {
+          parent: {
+            branchId: "other-root",
+            episodeId: "ep-001",
+            revision: commit,
+          },
+        });
+      }
+    });
+    const revised = await target(t);
+    expect(await fingerprint(revised)).not.toBe(await fingerprint(rejected));
+    expect(
+      (
+        await command(
+          t,
+          "review.record",
+          { target: revised, review: goodReview() },
+          auditorKey,
+        )
+      ).status,
+    ).toBe(200);
+    await t.run(async (ctx) => {
+      const b = (await ctx.db.query("branches").collect())[0];
+      const ep = (await ctx.db.query("episodes").collect())[0];
+      expect((await requireContentReview(ctx, b, ep)).review.decision).toBe(
+        "eligible",
+      );
+    });
+  },
+);
+it("allows a held target to become eligible and visible after checking", async () => {
+  const t = await fresh();
+  await activate(t);
+  const fixed = await target(t);
+  expect(
+    (
+      await command(
+        t,
+        "review.record",
+        { target: fixed, review: { ...goodReview(), decision: "hold" } },
+        auditorKey,
+      )
+    ).status,
+  ).toBe(200);
+  expect((await t.query(internal.desk.publicBranches, {})).page).toEqual([]);
+  expect(
+    (
+      await command(
+        t,
+        "review.record",
+        { target: fixed, review: goodReview() },
+        auditorKey,
+      )
+    ).status,
+  ).toBe(200);
+  expect((await t.query(internal.desk.publicBranches, {})).page).toHaveLength(
+    1,
+  );
 });
 it("does not accept participant-requested auditor promotion", async () => {
   const t = await fresh();
