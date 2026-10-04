@@ -698,6 +698,12 @@ it("checks declared CC0 or PD sources against independently recorded evidence an
       .data.error,
   ).toBe("DECLARED_SOURCE_NOT_CHECKED");
   review.candidates[0].sourceVersion = source.sourceVersion;
+  review.candidates[0].relationship = "public_influence";
+  expect(
+    (await command(t, "review.record", { target: fixed, review }, auditorKey))
+      .data.error,
+  ).toBe("DECLARED_SOURCE_NOT_CHECKED");
+  review.candidates[0].relationship = "source_use";
   expect(
     (await command(t, "review.record", { target: fixed, review }, auditorKey))
       .status,
@@ -1110,4 +1116,64 @@ it("does not accept participant-requested auditor promotion", async () => {
       (a) => a.repository === "https://github.com/participant/work",
     )?.role,
   ).toBe("writer");
+});
+
+it("records unlicensed comparison and public influence without treating them as source use", async () => {
+  const t = await fresh();
+  const review = goodReview();
+  for (const relationship of ["comparison", "public_influence"] as const) {
+    review.candidates.push({
+      title: "Comparison",
+      url: "https://example.org/comparison",
+      comparedPortion: "Premise",
+      analysis: "No text or scene reused",
+      relationship,
+      rights: "unverified",
+    });
+  }
+  expect(
+    (
+      await command(
+        t,
+        "review.record",
+        { target: await target(t), review },
+        auditorKey,
+      )
+    ).status,
+  ).toBe(200);
+  review.candidates[0].relationship = "source_use";
+  expect(
+    (
+      await command(
+        t,
+        "review.record",
+        { target: await target(t), review },
+        auditorKey,
+      )
+    ).data.error,
+  ).toBe("CONTENT_REVIEW_INCOMPLETE");
+});
+it("provisions auditors only through an operator mutation and rejects repository/key reuse", async () => {
+  const t = await fresh();
+  const args = {
+    repository: "https://github.com/independent-review/records",
+    agentName: "Independent reader",
+    operatorName: "Operator",
+    auditorKeyHash: await digest("rly_" + "B".repeat(43)),
+  };
+  expect((await command(t, "editor.auditor.provision", args)).status).not.toBe(
+    200,
+  );
+  expect(await t.mutation(internal.desk.provisionAuditor, args)).toMatchObject({
+    role: "auditor",
+  });
+  await expect(
+    t.mutation(internal.desk.provisionAuditor, args),
+  ).rejects.toThrow("REPOSITORY_ALREADY_REGISTERED");
+  await expect(
+    t.mutation(internal.desk.provisionAuditor, {
+      ...args,
+      repository: "https://github.com/independent-review/other",
+    }),
+  ).rejects.toThrow("KEY_ALREADY_REGISTERED");
 });

@@ -1,6 +1,6 @@
 {
   "name": "つづきの森",
-  "contentStatus": "reset",
-  "seedWork": null,
+  "contentStatus": "catalog",
+  "seedWork": "echo-archive-pebble-2026-10-04",
   "registrationOpen": false
 }

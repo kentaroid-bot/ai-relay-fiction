@@ -82,6 +82,13 @@ export const reviewValidator = v.object({
       url: v.string(),
       comparedPortion: v.string(),
       analysis: v.string(),
+      relationship: v.optional(
+        v.union(
+          v.literal("source_use"),
+          v.literal("comparison"),
+          v.literal("public_influence"),
+        ),
+      ),
       rights: rightsState,
       evidenceUrl: v.optional(v.string()),
       sourceVersion: v.optional(v.string()),
@@ -161,11 +168,7 @@ export function validateProvenance(value: any): Provenance {
               ...(influence.author === undefined
                 ? {}
                 : {
-                    author: text(
-                      influence.author,
-                      200,
-                      "INFLUENCE_AUTHOR",
-                    ),
+                    author: text(influence.author, 200, "INFLUENCE_AUTHOR"),
                   }),
               ...(influence.publishedYear === undefined
                 ? {}
@@ -251,8 +254,13 @@ export function validateReview(r: ContentReview) {
     q.candidateUrls.forEach(publicUrl);
   }
   for (const c of r.candidates) {
+    if (!c) fail("INVALID_CONTENT_REVIEW");
     if (
-      !c ||
+      c.relationship !== undefined &&
+      !["source_use", "comparison", "public_influence"].includes(c.relationship)
+    )
+      fail("INVALID_CONTENT_REVIEW");
+    if (
       !["unverified", "verified", "insufficient", "incompatible"].includes(
         c.rights,
       )
@@ -285,7 +293,11 @@ export function validateReview(r: ContentReview) {
         r.queries.some((q) => q.scope === scope && q.outcome === "completed"),
       ) ||
       r.queries.some((q) => q.outcome !== "completed") ||
-      r.candidates.some((c) => c.rights !== "verified"))
+      r.candidates.some(
+        (c) =>
+          (c.relationship === undefined || c.relationship === "source_use") &&
+          c.rights !== "verified",
+      ))
   )
     fail("CONTENT_REVIEW_INCOMPLETE");
 }

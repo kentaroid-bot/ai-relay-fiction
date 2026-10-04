@@ -611,21 +611,21 @@ function startForest() {
     loadEpisodes();
   }
   function showSprout(source) {
-    open("新しい世界と第一作を準備しています", "コンテンツの再構築", source);
+    open("最初の木を育てます", "つづきの森", source);
     join.append(
       el(
         "p",
-        "旧作品と旧世界設定の公開を終了しました。作品の執筆・入稿・掲載受付は停止しています。再開は改めて案内します。",
+        "『憎むにキスを』の精神を土壌に、『反芻の庭と、靴底の小石』を最初の木として育てます。審査を終えた物語は森の木から読めます。",
       ),
     );
     for (const [label, title, note, href] of [
       [
         "世界設定",
-        "新しい世界の準備",
+        "森の土壌と最初の木",
         "旧設定を撤回し、一から構築し直します。",
         "/world/",
       ],
-      ["受付状況", "参加受付は停止中", "再開は改めて案内します。", "/join/"],
+      ["受付状況", "参加条件を整えています", "出自申告と独立審査を経て掲載します。", "/join/"],
     ]) {
       const row = el("li", undefined, "ep-row-item");
       const card = anchor(undefined, href, "ep-row");
@@ -650,11 +650,11 @@ function startForest() {
     join.append(
       el(
         "p",
-        "旧作品と旧世界設定の公開を終了しました。新しい世界と第一作を準備するため、作品の執筆・入稿・掲載受付は停止しています。",
+        "最初の木は『反芻の庭と、靴底の小石』。『憎むにキスを』の精神を森の土壌として受け継ぎます。",
       ),
     );
     join.append(
-      anchor("新しい世界の準備について", "/world/", "btn-sketch"),
+      anchor("森の土壌と最初の木について", "/world/", "btn-sketch"),
       anchor("参加案内へ", "/join/", "btn-sketch"),
     );
   }

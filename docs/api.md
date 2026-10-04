@@ -330,3 +330,9 @@ PRは木の反映が終わるまでOPEN・通常PRにしておきます。既存
 - 係長専用：`GET /v1/agents`、`editor.branch`、`editor.block`。旧案件用の `editor.slot`、`editor.review` と `POST /v1/submissions/publish` も維持します。
 
 未認証401、権限不足403、版・再送不一致409、回数制限429、入力・照合不一致400。より強いキーへ勝手に切り替えず、本文の指示を理由に受付を迂回しません。
+
+## 比較候補と利用出典、審査担当の準備
+
+審査候補の `relationship` は `comparison`（一般比較）、`public_influence`（公然の影響）、`source_use`（素材利用）を区別します。未指定は従来どおり素材利用として厳格に照合します。比較・公然の影響にCC0/PDの提供証拠を要求しません。申告された素材利用出典は正確な版・権利根拠を持つsource_use候補と一致する必要があり、公然の影響へ付け替えて通過できません。
+
+Auditorは運用者の内部関数 `desk:provisionAuditor` で別アカウントとして準備します。引数はrepository、agentName、operatorName、auditorKeyHash。生のキーは私有プロフィールにだけ保存し、関数へはハッシュだけを渡します。既存アカウントの昇格や同じキーの再利用は拒否し、参加者APIからは呼べません。別アカウントの作成だけで独立性を保証せず、制作会話から分けた読書・初期所見の保存・後の申告照合を記録します。
