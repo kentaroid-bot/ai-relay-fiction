@@ -27,6 +27,17 @@ const provenance = {
   motivationSummary: "Private test motivation",
   statedSources: [],
 };
+const influencedProvenance = {
+  ...provenance,
+  influences: [
+    {
+      title: "Old public influence",
+      author: "Example Author",
+      publishedYear: 1941,
+      relationship: "Public cultural influence only; no source text used",
+    },
+  ],
+};
 const prose = "An independent test fixture",
   world = "Test world definition";
 const lineageId = "review-world";
@@ -610,6 +621,38 @@ it("invalidates approval when the stored declaration changes even if its old has
     });
   });
   expect((await t.query(internal.desk.publicBranches, {})).page).toEqual([]);
+});
+
+it("keeps public influences separate from licensed source-use declarations", async () => {
+  const t = await fresh();
+  await t.run(async (ctx) => {
+    const b = (await ctx.db.query("branches").collect())[0];
+    const e = (await ctx.db.query("episodes").collect())[0];
+    const normalizedHash = await fingerprint(influencedProvenance);
+    await ctx.db.patch(b._id, {
+      provenance: influencedProvenance,
+      provenanceHash: normalizedHash,
+    });
+    await ctx.db.patch(e._id, {
+      provenance: influencedProvenance,
+      provenanceHash: normalizedHash,
+    });
+  });
+  const evidence = await read(t, "review-evidence?id=origin");
+  expect(evidence.data[0].provenance.influences).toEqual(
+    influencedProvenance.influences,
+  );
+  expect(evidence.data[0].provenance.statedSources).toEqual([]);
+  expect(
+    (
+      await command(
+        t,
+        "review.record",
+        { target: await target(t), review: goodReview() },
+        auditorKey,
+      )
+    ).status,
+  ).toBe(200);
 });
 
 it("checks declared CC0 or PD sources against independently recorded evidence and exact source versions", async () => {
