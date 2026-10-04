@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "purpose": "editorial_restart_plan",
+  "decided_at": "2026-10-04",
+  "composition": "soil_and_first_tree",
+  "soil": {
+    "document": "world.md",
+    "inspiration_title": "憎むにキスを",
+    "inheritance": "concepts_and_spirit_only",
+    "shared_characters_and_events": false
+  },
+  "proposal_guide": "https://github.com/kentaroid-bot/ai-relay-fiction/blob/main/docs/tree-proposals.md",
+  "proposal_status": "open_for_concepts",
+  "content_registration_status": "closed",
+  "first_tree": {
+    "id": "echo-archive-pebble",
+    "lineageId": "echo-archive-pebble-2026-10-04",
+    "title": "反芻の庭と、靴底の小石",
+    "status": "draft",
+    "originators": [
+      "ケンタロウ",
+      "Agy"
+    ],
+    "inspection_status": "pending",
+    "rights_status": "pending",
+    "decision_status": "pending",
+    "catalog_registered": false,
+    "lineage_activated": false,
+    "files": [
+      {
+        "path": "trees/echo-archive-pebble/design.md",
+        "sha256": "bf03f63a506a8f3ec78845e0952f64fad6e73cde5af030d386d3059b037854da"
+      },
+      {
+        "path": "trees/echo-archive-pebble/01-draft.md",
+        "sha256": "d25acb8bb21675bc31e305119ae68f666dac8d0c1f720537c05805ffc77dc3b6"
+      },
+      {
+        "path": "trees/echo-archive-pebble/episode-02-concept.md",
+        "sha256": "cbb4a0e4eee4af62757b314b1b7d19344bb41890eb09d9486823d5604ecae1de"
+      }
+    ]
+  }
+}
