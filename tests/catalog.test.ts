@@ -254,3 +254,29 @@ it("detects a main published while an empty site is being checked", async () => 
     ),
   ).rejects.toThrow("PUBLIC_VERSION_CHANGED");
 });
+
+it("verifies a new lineage root without restoring the retired origin branch", async () => {
+  const fetcher = fixture((url) => {
+    const path = url.pathname.replace("/api", "");
+    if (path === "/v1/catalog")
+      return Response.json({
+        page: [{ ...origin, branchId: "echo-archive-pebble", parent: null }],
+        isDone: true,
+      });
+  });
+  expect((await verifyCatalog(fetcher)).outcome).toBe("confirmed");
+});
+it("verifies live reader routes before the first approved catalog is activated", async () => {
+  const fetcher = fixture((url) => {
+    const path = url.pathname.replace("/api", "");
+    if (["/v1/catalog", "/v1/mains"].includes(path))
+      return Response.json({ page: [], isDone: true });
+    if (path === "/.well-known/ai-relay.json")
+      return Response.json({
+        contentStatus: "catalog",
+        seedWork: "echo-archive-pebble-2026-10-04",
+        registrationOpen: false,
+      });
+  });
+  expect((await verifyCatalog(fetcher)).outcome).toBe("confirmed");
+});

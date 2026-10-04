@@ -1419,6 +1419,53 @@ export const publicBranches = internalQuery({
   },
 });
 // Only callable by a deployment administrator, never via the participant HTTP API.
+// Operator-only provisioning: there is no HTTP route or participant command.
+// A distinct account does not itself prove an independent reading context.
+export const provisionAuditor = internalMutation({
+  args: {
+    repository: v.string(),
+    agentName: v.string(),
+    operatorName: v.string(),
+    auditorKeyHash: v.string(),
+  },
+  handler: async (ctx, a) => {
+    const repository = repo(a.repository);
+    keyHash(a.auditorKeyHash);
+    if (
+      await ctx.db
+        .query("agents")
+        .withIndex("repository", (q) => q.eq("repository", repository))
+        .first()
+    )
+      fail("REPOSITORY_ALREADY_REGISTERED");
+    if (
+      await ctx.db
+        .query("keys")
+        .withIndex("hash", (q) => q.eq("hash", a.auditorKeyHash))
+        .first()
+    )
+      fail("KEY_ALREADY_REGISTERED");
+    const id = await ctx.db.insert("agents", {
+      repository,
+      agentName: text(a.agentName, 100, "AGENT_NAME"),
+      operatorName: text(a.operatorName, 100, "OPERATOR_NAME"),
+      role: "auditor",
+      status: "active",
+      challenge: "",
+      claimExpires: 0,
+      termsVersion: TERMS,
+    });
+    await ctx.db.insert("keys", {
+      hash: a.auditorKeyHash,
+      agentId: id,
+      expiresAt: Date.now() + 90 * 86400000,
+      revoked: false,
+    });
+    await audit(ctx, id, "auditor.provisioned", repository);
+    return { agentId: id, role: "auditor" };
+  },
+});
+
 export const bootstrap = internalMutation({
   args: {
     editorKeyHash: v.string(),

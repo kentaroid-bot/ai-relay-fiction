@@ -84,6 +84,8 @@ export async function contentCommand(
           !body.review.candidates.some(
             (c: any) =>
               c.url === s.url &&
+              (c.relationship === undefined ||
+                c.relationship === "source_use") &&
               c.rights === "verified" &&
               c.licenseType === s.licenseType &&
               c.evidenceUrl === s.licenseEvidenceUrl &&

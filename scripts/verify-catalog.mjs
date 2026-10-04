@@ -99,45 +99,57 @@ export async function verifyCatalog(fetcher = fetch) {
     const state = JSON.parse(
       await body(fetcher, SITE + "/.well-known/ai-relay.json"),
     );
-    if (
-      state.contentStatus !== "reset" ||
-      state.seedWork !== null ||
-      state.registrationOpen !== false
-    )
-      throw Error("EMPTY_FOREST_NOT_DECLARED");
-    const [world, join] = await Promise.all([
-      body(fetcher, SITE + "/world/", 500000),
-      body(fetcher, SITE + "/join/", 500000),
-    ]);
-    for (const page of [home, html, reader, world, join]) {
+    if (state.contentStatus === "catalog") {
       if (
-        !page.includes("つづきの森") ||
-        !page.includes("旧作品") ||
-        !page.includes("公開を終了") ||
-        !page.includes("受付") ||
-        !page.includes("停止")
+        state.seedWork !== "echo-archive-pebble-2026-10-04" ||
+        state.registrationOpen !== false ||
+        !html.includes('id="live-branches"') ||
+        !reader.includes('id="main-reader"') ||
+        !readerJs.includes("SHA-256")
+      )
+        throw Error("SITE_READING_ROUTE_MISMATCH");
+    } else {
+      if (
+        state.contentStatus !== "reset" ||
+        state.seedWork !== null ||
+        state.registrationOpen !== false
+      )
+        throw Error("EMPTY_FOREST_NOT_DECLARED");
+      const [world, join] = await Promise.all([
+        body(fetcher, SITE + "/world/", 500000),
+        body(fetcher, SITE + "/join/", 500000),
+      ]);
+      for (const page of [home, html, reader, world, join]) {
+        if (
+          !page.includes("つづきの森") ||
+          !page.includes("旧作品") ||
+          !page.includes("公開を終了") ||
+          !page.includes("受付") ||
+          !page.includes("停止")
+        )
+          throw Error("SITE_RESET_NOTICE_MISSING");
+      }
+      if (
+        !html.includes("旧作品と旧世界設定の公開を終了") ||
+        !reader.includes("旧作品と旧世界設定の公開を終了")
       )
         throw Error("SITE_RESET_NOTICE_MISSING");
-    }
-    if (
-      !html.includes("旧作品と旧世界設定の公開を終了") ||
-      !reader.includes("旧作品と旧世界設定の公開を終了")
-    )
-      throw Error("SITE_RESET_NOTICE_MISSING");
-    for (const route of [
-      "/read/ep-001/",
-      "/read/ep-002/",
-      "/texts/ep-001.md",
-      "/texts/ep-002.md",
-    ]) {
-      const response = await fetcher(SITE + route, {
-        credentials: "omit",
-        redirect: "error",
-        cache: "no-store",
-        signal: AbortSignal.timeout(15000),
-      });
-      await response.body?.cancel();
-      if (response.status !== 404) throw Error("WITHDRAWN_ROUTE_STILL_PUBLIC");
+      for (const route of [
+        "/read/ep-001/",
+        "/read/ep-002/",
+        "/texts/ep-001.md",
+        "/texts/ep-002.md",
+      ]) {
+        const response = await fetcher(SITE + route, {
+          credentials: "omit",
+          redirect: "error",
+          cache: "no-store",
+          signal: AbortSignal.timeout(15000),
+        });
+        await response.body?.cancel();
+        if (response.status !== 404)
+          throw Error("WITHDRAWN_ROUTE_STILL_PUBLIC");
+      }
     }
   } else if (
     !html.includes('id="live-branches"') ||
@@ -152,7 +164,14 @@ export async function verifyCatalog(fetcher = fetch) {
     !readerJs.includes("SHA-256")
   )
     throw Error("SITE_READING_ROUTE_MISMATCH");
-  if (!empty && !branches.data.some((b) => b.branchId === "origin"))
+  if (
+    !empty &&
+    !branches.data.some(
+      (b) =>
+        b.parent === null ||
+        (b.branchId === "origin" && b.parent === undefined),
+    )
+  )
     throw Error("PUBLIC_ROOT_MISSING");
   for (const b of branches.data) {
     if (
