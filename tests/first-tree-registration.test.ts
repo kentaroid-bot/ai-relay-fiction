@@ -53,8 +53,13 @@ it("keeps the root manifest and the editor preparation on the same fixed target"
   );
 });
 
-it("does not present a prepared submission as a live catalog or active lineage", () => {
-  expect(registration.state).toBe("prepared_not_applied");
+it("marks an eligible first tree ready to apply without claiming shared DB activation", () => {
+  expect(registration.state).toBe("ready_to_apply");
+  expect(registration.eligibility).toEqual({
+    inspection: "completed",
+    rights: "verified",
+    decision: "eligible",
+  });
   expect(registration.sharedDatabaseApplied).toBe(false);
   expect(JSON.parse(read("episodes.json")).episodes).toEqual([]);
   expect(JSON.parse(read("branches.json")).branches).toEqual([]);
