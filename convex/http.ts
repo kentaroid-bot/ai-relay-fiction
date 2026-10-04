@@ -74,6 +74,7 @@ function sameParent(a: any, b: any) {
 }
 const writes = new Set([
   "review.record",
+  "editor.lineage.prepare",
   "editor.lineage.activate",
   "editor.lineage.retire",
   "editor.publication.prepare",
@@ -380,10 +381,9 @@ const endpoint = httpAction(async (ctx, request) => {
           manifest.termsVersion !== branch.license.termsVersion)
       )
         fail("WORK_LICENSE_MISMATCH");
-      const worldMarkdown =
-        branch.branchId === "origin"
-          ? await githubText(branch.repository, branch.revision, "world.md")
-          : null;
+      const worldMarkdown = branch.isLineageRoot
+        ? await githubText(branch.repository, branch.revision, "world.md")
+        : null;
       if (
         worldMarkdown !== null &&
         (await digest(worldMarkdown)) !== branch.worldHash
@@ -425,10 +425,7 @@ const endpoint = httpAction(async (ctx, request) => {
           .findings)
           findings.add(code);
         const declared = ep.parent ? object(ep.parent) : previous;
-        if (
-          !declared &&
-          (branch.branchId !== "origin" || episodes.length !== 0)
-        )
+        if (!declared && (!branch.isLineageRoot || episodes.length !== 0))
           fail("INVALID_PARENT");
         const parent = declared
           ? {

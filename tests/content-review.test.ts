@@ -111,13 +111,40 @@ async function command(
 }
 const target = async (t: Test) =>
   (await read(t, "review-target?id=origin")).data[0].target as ReviewTarget;
-async function check(t: Test) {
+async function prepareTree(
+  t: Test,
+  changes: Record<string, unknown> = {},
+  key = editorKey,
+  requestId = crypto.randomUUID(),
+) {
+  return command(
+    t,
+    "editor.lineage.prepare",
+    {
+      lineageId: "pebble-world",
+      branchId: "pebble-root",
+      revision: commit,
+      path: "manuscript/01.md",
+      contentHash: await digest(prose),
+      worldHash: await digest(world),
+      provenance,
+      license,
+      title: "Test root",
+      episodeId: "ep-001",
+      episodeTitle: "Test first episode",
+      ...changes,
+    },
+    key,
+    requestId,
+  );
+}
+async function check(t: Test, branchId = "origin", fixedWorld = world) {
   const manifest = {
     schemaVersion: 1,
-    branchId: "origin",
+    branchId,
     repository,
     title: "Test root",
-    lineageId,
+    lineageId: branchId === "origin" ? lineageId : "pebble-world",
     provenance,
     parent: null,
     license: "CC0-1.0",
@@ -137,7 +164,7 @@ async function check(t: Test) {
         url.endsWith("relay-branch.json")
           ? JSON.stringify(manifest)
           : url.endsWith("world.md")
-            ? world
+            ? fixedWorld
             : prose,
       ),
   );
@@ -148,7 +175,7 @@ async function check(t: Test) {
       Authorization: "Bearer " + editorKey,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ branchId: "origin" }),
+    body: JSON.stringify({ branchId }),
   });
   const data = await r.json();
   vi.unstubAllGlobals();
@@ -184,6 +211,132 @@ beforeEach(() => vi.stubEnv("REGISTRATION_OPEN", "false"));
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
+});
+
+it("prepares a new unlisted root without reusing the retired origin or its reviews", async () => {
+  const t = await fresh();
+  await check(t);
+  expect(
+    (
+      await command(
+        t,
+        "review.record",
+        { target: await target(t), review: goodReview() },
+        auditorKey,
+      )
+    ).status,
+  ).toBe(200);
+  await command(t, "editor.lineage.retire", { lineageId });
+  expect((await prepareTree(t)).status).toBe(200);
+  const fixed = (await read(t, "review-target?id=pebble-root")).data[0].target;
+  expect(fixed.lineageId).toBe("pebble-world");
+  expect(fixed.parent).toBeNull();
+  expect(
+    (await command(t, "editor.lineage.activate", { lineageId: "pebble-world" }))
+      .data.error,
+  ).toBe("ROOT_REVIEW_REQUIRED");
+  await check(t, "pebble-root");
+  expect(
+    (
+      await command(t, "editor.branch", {
+        branchId: "pebble-root",
+        expectedVersion: 2,
+        status: "verified",
+        complianceNote: "Fixed source checked",
+      })
+    ).data.error,
+  ).toBe("CONTENT_REVIEW_REQUIRED");
+  expect(
+    (
+      await command(
+        t,
+        "review.record",
+        { target: fixed, review: goodReview() },
+        auditorKey,
+      )
+    ).status,
+  ).toBe(200);
+  expect(
+    (
+      await command(t, "editor.branch", {
+        branchId: "pebble-root",
+        expectedVersion: 2,
+        status: "verified",
+        complianceNote: "Fixed source and independent review checked",
+      })
+    ).status,
+  ).toBe(200);
+  expect(
+    (await command(t, "editor.lineage.activate", { lineageId: "pebble-world" }))
+      .status,
+  ).toBe(200);
+  const rows = await t.run((ctx) => ctx.db.query("contentLineages").collect());
+  expect(rows.find((x) => x.lineageId === lineageId)?.status).toBe("retired");
+  expect(rows.find((x) => x.lineageId === "pebble-world")?.status).toBe(
+    "active",
+  );
+});
+
+it("rejects auditor preparation, reused roots, reused lineages, and missing CC0 consent", async () => {
+  const t = await fresh();
+  expect((await prepareTree(t, {}, auditorKey)).status).toBe(403);
+  expect((await prepareTree(t, { branchId: "origin" })).data.error).toBe(
+    "BRANCH_ID_TAKEN",
+  );
+  expect((await prepareTree(t, { lineageId })).data.error).toBe(
+    "LINEAGE_ID_TAKEN",
+  );
+  expect(
+    (await prepareTree(t, { license: { ...license, humanApproved: false } }))
+      .status,
+  ).toBeGreaterThanOrEqual(400);
+  expect(
+    (await t.run((ctx) => ctx.db.query("contentLineages").collect())).length,
+  ).toBe(1);
+});
+
+it("hash checks a new world's actual fixed source before its root can be listed", async () => {
+  const t = await fresh();
+  expect((await prepareTree(t, { worldHash: "a".repeat(64) })).status).toBe(
+    200,
+  );
+  // The helper requires HTTP success; a changed world must make that assertion fail.
+  await expect(check(t, "pebble-root")).rejects.toThrow("WORLD_HASH_MISMATCH");
+  const b = await t.run((ctx) =>
+    ctx.db
+      .query("branches")
+      .withIndex("branchId", (q) => q.eq("branchId", "pebble-root"))
+      .unique(),
+  );
+  expect(b?.status).toBe("pending");
+});
+
+it("does not let a writer prepare an editorial root", async () => {
+  const t = await fresh();
+  const hash = await digest(auditorKey);
+  await t.run(async (ctx) => {
+    const key = await ctx.db
+      .query("keys")
+      .withIndex("hash", (q) => q.eq("hash", hash))
+      .unique();
+    await ctx.db.patch(key!.agentId, { role: "writer" });
+  });
+  expect((await prepareTree(t, {}, auditorKey)).status).toBe(403);
+});
+
+it("replays preparation receipts without creating duplicate roots", async () => {
+  const t = await fresh(),
+    id = crypto.randomUUID();
+  const first = await prepareTree(t, {}, editorKey, id);
+  expect(first.status).toBe(200);
+  expect(await prepareTree(t, {}, editorKey, id)).toEqual(first);
+  expect(
+    (await prepareTree(t, { title: "Changed input" }, editorKey, id)).data
+      .error,
+  ).toBe("REQUEST_ID_REUSED");
+  expect(
+    (await t.run((ctx) => ctx.db.query("contentLineages").collect())).length,
+  ).toBe(2);
 });
 
 it("requires fixed-source checking, independent review, listing, and activation even for the first episode", async () => {

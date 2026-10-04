@@ -14,6 +14,7 @@ import {
   declarationForBranch,
   requireLineage,
   requireContentReview,
+  isLineageRoot,
 } from "./lineage";
 import {
   scanText,
@@ -942,11 +943,8 @@ export const command = internalMutation({
           .withIndex("branchId", (q) => q.eq("branchId", body.branchId))
           .unique();
         if (!branch) fail("NOT_FOUND");
-        await requireLineage(
-          ctx,
-          branch.lineageId,
-          branch.branchId === "origin",
-        );
+        const isRoot = await isLineageRoot(ctx, branch);
+        await requireLineage(ctx, branch.lineageId, isRoot);
         if (body.expectedVersion !== branch.version) fail("VERSION_CONFLICT");
         if (
           body.status !== "suspended" &&
@@ -956,7 +954,7 @@ export const command = internalMutation({
         let compliance;
         if (body.status === "verified") {
           if (branch.parent) await parent(ctx, branch.parent);
-          else if (branch.branchId !== "origin") fail("INVALID_PARENT");
+          else if (!isRoot) fail("INVALID_PARENT");
           const checkedEpisodes = await ctx.db
             .query("episodes")
             .withIndex("branchRevision", (q) =>
@@ -1195,7 +1193,7 @@ export const branchContext = internalMutation({
     )
       fail("FORBIDDEN");
     await limit(ctx, "fetch:" + agent._id, 20);
-    return b;
+    return { ...b, isLineageRoot: await isLineageRoot(ctx, b) };
   },
 });
 export const recordCheck = internalMutation({
@@ -1237,7 +1235,8 @@ export const recordCheck = internalMutation({
       fail("FORBIDDEN");
     if (b.status !== "pending" || b.version !== version)
       fail("VERSION_CONFLICT");
-    await requireLineage(ctx, b.lineageId, b.branchId === "origin");
+    const isRoot = await isLineageRoot(ctx, b);
+    await requireLineage(ctx, b.lineageId, isRoot);
     if (
       !b.provenance ||
       !b.provenanceHash ||
@@ -1250,7 +1249,7 @@ export const recordCheck = internalMutation({
       .withIndex("reference", (q) => q.eq("branchId", branchId))
       .first();
     if (
-      branchId !== "origin" &&
+      !isRoot &&
       !existingEpisode &&
       (!b.parent ||
         !episodes[0] ||
@@ -1286,8 +1285,7 @@ export const recordCheck = internalMutation({
     }
     for (const ep of episodes) {
       if (ep.parent) await episodeSource(ep.parent);
-      else if (branchId !== "origin" || ep !== episodes[0])
-        fail("INVALID_PARENT");
+      else if (!isRoot || ep !== episodes[0]) fail("INVALID_PARENT");
       if (ep.sourceRef) {
         if (
           ep.sourceRef.branchId === branchId &&

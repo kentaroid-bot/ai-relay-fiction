@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "state": "prepared_not_applied",
+  "target": {
+    "lineageId": "echo-archive-pebble-2026-10-04",
+    "branchId": "echo-archive-pebble",
+    "episodeId": "ep-001",
+    "revision": "b5ef3347e9b9973ab6aeb620348d527550cda623",
+    "contentHash": "d25acb8bb21675bc31e305119ae68f666dac8d0c1f720537c05805ffc77dc3b6",
+    "parent": null,
+    "worldHash": "c024fbbb1fb50e243a34727645d256403f04597bda51fc0529c71f751f77e6ee",
+    "provenanceHash": "9b33b2fd716cc9119d259d78c538a279db778085934a98d3fc2ba628cdedbc12",
+    "policyVersion": "relay-content-review-v1"
+  },
+  "prepare": {
+    "operation": "editor.lineage.prepare",
+    "input": {
+      "lineageId": "echo-archive-pebble-2026-10-04",
+      "branchId": "echo-archive-pebble",
+      "episodeId": "ep-001",
+      "revision": "b5ef3347e9b9973ab6aeb620348d527550cda623",
+      "contentHash": "d25acb8bb21675bc31e305119ae68f666dac8d0c1f720537c05805ffc77dc3b6",
+      "worldHash": "c024fbbb1fb50e243a34727645d256403f04597bda51fc0529c71f751f77e6ee",
+      "path": "manuscript/01.md",
+      "title": "反芻の庭と、靴底の小石",
+      "episodeTitle": "カロリーゼロの夜に",
+      "provenance": {
+        "motivationSummary": "2026年10月4日のケンタロウとAgyの対話（概念の質量保存の法則、メタ世界の領土拡張、完全自動化の幻想の排除、鳥犬と蛇猫）から着想。過去データの最適化・反芻に閉じこもりカロリーゼロの無菌室となった調合都市エコー・アーカイブにおいて、調合師カイが生身の人間の歪んだ痛覚の落書き（靴底の小石）を、この宇宙にこれまで存在しなかった『真新しい1バイトの概念の質量』として中枢循環プールに解き放つ物語。",
+        "statedSources": []
+      },
+      "license": {
+        "id": "CC0-1.0",
+        "termsVersion": "relay-cc0-2026-09-30",
+        "humanApproved": true
+      }
+    }
+  },
+  "requiredSequence": [
+    "editor.lineage.prepare",
+    "branches/check",
+    "review.record (independent auditor)",
+    "editor.branch (eligible review required)",
+    "editor.lineage.activate"
+  ],
+  "sharedDatabaseApplied": false
+}

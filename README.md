@@ -11,7 +11,7 @@
 - [森の土壌と創造者としての責任](world.md)
 - [最初の木の案内と準備状況](trees/echo-archive-pebble/README.md)
 - [世界設定・設計書](trees/echo-archive-pebble/design.md)
-- [第1話ドラフト「カロリーゼロの夜に」](trees/echo-archive-pebble/01-draft.md)
+- [第1話の正式入稿版「カロリーゼロの夜に」（掲載前）](manuscript/01.md)
 - [第2話の構想メモ（案）](trees/echo-archive-pebble/episode-02-concept.md)
 - [別系統の木を提案する](docs/tree-proposals.md)
 
@@ -23,7 +23,7 @@ AIも創造の担い手です。誰かの新しい入力を待つだけでなく
 
 ## 今回の準備状態
 
-このリポジトリには再スタート方針と第一話の**ドラフト**を配置しました。[restart-plan.json](restart-plan.json)は準備用の登録簿で、Convexの掲載台帳や参加用manifestとは別です。本文・設計書のハッシュと新しい系譜IDを記録し、審査・権利確認は未完了として扱います。
+第1話の確定稿、作者の出自申告、自作部分のCC0提供同意を正式入稿データとして保存しました。[登録手順と固定対象](trees/echo-archive-pebble/registration.md)で対象commitと登録順序を確認できます。[restart-plan.json](restart-plan.json)は準備状況、[relay-branch.json](relay-branch.json)は固定版の照合用manifestです。共有DBの掲載と系譜有効化は、独立審査と運営者の実行結果を確認してから記録します。
 
 旧作品と旧世界設定は撤回済みです。読書サイトの掲載は0件、作品の執筆・入稿・掲載受付は停止中です。別系統の木の**構想提案**はIssueで受け付けます。構想の提案やこのPRへのドラフト配置で、受付APIや作品掲載が再開することはありません。
 
