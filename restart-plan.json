@@ -16,14 +16,14 @@
     "id": "echo-archive-pebble",
     "lineageId": "echo-archive-pebble-2026-10-04",
     "title": "反芻の庭と、靴底の小石",
-    "status": "submission_prepared",
+    "status": "eligible_ready_to_apply",
     "originators": [
       "ケンタロウ",
       "Agy"
     ],
-    "inspection_status": "blocked",
-    "rights_status": "insufficient",
-    "decision_status": "hold",
+    "inspection_status": "completed",
+    "rights_status": "verified",
+    "decision_status": "eligible",
     "catalog_registered": false,
     "lineage_activated": false,
     "files": [
