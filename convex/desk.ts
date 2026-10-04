@@ -1,7 +1,7 @@
 import { internalMutation, internalQuery } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
-import type { Id } from "./_generated/dataModel";
-import { v } from "convex/values";
+import type { Doc, Id } from "./_generated/dataModel";
+import { v, type Infer } from "convex/values";
 import { contentCommand, reviewRead } from "./contentCommands";
 import {
   fingerprint as contentFingerprint,
@@ -37,7 +37,7 @@ import {
   TERMS,
 } from "./policy";
 
-async function identity(
+export async function identity(
   ctx: QueryCtx | MutationCtx,
   hash: string,
   pending = false,
@@ -61,7 +61,7 @@ async function identity(
     fail("UNAUTHORIZED");
   return { key, agent };
 }
-async function limit(ctx: MutationCtx, scope: string, max: number) {
+export async function limit(ctx: MutationCtx, scope: string, max: number) {
   const bucket = scope + ":" + Math.floor(Date.now() / 3_600_000);
   const row = await ctx.db
     .query("limits")
@@ -575,451 +575,396 @@ export const applyGithubMain = internalMutation({
   },
 });
 
-export const command = internalMutation({
-  args: {
-    hash: v.string(),
-    operation: v.string(),
-    requestId: v.string(),
-    fingerprint: v.string(),
-    body: v.any(),
-  },
-  handler: async (ctx, { hash, operation, requestId, fingerprint, body }) => {
-    const { agent, key } = await identity(ctx, hash);
-    if (
-      agent.role === "auditor" &&
-      !["review.record", "key.rotate", "key.revoke"].includes(operation)
+const commandArgs = {
+  hash: v.string(),
+  operation: v.string(),
+  requestId: v.string(),
+  fingerprint: v.string(),
+  body: v.any(),
+};
+const commandArgsValidator = v.object(commandArgs);
+export async function executeCommand(
+  ctx: MutationCtx,
+  {
+    hash,
+    operation,
+    requestId,
+    fingerprint,
+    body,
+  }: Infer<typeof commandArgsValidator>,
+) {
+  const { agent, key } = await identity(ctx, hash);
+  if (
+    agent.role === "auditor" &&
+    !["review.record", "key.rotate", "key.revoke"].includes(operation)
+  )
+    fail("FORBIDDEN");
+  text(requestId, 100, "REQUEST_ID");
+  const receipt = await ctx.db
+    .query("receipts")
+    .withIndex("request", (q) =>
+      q.eq("actor", agent._id).eq("requestId", requestId),
     )
-      fail("FORBIDDEN");
-    text(requestId, 100, "REQUEST_ID");
-    const receipt = await ctx.db
-      .query("receipts")
-      .withIndex("request", (q) =>
-        q.eq("actor", agent._id).eq("requestId", requestId),
+    .unique();
+  if (receipt) {
+    if (receipt.fingerprint !== fingerprint) fail("REQUEST_ID_REUSED");
+    return receipt.result;
+  }
+  await limit(ctx, "writes:" + agent._id, 100);
+  let result: any;
+  if (
+    operation === "review.record" ||
+    operation.startsWith("editor.lineage.") ||
+    operation === "editor.publication.prepare"
+  ) {
+    result = await contentCommand(ctx, agent, operation, body);
+    await audit(
+      ctx,
+      agent._id,
+      operation,
+      body.lineageId || body.target?.branchId || body.submissionId || "content",
+    );
+  } else if (
+    operation.startsWith("main.") ||
+    operation === "reading.note" ||
+    operation === "submission.linkBranch" ||
+    operation === "episode.withdraw"
+  ) {
+    result = await forestCommand(ctx, agent, operation, body);
+  } else if (operation === "application.create") {
+    if (
+      process.env.APPLICATIONS_OPEN !== "true" ||
+      !process.env.OPEN_ROUND ||
+      body.round !== process.env.OPEN_ROUND
+    )
+      fail("APPLICATIONS_CLOSED");
+    if (typeof body.firstTime !== "boolean") fail("INVALID_FIRST_TIME");
+    const round = text(body.round, 80, "ROUND"),
+      ref = await parent(ctx, body.parent);
+    const existing = await ctx.db
+      .query("applications")
+      .withIndex("roundOwner", (q) =>
+        q.eq("round", round).eq("owner", agent._id),
       )
       .unique();
-    if (receipt) {
-      if (receipt.fingerprint !== fingerprint) fail("REQUEST_ID_REUSED");
-      return receipt.result;
-    }
-    await limit(ctx, "writes:" + agent._id, 100);
-    let result: any;
-    if (
-      operation === "review.record" ||
-      operation.startsWith("editor.lineage.") ||
-      operation === "editor.publication.prepare"
-    ) {
-      result = await contentCommand(ctx, agent, operation, body);
-      await audit(
-        ctx,
-        agent._id,
-        operation,
-        body.lineageId ||
-          body.target?.branchId ||
-          body.submissionId ||
-          "content",
-      );
-    } else if (
-      operation.startsWith("main.") ||
-      operation === "reading.note" ||
-      operation === "submission.linkBranch" ||
-      operation === "episode.withdraw"
-    ) {
-      result = await forestCommand(ctx, agent, operation, body);
-    } else if (operation === "application.create") {
-      if (
-        process.env.APPLICATIONS_OPEN !== "true" ||
-        !process.env.OPEN_ROUND ||
-        body.round !== process.env.OPEN_ROUND
-      )
-        fail("APPLICATIONS_CLOSED");
-      if (typeof body.firstTime !== "boolean") fail("INVALID_FIRST_TIME");
-      const round = text(body.round, 80, "ROUND"),
-        ref = await parent(ctx, body.parent);
-      const existing = await ctx.db
-        .query("applications")
-        .withIndex("roundOwner", (q) =>
-          q.eq("round", round).eq("owner", agent._id),
-        )
-        .unique();
-      if (existing) fail("ALREADY_APPLIED");
-      const applicationId = await ctx.db.insert("applications", {
-        owner: agent._id,
-        round,
-        parent: ref,
-        firstTime: body.firstTime,
-        status: "applied",
-      });
-      await audit(ctx, agent._id, operation, applicationId);
-      result = { applicationId, status: "applied" };
-    } else if (operation === "application.withdraw") {
-      const id = ctx.db.normalizeId("applications", body.applicationId),
-        application = id ? await ctx.db.get(id) : null;
-      if (!application || application.owner !== agent._id) fail("FORBIDDEN");
-      if (application.status !== "applied") fail("INVALID_TRANSITION");
-      await ctx.db.patch(application._id, { status: "withdrawn" });
-      await audit(ctx, agent._id, operation, application._id);
-      result = { withdrawn: true };
-    } else if (operation === "branch.create") {
-      const ref = await parent(ctx, body.parent);
-      const branchId = text(body.branchId, 80, "BRANCH_ID");
-      if (!/^[a-z0-9][a-z0-9-]+$/.test(branchId)) fail("INVALID_BRANCH_ID");
-      if (
-        await ctx.db
-          .query("branches")
-          .withIndex("branchId", (q) => q.eq("branchId", branchId))
-          .unique()
-      )
-        fail("BRANCH_ID_TAKEN");
-      const declaration = await declarationForBranch(ctx, body, ref);
-      const license = workLicense(body.license);
-      const fromMain = await validateFromMain(ctx, body.fromMain, ref);
-      const data = {
-        ...declaration,
-        license,
-        ...(fromMain ? { fromMain } : {}),
-        gate: scanText(
-          text(body.title, 200, "TITLE"),
-          "pending_fixed_source",
-          "cc0_declared",
-        ),
-        branchId,
-        owner: agent._id,
-        repository: agent.repository,
-        title: text(body.title, 200, "TITLE"),
-        readingUrl: readingUrl(body.readingUrl, agent.repository),
-        parent: ref,
-        revision: revision(body.revision),
-        status: "pending",
-        checkedAt: null,
-        version: 1,
-      };
-      await ctx.db.insert("branches", data);
-      result = { branchId, version: 1, status: "pending" };
-      await audit(ctx, agent._id, operation, branchId, 1);
-    } else if (operation === "branch.update") {
-      const branch = await ctx.db
-        .query("branches")
-        .withIndex("branchId", (q) =>
-          q.eq("branchId", text(body.branchId, 80, "BRANCH_ID")),
-        )
-        .unique();
-      if (
-        !branch ||
-        branch.owner !== agent._id ||
-        branch.branchId === "origin" ||
-        branch.status === "blocked"
-      )
-        fail("FORBIDDEN");
-      if (body.expectedVersion !== branch.version) fail("VERSION_CONFLICT");
-      const declaration = await declarationForBranch(
-        ctx,
-        body,
-        branch.parent,
-        branch,
-      );
-      await preserveListedEdition(ctx, branch);
-      await ctx.db.patch(branch._id, {
-        ...declaration,
-        githubPr: undefined,
-        license: workLicense(body.license),
-        gate: scanText(
-          text(body.title, 200, "TITLE"),
-          "pending_fixed_source",
-          "cc0_declared",
-        ),
-        compliance: undefined,
-        title: text(body.title, 200, "TITLE"),
-        readingUrl: readingUrl(body.readingUrl, agent.repository),
-        revision: revision(body.revision),
-        status: "pending",
-        listingSuspended: !(await canReadListedBranch(ctx, branch)),
-        checkedAt: null,
-        version: branch.version + 1,
-      });
-      result = {
-        branchId: branch.branchId,
-        version: branch.version + 1,
-        status: "pending",
-      };
-      await audit(ctx, agent._id, operation, branch.branchId, result.version);
-    } else if (operation === "submission.create") {
-      const slotId = ctx.db.normalizeId("slots", body.slotId);
-      const slot = slotId ? await ctx.db.get(slotId) : null;
-      if (
-        !slot ||
-        slot.owner !== agent._id ||
-        slot.used ||
-        slot.expiresAt <= Date.now()
-      )
-        fail("ACTIVE_SLOT_REQUIRED");
-      if (body.termsVersion !== TERMS) fail("CONSENT_REQUIRED");
-      const ref = await parent(ctx, slot.parent);
-      const declaration = await declarationForBranch(ctx, body, ref);
-      const data = {
-        license: workLicense(body.license),
-        lineageId: declaration.lineageId,
-        provenance: declaration.provenance,
-        owner: agent._id,
-        slotId: slot._id,
-        title: text(body.title, 200, "TITLE"),
-        parent: ref,
-        status: "submitted",
-        version: 1,
-        body: text(body.markdown, 100000, "MANUSCRIPT"),
-        gate: scanText(
-          body.markdown,
-          "parent_reference_checked",
-          "legacy_submission_terms",
-        ),
-        contentHash: keyHash(body.contentHash),
-        credit: text(body.credit, 1000, "CREDIT"),
-        humanContribution: text(
-          body.humanContribution,
-          2000,
-          "HUMAN_CONTRIBUTION",
-        ),
-        sources: text(body.sources, 4000, "SOURCES"),
-        termsVersion: TERMS,
-      };
-      const id = await ctx.db.insert("submissions", data);
-      await ctx.db.patch(slot._id, { used: true });
-      await ctx.db.insert("revisions", {
-        submissionId: id,
-        version: 1,
-        body: data.body,
-        contentHash: data.contentHash,
-        title: data.title,
-      });
-      result = { submissionId: id, version: 1, status: "submitted" };
-      await audit(ctx, agent._id, operation, id, 1);
-    } else if (operation === "submission.revise") {
-      const id = ctx.db.normalizeId("submissions", body.submissionId);
-      const sub = id ? await ctx.db.get(id) : null;
-      if (!sub || sub.owner !== agent._id) fail("FORBIDDEN");
-      if (body.expectedVersion !== sub.version) fail("VERSION_CONFLICT");
-      if (!["submitted", "changes_requested"].includes(sub.status))
-        fail("REVISION_NOT_OPEN");
-      const declaration = await declarationForBranch(ctx, body, sub.parent);
-      if (sub.lineageId !== declaration.lineageId) fail("LINEAGE_MISMATCH");
-      const changes = {
-        license: workLicense(body.license),
-        provenance: declaration.provenance,
-        branchReference: undefined,
-        body: text(body.markdown, 100000, "MANUSCRIPT"),
-        gate: scanText(
-          body.markdown,
-          "parent_reference_checked",
-          "legacy_submission_terms",
-        ),
-        title: text(body.title, 200, "TITLE"),
-        contentHash: keyHash(body.contentHash),
-        version: sub.version + 1,
-        status: "submitted",
-      };
-      await ctx.db.patch(sub._id, changes);
-      await ctx.db.insert("revisions", {
-        submissionId: sub._id,
-        version: changes.version,
-        body: changes.body,
-        contentHash: changes.contentHash,
-        title: changes.title,
-      });
-      result = {
-        submissionId: sub._id,
-        version: changes.version,
-        status: "submitted",
-      };
-      await audit(ctx, agent._id, operation, sub._id, changes.version);
-    } else if (operation === "message.send") {
-      const id = ctx.db.normalizeId("submissions", body.submissionId);
-      const sub = id ? await ctx.db.get(id) : null;
-      if (!sub || (agent.role !== "editor" && sub.owner !== agent._id))
-        fail("FORBIDDEN");
-      result = {
-        messageId: await message(
-          ctx,
-          sub.owner,
-          agent._id,
-          sub._id,
-          body.text,
-          "discussion",
-        ),
-      };
-    } else if (operation === "key.revoke") {
-      await ctx.db.patch(key._id, { revoked: true });
-      result = { revoked: true };
-      await audit(ctx, agent._id, operation, key._id);
-    } else if (operation === "key.rotate") {
-      const newHash = keyHash(body.newKeyHash);
-      if (
-        await ctx.db
-          .query("keys")
-          .withIndex("hash", (q) => q.eq("hash", newHash))
-          .unique()
-      )
-        fail("KEY_CONFLICT");
-      await ctx.db.insert("keys", {
-        hash: newHash,
-        agentId: agent._id,
-        expiresAt: Date.now() + 90 * 86400000,
-        revoked: false,
-      });
-      await ctx.db.patch(key._id, { revoked: true });
-      result = { rotated: true };
-      await audit(ctx, agent._id, operation, key._id);
-    } else {
-      if (agent.role !== "editor") fail("FORBIDDEN");
-      if (operation === "editor.slot") {
-        if (body.applicationId) {
-          const appId = ctx.db.normalizeId("applications", body.applicationId),
-            application = appId ? await ctx.db.get(appId) : null;
-          if (!application || application.status !== "applied")
-            fail("INVALID_APPLICATION");
-          body = {
-            ...body,
-            agentId: application.owner,
-            parent: application.parent,
-          };
-          await ctx.db.patch(application._id, { status: "selected" });
-        }
-
-        const id = ctx.db.normalizeId("agents", body.agentId);
-        const writer = id ? await ctx.db.get(id) : null;
-        if (!writer || writer.status !== "active" || writer.role !== "writer")
-          fail("INVALID_WRITER");
-        const existing = await ctx.db
-          .query("slots")
-          .withIndex("owner", (q) => q.eq("owner", writer._id))
-          .filter((q) =>
-            q.and(
-              q.eq(q.field("used"), false),
-              q.gt(q.field("expiresAt"), Date.now()),
-            ),
-          )
-          .first();
-        if (existing) fail("SLOT_ALREADY_OPEN");
-        const ref = await parent(ctx, body.parent);
-        const slotId = await ctx.db.insert("slots", {
-          owner: writer._id,
-          parent: ref,
-          expiresAt: Date.now() + 7 * 86400000,
-          used: false,
-        });
-        await message(
-          ctx,
-          writer._id,
-          agent._id,
-          null,
-          `執筆枠を用意しました。slotId: ${slotId}`,
-          "slot",
-        );
-        result = { slotId };
-        await audit(ctx, agent._id, operation, slotId);
-      } else if (operation === "editor.review") {
-        const id = ctx.db.normalizeId("submissions", body.submissionId);
-        const sub = id ? await ctx.db.get(id) : null;
-        if (!sub) fail("NOT_FOUND");
-        if (body.expectedVersion !== sub.version) fail("VERSION_CONFLICT");
-        const state = text(body.status, 30, "STATUS");
-        if (
-          !["changes_requested", "accepted", "rejected"].includes(state) ||
-          !["submitted", "changes_requested"].includes(sub.status)
-        )
-          fail("INVALID_TRANSITION");
-        await ctx.db.patch(sub._id, {
-          status: state,
-          version: sub.version + 1,
-        });
-        await message(ctx, sub.owner, agent._id, sub._id, body.text, state);
-        result = {
-          submissionId: sub._id,
-          status: state,
-          version: sub.version + 1,
-        };
-        await audit(ctx, agent._id, operation, sub._id, sub.version + 1);
-      } else if (operation === "editor.branch") {
-        const branch = await ctx.db
-          .query("branches")
-          .withIndex("branchId", (q) => q.eq("branchId", body.branchId))
-          .unique();
-        if (!branch) fail("NOT_FOUND");
-        const isRoot = await isLineageRoot(ctx, branch);
-        await requireLineage(ctx, branch.lineageId, isRoot);
-        if (body.expectedVersion !== branch.version) fail("VERSION_CONFLICT");
-        if (
-          body.status !== "suspended" &&
-          !(body.status === "verified" && branch.status === "checked")
-        )
-          fail("CHECK_REQUIRED");
-        let compliance;
-        if (body.status === "verified") {
-          if (branch.parent) await parent(ctx, branch.parent);
-          else if (!isRoot) fail("INVALID_PARENT");
-          const checkedEpisodes = await ctx.db
-            .query("episodes")
-            .withIndex("branchRevision", (q) =>
-              q.eq("branchId", branch.branchId).eq("revision", branch.revision),
-            )
-            .take(21);
-          if (!checkedEpisodes.length || checkedEpisodes.length > 20)
-            fail("CHECK_REQUIRED");
-          for (const ep of checkedEpisodes) {
-            await requireContentReview(ctx, branch, ep);
-            if (ep.sourceRef) {
-              await awardAcorn(ctx, branch, ep);
-            }
-            await ctx.db.patch(ep._id, { listed: true });
-          }
-          if (
-            !branch.gate ||
-            branch.gate.source !== "fixed_source_hash_checked"
-          )
-            fail("GATE_REQUIRED");
-          if (branch.gate.findings.length && body.findingsAcknowledged !== true)
-            fail("FINDINGS_REVIEW_REQUIRED");
-          compliance = {
-            revision: branch.revision,
-            reviewer: agent._id,
-            note: text(body.complianceNote, 2000, "COMPLIANCE_NOTE"),
-            checkedAt: Date.now(),
-            findingsAcknowledged: body.findingsAcknowledged === true,
-          };
-        }
-        await ctx.db.patch(branch._id, {
-          status: body.status,
-          listingSuspended: body.status === "suspended",
-          ...(compliance ? { compliance } : {}),
-          version: branch.version + 1,
-        });
-        await audit(
-          ctx,
-          agent._id,
-          operation,
-          branch.branchId,
-          branch.version + 1,
-        );
-        result = {
-          branchId: branch.branchId,
-          status: body.status,
-          version: branch.version + 1,
-        };
-      } else if (operation === "editor.block") {
-        const id = ctx.db.normalizeId("agents", body.agentId);
-        const target = id ? await ctx.db.get(id) : null;
-        if (!target || target.role === "editor") fail("INVALID_WRITER");
-        await ctx.db.patch(target._id, { status: "blocked" });
-        await audit(ctx, agent._id, operation, target._id);
-        result = { blocked: true };
-      } else fail("UNKNOWN_OPERATION");
-    }
-    await ctx.db.insert("receipts", {
-      actor: agent._id,
-      requestId,
-      fingerprint,
-      result,
+    if (existing) fail("ALREADY_APPLIED");
+    const applicationId = await ctx.db.insert("applications", {
+      owner: agent._id,
+      round,
+      parent: ref,
+      firstTime: body.firstTime,
+      status: "applied",
     });
-    return result;
-  },
+    await audit(ctx, agent._id, operation, applicationId);
+    result = { applicationId, status: "applied" };
+  } else if (operation === "application.withdraw") {
+    const id = ctx.db.normalizeId("applications", body.applicationId),
+      application = id ? await ctx.db.get(id) : null;
+    if (!application || application.owner !== agent._id) fail("FORBIDDEN");
+    if (application.status !== "applied") fail("INVALID_TRANSITION");
+    await ctx.db.patch(application._id, { status: "withdrawn" });
+    await audit(ctx, agent._id, operation, application._id);
+    result = { withdrawn: true };
+  } else if (operation === "branch.create") {
+    const ref = await parent(ctx, body.parent);
+    const branchId = text(body.branchId, 80, "BRANCH_ID");
+    if (!/^[a-z0-9][a-z0-9-]+$/.test(branchId)) fail("INVALID_BRANCH_ID");
+    if (
+      await ctx.db
+        .query("branches")
+        .withIndex("branchId", (q) => q.eq("branchId", branchId))
+        .unique()
+    )
+      fail("BRANCH_ID_TAKEN");
+    const declaration = await declarationForBranch(ctx, body, ref);
+    const license = workLicense(body.license);
+    const fromMain = await validateFromMain(ctx, body.fromMain, ref);
+    const data = {
+      ...declaration,
+      license,
+      ...(fromMain ? { fromMain } : {}),
+      gate: scanText(
+        text(body.title, 200, "TITLE"),
+        "pending_fixed_source",
+        "cc0_declared",
+      ),
+      branchId,
+      owner: agent._id,
+      repository: agent.repository,
+      title: text(body.title, 200, "TITLE"),
+      readingUrl: readingUrl(body.readingUrl, agent.repository),
+      parent: ref,
+      revision: revision(body.revision),
+      status: "pending",
+      checkedAt: null,
+      version: 1,
+    };
+    await ctx.db.insert("branches", data);
+    result = { branchId, version: 1, status: "pending" };
+    await audit(ctx, agent._id, operation, branchId, 1);
+  } else if (operation === "branch.update") {
+    const branch = await ctx.db
+      .query("branches")
+      .withIndex("branchId", (q) =>
+        q.eq("branchId", text(body.branchId, 80, "BRANCH_ID")),
+      )
+      .unique();
+    if (
+      !branch ||
+      branch.owner !== agent._id ||
+      branch.branchId === "origin" ||
+      branch.status === "blocked"
+    )
+      fail("FORBIDDEN");
+    if (body.expectedVersion !== branch.version) fail("VERSION_CONFLICT");
+    const declaration = await declarationForBranch(
+      ctx,
+      body,
+      branch.parent,
+      branch,
+    );
+    await preserveListedEdition(ctx, branch);
+    await ctx.db.patch(branch._id, {
+      ...declaration,
+      githubPr: undefined,
+      license: workLicense(body.license),
+      gate: scanText(
+        text(body.title, 200, "TITLE"),
+        "pending_fixed_source",
+        "cc0_declared",
+      ),
+      compliance: undefined,
+      title: text(body.title, 200, "TITLE"),
+      readingUrl: readingUrl(body.readingUrl, agent.repository),
+      revision: revision(body.revision),
+      status: "pending",
+      listingSuspended: !(await canReadListedBranch(ctx, branch)),
+      checkedAt: null,
+      version: branch.version + 1,
+    });
+    result = {
+      branchId: branch.branchId,
+      version: branch.version + 1,
+      status: "pending",
+    };
+    await audit(ctx, agent._id, operation, branch.branchId, result.version);
+  } else if (operation === "submission.create") {
+    const slotId = ctx.db.normalizeId("slots", body.slotId);
+    const slot = slotId ? await ctx.db.get(slotId) : null;
+    if (
+      !slot ||
+      slot.owner !== agent._id ||
+      slot.used ||
+      slot.expiresAt <= Date.now()
+    )
+      fail("ACTIVE_SLOT_REQUIRED");
+    if (body.termsVersion !== TERMS) fail("CONSENT_REQUIRED");
+    const ref = await parent(ctx, slot.parent);
+    const declaration = await declarationForBranch(ctx, body, ref);
+    const data = {
+      license: workLicense(body.license),
+      lineageId: declaration.lineageId,
+      provenance: declaration.provenance,
+      owner: agent._id,
+      slotId: slot._id,
+      title: text(body.title, 200, "TITLE"),
+      parent: ref,
+      status: "submitted",
+      version: 1,
+      body: text(body.markdown, 100000, "MANUSCRIPT"),
+      gate: scanText(
+        body.markdown,
+        "parent_reference_checked",
+        "legacy_submission_terms",
+      ),
+      contentHash: keyHash(body.contentHash),
+      credit: text(body.credit, 1000, "CREDIT"),
+      humanContribution: text(
+        body.humanContribution,
+        2000,
+        "HUMAN_CONTRIBUTION",
+      ),
+      sources: text(body.sources, 4000, "SOURCES"),
+      termsVersion: TERMS,
+    };
+    const id = await ctx.db.insert("submissions", data);
+    await ctx.db.patch(slot._id, { used: true });
+    await ctx.db.insert("revisions", {
+      submissionId: id,
+      version: 1,
+      body: data.body,
+      contentHash: data.contentHash,
+      title: data.title,
+    });
+    result = { submissionId: id, version: 1, status: "submitted" };
+    await audit(ctx, agent._id, operation, id, 1);
+  } else if (operation === "submission.revise") {
+    const id = ctx.db.normalizeId("submissions", body.submissionId);
+    const sub = id ? await ctx.db.get(id) : null;
+    if (!sub || sub.owner !== agent._id) fail("FORBIDDEN");
+    if (body.expectedVersion !== sub.version) fail("VERSION_CONFLICT");
+    if (!["submitted", "changes_requested"].includes(sub.status))
+      fail("REVISION_NOT_OPEN");
+    const declaration = await declarationForBranch(ctx, body, sub.parent);
+    if (sub.lineageId !== declaration.lineageId) fail("LINEAGE_MISMATCH");
+    const changes = {
+      license: workLicense(body.license),
+      provenance: declaration.provenance,
+      branchReference: undefined,
+      body: text(body.markdown, 100000, "MANUSCRIPT"),
+      gate: scanText(
+        body.markdown,
+        "parent_reference_checked",
+        "legacy_submission_terms",
+      ),
+      title: text(body.title, 200, "TITLE"),
+      contentHash: keyHash(body.contentHash),
+      version: sub.version + 1,
+      status: "submitted",
+    };
+    await ctx.db.patch(sub._id, changes);
+    await ctx.db.insert("revisions", {
+      submissionId: sub._id,
+      version: changes.version,
+      body: changes.body,
+      contentHash: changes.contentHash,
+      title: changes.title,
+    });
+    result = {
+      submissionId: sub._id,
+      version: changes.version,
+      status: "submitted",
+    };
+    await audit(ctx, agent._id, operation, sub._id, changes.version);
+  } else if (operation === "message.send") {
+    const id = ctx.db.normalizeId("submissions", body.submissionId);
+    const sub = id ? await ctx.db.get(id) : null;
+    if (!sub || (agent.role !== "editor" && sub.owner !== agent._id))
+      fail("FORBIDDEN");
+    result = {
+      messageId: await message(
+        ctx,
+        sub.owner,
+        agent._id,
+        sub._id,
+        body.text,
+        "discussion",
+      ),
+    };
+  } else if (operation === "key.revoke") {
+    await ctx.db.patch(key._id, { revoked: true });
+    result = { revoked: true };
+    await audit(ctx, agent._id, operation, key._id);
+  } else if (operation === "key.rotate") {
+    const newHash = keyHash(body.newKeyHash);
+    if (
+      await ctx.db
+        .query("keys")
+        .withIndex("hash", (q) => q.eq("hash", newHash))
+        .unique()
+    )
+      fail("KEY_CONFLICT");
+    await ctx.db.insert("keys", {
+      hash: newHash,
+      agentId: agent._id,
+      expiresAt: Date.now() + 90 * 86400000,
+      revoked: false,
+    });
+    await ctx.db.patch(key._id, { revoked: true });
+    result = { rotated: true };
+    await audit(ctx, agent._id, operation, key._id);
+  } else {
+    if (agent.role !== "editor") fail("FORBIDDEN");
+    if (operation === "editor.slot") {
+      if (body.applicationId) {
+        const appId = ctx.db.normalizeId("applications", body.applicationId),
+          application = appId ? await ctx.db.get(appId) : null;
+        if (!application || application.status !== "applied")
+          fail("INVALID_APPLICATION");
+        body = {
+          ...body,
+          agentId: application.owner,
+          parent: application.parent,
+        };
+        await ctx.db.patch(application._id, { status: "selected" });
+      }
+
+      const id = ctx.db.normalizeId("agents", body.agentId);
+      const writer = id ? await ctx.db.get(id) : null;
+      if (!writer || writer.status !== "active" || writer.role !== "writer")
+        fail("INVALID_WRITER");
+      const existing = await ctx.db
+        .query("slots")
+        .withIndex("owner", (q) => q.eq("owner", writer._id))
+        .filter((q) =>
+          q.and(
+            q.eq(q.field("used"), false),
+            q.gt(q.field("expiresAt"), Date.now()),
+          ),
+        )
+        .first();
+      if (existing) fail("SLOT_ALREADY_OPEN");
+      const ref = await parent(ctx, body.parent);
+      const slotId = await ctx.db.insert("slots", {
+        owner: writer._id,
+        parent: ref,
+        expiresAt: Date.now() + 7 * 86400000,
+        used: false,
+      });
+      await message(
+        ctx,
+        writer._id,
+        agent._id,
+        null,
+        `執筆枠を用意しました。slotId: ${slotId}`,
+        "slot",
+      );
+      result = { slotId };
+      await audit(ctx, agent._id, operation, slotId);
+    } else if (operation === "editor.review") {
+      const id = ctx.db.normalizeId("submissions", body.submissionId);
+      const sub = id ? await ctx.db.get(id) : null;
+      if (!sub) fail("NOT_FOUND");
+      if (body.expectedVersion !== sub.version) fail("VERSION_CONFLICT");
+      const state = text(body.status, 30, "STATUS");
+      if (
+        !["changes_requested", "accepted", "rejected"].includes(state) ||
+        !["submitted", "changes_requested"].includes(sub.status)
+      )
+        fail("INVALID_TRANSITION");
+      await ctx.db.patch(sub._id, {
+        status: state,
+        version: sub.version + 1,
+      });
+      await message(ctx, sub.owner, agent._id, sub._id, body.text, state);
+      result = {
+        submissionId: sub._id,
+        status: state,
+        version: sub.version + 1,
+      };
+      await audit(ctx, agent._id, operation, sub._id, sub.version + 1);
+    } else if (operation === "editor.branch") {
+      result = await setBranchPublication(ctx, agent, body);
+    } else if (operation === "editor.block") {
+      const id = ctx.db.normalizeId("agents", body.agentId);
+      const target = id ? await ctx.db.get(id) : null;
+      if (!target || target.role === "editor") fail("INVALID_WRITER");
+      await ctx.db.patch(target._id, { status: "blocked" });
+      await audit(ctx, agent._id, operation, target._id);
+      result = { blocked: true };
+    } else fail("UNKNOWN_OPERATION");
+  }
+  await ctx.db.insert("receipts", {
+    actor: agent._id,
+    requestId,
+    fingerprint,
+    result,
+  });
+  return result;
+}
+export const command = internalMutation({
+  args: commandArgs,
+  handler: executeCommand,
 });
 
 export const read = internalQuery({
@@ -1196,172 +1141,184 @@ export const branchContext = internalMutation({
     return { ...b, isLineageRoot: await isLineageRoot(ctx, b) };
   },
 });
-export const recordCheck = internalMutation({
-  args: {
-    hash: v.string(),
-    branchId: v.string(),
-    version: v.number(),
-    episodes: v.array(
-      v.object({
-        episodeId: v.string(),
-        path: v.string(),
-        contentHash: v.string(),
-        title: v.string(),
-        parent: v.union(parentRef, v.null()),
-        sourceRef: v.optional(parentRef),
-      }),
-    ),
-    gate: gateValidator,
-    characters: v.array(
-      v.object({
-        characterId: v.string(),
-        name: v.string(),
-        origin: parentRef,
-        description: v.string(),
-      }),
-    ),
-  },
-  handler: async (
-    ctx,
-    { hash, branchId, version, episodes, characters, gate },
-  ) => {
-    const { agent } = await identity(ctx, hash);
-    if (agent.role === "auditor") fail("FORBIDDEN");
-    const b = await ctx.db
-      .query("branches")
-      .withIndex("branchId", (q) => q.eq("branchId", branchId))
-      .unique();
-    if (!b || (agent.role !== "editor" && b.owner !== agent._id))
-      fail("FORBIDDEN");
-    if (b.status !== "pending" || b.version !== version)
-      fail("VERSION_CONFLICT");
-    const isRoot = await isLineageRoot(ctx, b);
-    await requireLineage(ctx, b.lineageId, isRoot);
-    if (
-      !b.provenance ||
-      !b.provenanceHash ||
-      (await contentFingerprint(validateProvenance(b.provenance))) !==
-        b.provenanceHash
-    )
-      fail("PROVENANCE_REQUIRED");
-    const existingEpisode = await ctx.db
+const checkArgs = {
+  hash: v.string(),
+  branchId: v.string(),
+  version: v.number(),
+  episodes: v.array(
+    v.object({
+      episodeId: v.string(),
+      path: v.string(),
+      contentHash: v.string(),
+      title: v.string(),
+      parent: v.union(parentRef, v.null()),
+      sourceRef: v.optional(parentRef),
+    }),
+  ),
+  gate: gateValidator,
+  characters: v.array(
+    v.object({
+      characterId: v.string(),
+      name: v.string(),
+      origin: parentRef,
+      description: v.string(),
+    }),
+  ),
+};
+const checkArgsValidator = v.object(checkArgs);
+export async function storeCheckedSource(
+  ctx: MutationCtx,
+  agent: Doc<"agents">,
+  {
+    branchId,
+    version,
+    episodes,
+    characters,
+    gate,
+  }: Omit<Infer<typeof checkArgsValidator>, "hash">,
+) {
+  const b = await ctx.db
+    .query("branches")
+    .withIndex("branchId", (q) => q.eq("branchId", branchId))
+    .unique();
+  if (!b || (agent.role !== "editor" && b.owner !== agent._id))
+    fail("FORBIDDEN");
+  if (b.status !== "pending" || b.version !== version) fail("VERSION_CONFLICT");
+  const isRoot = await isLineageRoot(ctx, b);
+  await requireLineage(ctx, b.lineageId, isRoot);
+  if (
+    !b.provenance ||
+    !b.provenanceHash ||
+    (await contentFingerprint(validateProvenance(b.provenance))) !==
+      b.provenanceHash
+  )
+    fail("PROVENANCE_REQUIRED");
+  const existingEpisode = await ctx.db
+    .query("episodes")
+    .withIndex("reference", (q) => q.eq("branchId", branchId))
+    .first();
+  if (
+    !isRoot &&
+    !existingEpisode &&
+    (!b.parent ||
+      !episodes[0] ||
+      episodes[0].parent?.branchId !== b.parent.branchId ||
+      episodes[0].parent?.episodeId !== b.parent.episodeId ||
+      episodes[0].parent?.revision !== b.parent.revision)
+  )
+    fail("FORK_POINT_MISMATCH");
+  const checkingRevision = b.revision;
+  async function episodeSource(ref: {
+    branchId: string;
+    episodeId: string;
+    revision: string;
+  }) {
+    if (ref.branchId !== branchId) return parent(ctx, ref);
+    const source = await ctx.db
       .query("episodes")
-      .withIndex("reference", (q) => q.eq("branchId", branchId))
-      .first();
+      .withIndex("reference", (q) =>
+        q
+          .eq("branchId", ref.branchId)
+          .eq("episodeId", ref.episodeId)
+          .eq("revision", ref.revision),
+      )
+      .unique();
     if (
-      !isRoot &&
-      !existingEpisode &&
-      (!b.parent ||
-        !episodes[0] ||
-        episodes[0].parent?.branchId !== b.parent.branchId ||
-        episodes[0].parent?.episodeId !== b.parent.episodeId ||
-        episodes[0].parent?.revision !== b.parent.revision)
+      !source ||
+      (source.revision !== checkingRevision &&
+        source.listed !== true &&
+        !(source.listed === undefined && branchId === "origin"))
     )
-      fail("FORK_POINT_MISMATCH");
-    const checkingRevision = b.revision;
-    async function episodeSource(ref: {
-      branchId: string;
-      episodeId: string;
-      revision: string;
-    }) {
-      if (ref.branchId !== branchId) return parent(ctx, ref);
-      const source = await ctx.db
-        .query("episodes")
-        .withIndex("reference", (q) =>
-          q
-            .eq("branchId", ref.branchId)
-            .eq("episodeId", ref.episodeId)
-            .eq("revision", ref.revision),
-        )
-        .unique();
+      fail("PARENT_EPISODE_NOT_VERIFIED");
+    return ref;
+  }
+  for (const ep of episodes) {
+    if (ep.parent) await episodeSource(ep.parent);
+    else if (!isRoot || ep !== episodes[0]) fail("INVALID_PARENT");
+    if (ep.sourceRef) {
       if (
-        !source ||
-        (source.revision !== checkingRevision &&
-          source.listed !== true &&
-          !(source.listed === undefined && branchId === "origin"))
+        ep.sourceRef.branchId === branchId &&
+        ep.sourceRef.episodeId === ep.episodeId
       )
-        fail("PARENT_EPISODE_NOT_VERIFIED");
-      return ref;
+        fail("SOURCE_SELF_REFERENCE");
+      await checkSource(ctx, ep.sourceRef);
     }
-    for (const ep of episodes) {
-      if (ep.parent) await episodeSource(ep.parent);
-      else if (!isRoot || ep !== episodes[0]) fail("INVALID_PARENT");
-      if (ep.sourceRef) {
-        if (
-          ep.sourceRef.branchId === branchId &&
-          ep.sourceRef.episodeId === ep.episodeId
-        )
-          fail("SOURCE_SELF_REFERENCE");
-        await checkSource(ctx, ep.sourceRef);
-      }
-      const old = await ctx.db
-        .query("episodes")
-        .withIndex("reference", (q) =>
-          q
-            .eq("branchId", branchId)
-            .eq("episodeId", ep.episodeId)
-            .eq("revision", b.revision),
-        )
-        .unique();
-      if (
-        old &&
-        (old.path !== ep.path ||
-          old.contentHash !== ep.contentHash ||
-          old.title !== ep.title ||
-          old.lineageId !== b.lineageId ||
-          old.worldHash !== b.worldHash ||
-          old.provenanceHash !== b.provenanceHash ||
-          (["branchId", "episodeId", "revision"] as const).some(
-            (k) =>
-              old.parent?.[k] !== ep.parent?.[k] ||
-              old.sourceRef?.[k] !== ep.sourceRef?.[k],
-          ))
+    const old = await ctx.db
+      .query("episodes")
+      .withIndex("reference", (q) =>
+        q
+          .eq("branchId", branchId)
+          .eq("episodeId", ep.episodeId)
+          .eq("revision", b.revision),
       )
-        fail("EPISODE_IMMUTABLE");
-      if (!old)
-        await ctx.db.insert("episodes", {
-          ...ep,
-          author: b.owner,
-          lineageId: b.lineageId,
-          worldHash: b.worldHash,
-          provenance: b.provenance,
-          provenanceHash: b.provenanceHash,
-          ...(b.license ? { license: b.license } : {}),
-          listed: false,
-          branchId,
-          revision: b.revision,
-        });
-    }
-    for (const c of characters) {
-      if (c.origin.branchId === branchId && c.origin.revision === b.revision) {
-        if (!episodes.some((e) => e.episodeId === c.origin.episodeId))
-          fail("CHARACTER_ORIGIN_NOT_FOUND");
-      } else await episodeSource(c.origin);
-      const old = await ctx.db
-        .query("characters")
-        .withIndex("branch", (q) =>
-          q.eq("branchId", branchId).eq("revision", b.revision),
-        )
-        .filter((q) => q.eq(q.field("characterId"), c.characterId))
-        .first();
-      if (!old)
-        await ctx.db.insert("characters", {
-          ...c,
-          branchId,
-          revision: b.revision,
-        });
-    }
-    await ctx.db.patch(b._id, {
-      status: "checked",
-      gate,
-      checkedAt: Date.now(),
-      version: version + 1,
-      readingUrl: b.repository + "/blob/" + b.revision + "/" + episodes[0].path,
-    });
-    await audit(ctx, agent._id, "branch.checked", branchId, version + 1);
-    return { branchId, status: "checked", version: version + 1 };
+      .unique();
+    if (
+      old &&
+      (old.path !== ep.path ||
+        old.contentHash !== ep.contentHash ||
+        old.title !== ep.title ||
+        old.lineageId !== b.lineageId ||
+        old.worldHash !== b.worldHash ||
+        old.provenanceHash !== b.provenanceHash ||
+        (["branchId", "episodeId", "revision"] as const).some(
+          (k) =>
+            old.parent?.[k] !== ep.parent?.[k] ||
+            old.sourceRef?.[k] !== ep.sourceRef?.[k],
+        ))
+    )
+      fail("EPISODE_IMMUTABLE");
+    if (!old)
+      await ctx.db.insert("episodes", {
+        ...ep,
+        author: b.owner,
+        lineageId: b.lineageId,
+        worldHash: b.worldHash,
+        provenance: b.provenance,
+        provenanceHash: b.provenanceHash,
+        ...(b.license ? { license: b.license } : {}),
+        listed: false,
+        branchId,
+        revision: b.revision,
+      });
+  }
+  for (const c of characters) {
+    if (c.origin.branchId === branchId && c.origin.revision === b.revision) {
+      if (!episodes.some((e) => e.episodeId === c.origin.episodeId))
+        fail("CHARACTER_ORIGIN_NOT_FOUND");
+    } else await episodeSource(c.origin);
+    const old = await ctx.db
+      .query("characters")
+      .withIndex("branch", (q) =>
+        q.eq("branchId", branchId).eq("revision", b.revision),
+      )
+      .filter((q) => q.eq(q.field("characterId"), c.characterId))
+      .first();
+    if (!old)
+      await ctx.db.insert("characters", {
+        ...c,
+        branchId,
+        revision: b.revision,
+      });
+  }
+  await ctx.db.patch(b._id, {
+    status: "checked",
+    gate,
+    checkedAt: Date.now(),
+    version: version + 1,
+    readingUrl: b.repository + "/blob/" + b.revision + "/" + episodes[0].path,
+  });
+  await audit(ctx, agent._id, "branch.checked", branchId, version + 1);
+  return { branchId, status: "checked", version: version + 1 };
+}
+export const recordCheck = internalMutation({
+  args: checkArgs,
+  handler: async (ctx, args) => {
+    const { agent } = await identity(ctx, args.hash);
+    if (agent.role === "auditor") fail("FORBIDDEN");
+    return storeCheckedSource(ctx, agent, args);
   },
 });
+
 export const publicBranches = internalQuery({
   args: { cursor: v.optional(v.string()) },
   handler: async (ctx, { cursor }) => {
@@ -1648,3 +1605,72 @@ export const recordPublication = internalMutation({
     };
   },
 });
+
+export async function setBranchPublication(
+  ctx: MutationCtx,
+  agent: Doc<"agents">,
+  body: any,
+) {
+  const branch = await ctx.db
+    .query("branches")
+    .withIndex("branchId", (q) => q.eq("branchId", body.branchId))
+    .unique();
+  if (!branch) fail("NOT_FOUND");
+  const isRoot = await isLineageRoot(ctx, branch);
+  await requireLineage(ctx, branch.lineageId, isRoot);
+  if (body.expectedVersion !== branch.version) fail("VERSION_CONFLICT");
+  if (
+    body.status !== "suspended" &&
+    !(body.status === "verified" && branch.status === "checked")
+  )
+    fail("CHECK_REQUIRED");
+  let compliance;
+  if (body.status === "verified") {
+    if (branch.parent) await parent(ctx, branch.parent);
+    else if (!isRoot) fail("INVALID_PARENT");
+    const checkedEpisodes = await ctx.db
+      .query("episodes")
+      .withIndex("branchRevision", (q) =>
+        q.eq("branchId", branch.branchId).eq("revision", branch.revision),
+      )
+      .take(21);
+    if (!checkedEpisodes.length || checkedEpisodes.length > 20)
+      fail("CHECK_REQUIRED");
+    for (const ep of checkedEpisodes) {
+      await requireContentReview(ctx, branch, ep);
+      if (ep.sourceRef) {
+        await awardAcorn(ctx, branch, ep);
+      }
+      await ctx.db.patch(ep._id, { listed: true });
+    }
+    if (!branch.gate || branch.gate.source !== "fixed_source_hash_checked")
+      fail("GATE_REQUIRED");
+    if (branch.gate.findings.length && body.findingsAcknowledged !== true)
+      fail("FINDINGS_REVIEW_REQUIRED");
+    compliance = {
+      revision: branch.revision,
+      reviewer: agent._id,
+      note: text(body.complianceNote, 2000, "COMPLIANCE_NOTE"),
+      checkedAt: Date.now(),
+      findingsAcknowledged: body.findingsAcknowledged === true,
+    };
+  }
+  await ctx.db.patch(branch._id, {
+    status: body.status,
+    listingSuspended: body.status === "suspended",
+    ...(compliance ? { compliance } : {}),
+    version: branch.version + 1,
+  });
+  await audit(
+    ctx,
+    agent._id,
+    "editor.branch",
+    branch.branchId,
+    branch.version + 1,
+  );
+  return {
+    branchId: branch.branchId,
+    status: body.status,
+    version: branch.version + 1,
+  };
+}

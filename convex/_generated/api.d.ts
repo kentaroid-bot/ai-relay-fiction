@@ -9,6 +9,8 @@
  */
 
 import type * as desk from "../desk.js";
+import type * as intake from "../intake.js";
+import type * as intakeWorker from "../intakeWorker.js";
 import type * as forest from "../forest.js";
 import type * as http from "../http.js";
 import type * as policy from "../policy.js";
@@ -22,6 +24,8 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   desk: typeof desk;
+  intake: typeof intake;
+  intakeWorker: typeof intakeWorker;
   forest: typeof forest;
   http: typeof http;
   policy: typeof policy;

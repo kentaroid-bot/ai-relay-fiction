@@ -1,4 +1,11 @@
 const allowed = new Set([
+  "POST /v2/github",
+  "GET /v2/intakes",
+  "POST /v2/intakes",
+  "POST /v2/intakes/reply",
+  "POST /v2/intakes/review",
+  "POST /v2/intakes/retry",
+  "POST /v2/intakes/notifications/retry",
   "GET /v1/applications",
   "GET /v1/status",
   "GET /v1/catalog",
@@ -60,7 +67,9 @@ export default {
     // Never forward cookies, arbitrary host headers or browser session credentials.
     for (const name of publicCatalog
       ? []
-      : ["Authorization", "Content-Type", "Idempotency-Key"]) {
+      : path === "/v2/github"
+        ? ["Content-Type", "X-Hub-Signature-256", "X-GitHub-Event"]
+        : ["Authorization", "Content-Type", "Idempotency-Key"]) {
       const value = request.headers.get(name);
       if (value) headers.set(name, value);
     }

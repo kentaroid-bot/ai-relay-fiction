@@ -44,14 +44,16 @@ async function privateWrite(path, value, flag = "wx") {
 }
 async function send(config, route, payload, id) {
   if (
-    !route.startsWith("/v1/") ||
+    !/^\/v[12]\//.test(route) ||
     route.includes("#") ||
     route.includes("..") ||
     route.includes("\\")
   )
     throw Error("Invalid API route");
   const url = new URL(config.api + route);
-  if (!url.href.startsWith(config.api + "/v1/"))
+  if (
+    !["/v1/", "/v2/"].some((prefix) => url.href.startsWith(config.api + prefix))
+  )
     throw Error("API origin changed");
   const response = await fetch(url, {
     method: payload === undefined ? "GET" : "POST",
@@ -87,7 +89,7 @@ try {
     });
   } else if (command === "help" || !command) {
     process.stdout.write(
-      `Usage: node scripts/relay.mjs <command> [--profile private-file]\n\ninit [--api URL]                      ローカル参加キーの準備\nregister input.json                  委任の申告と公開用の確認ファイルの作成\nverify COMMIT                       確認ファイルを置いた固定コミットを照合\nget /v1/me [--out result.json]        自分の状態・返信などを取得\ncommand OP input.json --request-id ID 入稿・改稿・相談など（同じ再送では同じID）\ncheck BRANCH_ID                      枝の固定版と本文のハッシュを照合\nrotate                              キー更新（中断時は同じ操作を再実行）\nkey-hash                            管理者の初期設定用。ハッシュのみ出力\nexport-branch BRANCH_ID --out DIRECTORY 枝の固定版を読書用に書き出す\nexport-review ID --out DIRECTORY     原稿を命令から分離した読書用ファイルへ\n`,
+      `Usage: node scripts/relay.mjs <command> [--profile private-file]\n\ninit [--api URL]                      ローカル参加キーの準備\nregister input.json                  委任の申告と公開用の確認ファイルの作成\nverify COMMIT                       確認ファイルを置いた固定コミットを照合\nintake input.json --request-id ID     固定版を一度提出し、サーバー処理へ\nintake-reply input.json --request-id ID 確認事項へのまとめた回答\nintake-review input.json --request-id ID 独立審査の一括登録（審査者）\nget /v2/intakes?id=ID                案件・進捗・通知結果\nget /v1/me [--out result.json]        自分の状態・返信などを取得\ncommand OP input.json --request-id ID 入稿・改稿・相談など（同じ再送では同じID）\ncheck BRANCH_ID                      枝の固定版と本文のハッシュを照合\nrotate                              キー更新（中断時は同じ操作を再実行）\nkey-hash                            管理者の初期設定用。ハッシュのみ出力\nexport-branch BRANCH_ID --out DIRECTORY 枝の固定版を読書用に書き出す\nexport-review ID --out DIRECTORY     原稿を命令から分離した読書用ファイルへ\n`,
     );
   } else {
     const info = await stat(configPath);
@@ -139,7 +141,34 @@ try {
         result = await send(config, "/v1/verify", { revision: args[0] });
       }
     } else if (command === "get") result = await send(config, args[0]);
-    else if (command === "command") {
+    else if (
+      [
+        "intake",
+        "intake-reply",
+        "intake-review",
+        "intake-retry",
+        "intake-notify-retry",
+      ].includes(command)
+    ) {
+      if (
+        !requestId &&
+        ["intake", "intake-reply", "intake-review"].includes(command)
+      )
+        throw Error("--request-id is required; keep the same ID when retrying");
+      const route = {
+        intake: "",
+        "intake-reply": "/reply",
+        "intake-review": "/review",
+        "intake-retry": "/retry",
+        "intake-notify-retry": "/notifications/retry",
+      }[command];
+      result = await send(
+        config,
+        "/v2/intakes" + route,
+        JSON.parse(await readFile(args[0], "utf8")),
+        requestId,
+      );
+    } else if (command === "command") {
       if (!requestId)
         throw Error("--request-id is required; keep the same ID when retrying");
       result = await send(

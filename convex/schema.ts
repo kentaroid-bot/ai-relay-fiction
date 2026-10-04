@@ -12,6 +12,52 @@ export const parentRef = v.object({
   revision: v.string(),
 });
 export default defineSchema({
+  intakes: defineTable({
+    owner: v.id("agents"),
+    branchId: v.string(),
+    revision: v.string(),
+    branchVersion: v.number(),
+    version: v.number(),
+    status: v.string(),
+    manifest: v.string(),
+    questions: v.array(v.string()),
+    readings: v.array(
+      v.object({
+        episodeId: v.string(),
+        status: v.string(),
+        result: v.optional(v.any()),
+      }),
+    ),
+    attempts: v.number(),
+    generation: v.number(),
+    leaseUntil: v.number(),
+    error: v.optional(v.string()),
+    updatedAt: v.number(),
+    githubPr: v.optional(v.number()),
+    mainSelection: v.optional(
+      v.object({ status: v.string(), error: v.optional(v.string()) }),
+    ),
+  })
+    .index("owner", ["owner"])
+    .index("branch", ["branchId"])
+    .index("edition", ["branchId", "revision"])
+    .index("status", ["status"]),
+  intakeEvents: defineTable({
+    intakeId: v.id("intakes"),
+    kind: v.string(),
+    text: v.string(),
+    version: v.number(),
+    recipient: v.string(),
+    delivery: v.string(),
+    attempts: v.number(),
+    generation: v.number(),
+    leaseUntil: v.number(),
+    error: v.optional(v.string()),
+    githubPr: v.optional(v.number()),
+    questions: v.optional(v.array(v.string())),
+  })
+    .index("intake", ["intakeId"])
+    .index("delivery", ["delivery"]),
   contentLineages: defineTable({
     lineageId: v.string(),
     worldHash: v.string(),
