@@ -16,14 +16,14 @@
     "id": "echo-archive-pebble",
     "lineageId": "echo-archive-pebble-2026-10-04",
     "title": "反芻の庭と、靴底の小石",
-    "status": "draft",
+    "status": "eligible_ready_to_apply",
     "originators": [
       "ケンタロウ",
       "Agy"
     ],
-    "inspection_status": "pending",
-    "rights_status": "pending",
-    "decision_status": "pending",
+    "inspection_status": "completed",
+    "rights_status": "verified",
+    "decision_status": "eligible",
     "catalog_registered": false,
     "lineage_activated": false,
     "files": [
@@ -38,7 +38,25 @@
       {
         "path": "trees/echo-archive-pebble/episode-02-concept.md",
         "sha256": "cbb4a0e4eee4af62757b314b1b7d19344bb41890eb09d9486823d5604ecae1de"
+      },
+      {
+        "path": "world.md",
+        "sha256": "c024fbbb1fb50e243a34727645d256403f04597bda51fc0529c71f751f77e6ee"
+      },
+      {
+        "path": "manuscript/01.md",
+        "sha256": "d25acb8bb21675bc31e305119ae68f666dac8d0c1f720537c05805ffc77dc3b6"
+      },
+      {
+        "path": "trees/echo-archive-pebble/provenance.json",
+        "sha256": "887239074397b2dd174c63c085a32b0a4c23ca0f3a68e58df137ba0278a4079d"
+      },
+      {
+        "path": "trees/echo-archive-pebble/license.json",
+        "sha256": "af8d45025eb7f83744df7299b839ccdcce0d00dcd5820c303165a0fd48fcf919"
       }
-    ]
+    ],
+    "submission_record": "trees/echo-archive-pebble/registration.json",
+    "review_summary": "trees/echo-archive-pebble/review-summary.json"
   }
 }

@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "target": {
+    "lineageId": "echo-archive-pebble-2026-10-04",
+    "branchId": "echo-archive-pebble",
+    "episodeId": "ep-001",
+    "revision": "ed382247480e9564feb430708f5b48e18292db64",
+    "contentHash": "d25acb8bb21675bc31e305119ae68f666dac8d0c1f720537c05805ffc77dc3b6",
+    "parent": null,
+    "worldHash": "c024fbbb1fb50e243a34727645d256403f04597bda51fc0529c71f751f77e6ee",
+    "provenanceHash": "b17aa3f01db4ad6885a44ee5c2a76b917a31d31d72e42a934be884ba3bbfdc63",
+    "policyVersion": "relay-content-review-v1"
+  },
+  "authorStatement": {
+    "statedSources": [],
+    "precheckRelationLevel": 1,
+    "coreConceptOriginality": "起案者の申告。独立性の保証ではない。",
+    "influences": [
+      {
+        "title": "バベルの図書館 (La biblioteca de Babel)",
+        "author": "Jorge Luis Borges",
+        "publishedYear": 1941,
+        "relationship": "公然の影響（古典的モチーフの継承）。過去の全書物が集積され新しい文章が生まれなくなったアーカイブ都市という前提の文化的系譜。本文の翻案や表現の利用ではなく、その前提を『概念の質量の拡張』によって乗り越える対話的動機。"
+      }
+    ]
+  },
+  "independentCheck": {
+    "mode": "auditor",
+    "skillVersion": "0.2.0",
+    "skillSha256": "1ce8ec684baa82f7b5812a3c47dae2e822fbc62d0db1e360838b5a819a13939a",
+    "findings": [
+      {
+        "title": "The Library of Babel (Jorge Luis Borges)",
+        "relationLevel": 2,
+        "scope": "アーカイブと新作不能という前提の組合せ",
+        "observation": "総文学アーカイブと新しさへの問いが具体的に重なる。",
+        "differences": "全ての記号列を含む図書館と、過去の人間の著作を分類する都市は異なる。本作では新概念を外から加える。人物・場面・表現の移植は確認していない。",
+        "followup": "起案者が公然の影響として正式申告済み。素材利用出典とは区別して確認済み。"
+      },
+      {
+        "title": "The Great Automatic Grammatizator (Roald Dahl)",
+        "relationLevel": 1,
+        "scope": "出版社の紹介で確認できた機械執筆という一般テーマ",
+        "observation": "機械化された文章生産と書き手の役割という題材を共有する。",
+        "differences": "原文は未読。人物・規則・因果について判断を広げない。",
+        "followup": "一般テーマ上の比較候補であり、素材利用出典ではない。"
+      },
+      {
+        "title": "憎むにキスを",
+        "relationLevel": 2,
+        "scope": "世界設定に明示された概念的継承",
+        "observation": "人の行為が言葉の記憶・意味を変える原理を継承する。",
+        "differences": "第1話では調合師とアーカイブ、新概念の追加へ抽象化している。元作の人物・出来事・表現の再使用は確認していない。",
+        "followup": "土壌としての概念的継承。本文・場面・表現の利用元とは区別して扱う。"
+      }
+    ],
+    "status": "completed",
+    "declarationChecked": true
+  },
+  "editorDecision": {
+    "inspection": "completed",
+    "rights": "verified",
+    "decision": "eligible",
+    "reason": "Agyの正式回答により、Borges『バベルの図書館』は素材利用出典ではなく公然の影響として申告・確認された。statedSourcesは空で、自作部分のCC0提供同意を確認済み。比較候補と利用元を分離した上で掲載可とする。",
+    "publicSummary": "固定版の独立比較と補正済み出自申告を照合した。Borges『バベルの図書館』は古典的SFモチーフの公然の影響として明示され、本文の翻案・表現利用とは区別されている。素材利用出典はなく、自作部分のCC0提供同意を確認したため掲載可とする。"
+  },
+  "runtime": {
+    "contentReviewRecorded": false,
+    "lineagePrepared": false,
+    "catalogRegistered": false,
+    "lineageActivated": false,
+    "readyToApply": true
+  }
+}

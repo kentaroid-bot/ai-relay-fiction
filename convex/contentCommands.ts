@@ -3,6 +3,8 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { fail, keyHash, path, revision, text } from "./policy";
 import {
   fingerprint,
+  lineageId,
+  REVIEW_POLICY,
   validateProvenance,
   validateReview,
   validateTarget,
@@ -100,6 +102,72 @@ export async function contentCommand(
     return { reviewId, decision: body.review.decision };
   }
   if (actor.role !== "editor") fail("FORBIDDEN");
+  if (operation === "editor.lineage.prepare") {
+    const id = lineageId(body.lineageId);
+    const branchId = text(body.branchId, 80, "BRANCH_ID");
+    if (!/^[a-z0-9][a-z0-9-]{1,79}$/.test(branchId)) fail("INVALID_BRANCH_ID");
+    if (await getLineage(ctx, id)) fail("LINEAGE_ID_TAKEN");
+    if (
+      await ctx.db
+        .query("branches")
+        .withIndex("branchId", (q) => q.eq("branchId", branchId))
+        .unique()
+    )
+      fail("BRANCH_ID_TAKEN");
+    const commit = revision(body.revision),
+      file = path(body.path);
+    const worldHash = keyHash(body.worldHash),
+      contentHash = keyHash(body.contentHash);
+    const provenance = validateProvenance(body.provenance),
+      license = workLicense(body.license);
+    const provenanceHash = await fingerprint(provenance);
+    const episodeId = text(body.episodeId, 80, "EPISODE_ID");
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(episodeId)) fail("INVALID_EPISODE_ID");
+    const declaration = {
+      lineageId: id,
+      worldHash,
+      provenance,
+      provenanceHash,
+      license,
+    };
+    // Preparing a new root never changes or reuses a previous lineage's rows.
+    await ctx.db.insert("contentLineages", {
+      lineageId: id,
+      worldHash,
+      policyVersion: REVIEW_POLICY,
+      status: "draft",
+      rootBranchId: branchId,
+      worldRepository: actor.repository,
+      worldRevision: commit,
+      createdBy: actor._id,
+    });
+    await ctx.db.insert("branches", {
+      ...declaration,
+      branchId,
+      owner: actor._id,
+      repository: actor.repository,
+      title: text(body.title, 200, "TITLE"),
+      readingUrl: actor.repository + "/blob/" + commit + "/" + file,
+      parent: null,
+      revision: commit,
+      status: "pending",
+      checkedAt: null,
+      version: 1,
+    });
+    await ctx.db.insert("episodes", {
+      ...declaration,
+      branchId,
+      episodeId,
+      author: actor._id,
+      parent: null,
+      listed: false,
+      revision: commit,
+      path: file,
+      contentHash,
+      title: text(body.episodeTitle, 200, "TITLE"),
+    });
+    return { lineageId: id, branchId, episodeId, status: "review_required" };
+  }
   if (
     operation === "editor.lineage.activate" ||
     operation === "editor.lineage.retire"

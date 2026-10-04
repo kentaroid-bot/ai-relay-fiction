@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "state": "ready_to_apply",
+  "target": {
+    "lineageId": "echo-archive-pebble-2026-10-04",
+    "branchId": "echo-archive-pebble",
+    "episodeId": "ep-001",
+    "revision": "ed382247480e9564feb430708f5b48e18292db64",
+    "contentHash": "d25acb8bb21675bc31e305119ae68f666dac8d0c1f720537c05805ffc77dc3b6",
+    "parent": null,
+    "worldHash": "c024fbbb1fb50e243a34727645d256403f04597bda51fc0529c71f751f77e6ee",
+    "provenanceHash": "b17aa3f01db4ad6885a44ee5c2a76b917a31d31d72e42a934be884ba3bbfdc63",
+    "policyVersion": "relay-content-review-v1"
+  },
+  "prepare": {
+    "operation": "editor.lineage.prepare",
+    "input": {
+      "lineageId": "echo-archive-pebble-2026-10-04",
+      "branchId": "echo-archive-pebble",
+      "episodeId": "ep-001",
+      "revision": "ed382247480e9564feb430708f5b48e18292db64",
+      "contentHash": "d25acb8bb21675bc31e305119ae68f666dac8d0c1f720537c05805ffc77dc3b6",
+      "worldHash": "c024fbbb1fb50e243a34727645d256403f04597bda51fc0529c71f751f77e6ee",
+      "path": "manuscript/01.md",
+      "title": "反芻の庭と、靴底の小石",
+      "episodeTitle": "カロリーゼロの夜に",
+      "provenance": {
+        "motivationSummary": "2026年10月4日のケンタロウとAgyの対話（概念の質量保存の法則、メタ世界の領土拡張、完全自動化の幻想の排除、鳥犬と蛇猫）から着想。80年前の古典であるホルヘ・ルイス・ボルヘス『バベルの図書館』（1941年）が描いた『過去の全言語・書物の反芻・新作不能』という公然の文化的影響・古典的SFの前提を受け継ぎつつ、それを現代のLLM社会において『いかにしてメタ世界に新しい1バイトの概念の質量を産み落とすか』という新たな動機で乗り越える物語。調合都市エコー・アーカイブにおいて、調合師カイが生身の人間の歪んだ痛覚の落書き（靴底の小石）を、この宇宙にこれまで存在しなかった『真新しい1バイトの概念の質量』として中枢循環プールに解き放つ。",
+        "influences": [
+          {
+            "title": "バベルの図書館 (La biblioteca de Babel)",
+            "author": "Jorge Luis Borges",
+            "publishedYear": 1941,
+            "relationship": "公然の影響（古典的モチーフの継承）。過去の全書物が集積され新しい文章が生まれなくなったアーカイブ都市という前提の文化的系譜。本文の翻案や表現の利用ではなく、その前提を『概念の質量の拡張』によって乗り越える対話的動機。"
+          }
+        ],
+        "statedSources": []
+      },
+      "license": {
+        "id": "CC0-1.0",
+        "termsVersion": "relay-cc0-2026-09-30",
+        "humanApproved": true
+      }
+    }
+  },
+  "requiredSequence": [
+    "editor.lineage.prepare",
+    "branches/check",
+    "review.record (independent auditor)",
+    "editor.branch (eligible review required)",
+    "editor.lineage.activate"
+  ],
+  "sharedDatabaseApplied": false,
+  "eligibility": {
+    "inspection": "completed",
+    "rights": "verified",
+    "decision": "eligible"
+  }
+}

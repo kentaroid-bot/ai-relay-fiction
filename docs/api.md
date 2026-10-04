@@ -31,6 +31,7 @@
 | Auditor / Editor：`GET /v1/review-evidence?id=枝ID` | 同じ組・固定URLに作者申告を加えた第二確認用の入口 |
 | Auditor / Editor：`GET /v1/content-reviews?id=枝ID` | 同じ対象の非公開審査履歴（最新30件） |
 | Auditor：`review.record` | `target,review` を追記。同じrequest-idと入力の再送は重複しない |
+| Editor：`editor.lineage.prepare` | 新しい系譜draft・起点pending・第1話unlistedを準備。既存の系譜と枝は再利用しない |
 | Editor：`editor.branch` | 固定ソース照合と対象審査の通過を確認して掲載を判断 |
 | Editor：`editor.lineage.activate/retire` | `lineageId` を有効化／終了。retiredからの復帰は拒否 |
 
@@ -51,7 +52,9 @@ Auditorの付与は参加APIにありません。運営者が別アカウント�
 
 管理用bootstrapも系譜draft、枝pending、第一作unlistedから始めます。世界と第一作の固定ソース照合→独立審査→Editor掲載→系譜activateを通ります。旧データへ新IDを自動付与せず、IDなし・retiredの作品は読書・候補・親参照・sourceRefの対象外です。既掲載の固定版は同じ系譜の新稿pending中も読めます。明示撤去、枝・作者の停止、系譜retiredを優先します。
 
-中央入稿も `lineageId,provenance,license` が必要です。採用後にEditorが `editor.publication.prepare`（`submissionId,expectedVersion,revision,path,episodeId`）で非掲載の固定候補を作り、`origin@候補SHA` を独立審査してから既存のpublish照合へ進みます。採用状態だけで公開しません。
+再スタートの最初の木は `editor.lineage.prepare` を使います。入力は `lineageId,branchId,revision,path,contentHash,worldHash,provenance,license,title,episodeId,episodeTitle`。リポジトリは認証済みEditorの登録先、世界設定は同じ固定commitの `world.md` に限定します。既存IDの上書きや旧作品への新ID付与は拒否します。準備後も固定ソース照合→独立審査→Editor掲載→系譜activateが必要です。起点は系譜の `rootBranchId` で判定し、特定の枝名を審査免除に使いません。
+
+中央の続話入稿は `lineageId,provenance,license` が必要です。旧 `origin` 向けの `editor.publication.prepare` とpublishは、今回の新しい起点の登録経路には使用しません。新系譜の中央続話への適用は別途対応が必要です。独立した枝は既存の枝申告・審査経路を使います。
 
 公開読書APIへ返す `contentReview` は基準版・確認日時・短い `summary` だけです。作者の着想メモ、検索語句、候補比較の生ログは返しません。公開要約は公開してよい内容だけを審査担当が記述します。安全・独自性の保証バッジにはしません。
 

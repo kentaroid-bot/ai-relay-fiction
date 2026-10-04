@@ -28,6 +28,12 @@ export async function requireLineage(
   if (row.policyVersion !== REVIEW_POLICY) fail("REVIEW_POLICY_MISMATCH");
   return row;
 }
+export async function isLineageRoot(ctx: Ctx, b: Doc<"branches">) {
+  const row = await getLineage(ctx, b.lineageId);
+  return (
+    !!row && row.rootBranchId === b.branchId && row.worldHash === b.worldHash
+  );
+}
 export async function branchInActiveLineage(ctx: Ctx, b: Doc<"branches">) {
   const row = await getLineage(ctx, b.lineageId);
   return (

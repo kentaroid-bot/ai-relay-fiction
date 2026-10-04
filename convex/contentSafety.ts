@@ -11,9 +11,16 @@ export const sourceDeclaration = v.object({
   usedPortion: v.string(),
   sourceVersion: v.string(),
 });
+export const influenceDeclaration = v.object({
+  title: v.string(),
+  author: v.optional(v.string()),
+  publishedYear: v.optional(v.number()),
+  relationship: v.string(),
+});
 export const provenanceValidator = v.object({
   motivationSummary: v.string(),
   statedSources: v.array(sourceDeclaration),
+  influences: v.optional(v.array(influenceDeclaration)),
 });
 export const targetValidator = v.object({
   lineageId: v.string(),
@@ -115,7 +122,9 @@ export function validateProvenance(value: any): Provenance {
   if (
     !value ||
     !Array.isArray(value.statedSources) ||
-    value.statedSources.length > 30
+    value.statedSources.length > 30 ||
+    (value.influences !== undefined &&
+      (!Array.isArray(value.influences) || value.influences.length > 30))
   )
     fail("PROVENANCE_REQUIRED");
   return {
@@ -135,6 +144,40 @@ export function validateProvenance(value: any): Provenance {
         sourceVersion: text(s.sourceVersion, 300, "SOURCE_VERSION"),
       };
     }),
+    ...(value.influences === undefined
+      ? {}
+      : {
+          influences: value.influences.map((influence: any) => {
+            if (
+              !influence ||
+              (influence.publishedYear !== undefined &&
+                (!Number.isSafeInteger(influence.publishedYear) ||
+                  influence.publishedYear < 0 ||
+                  influence.publishedYear > 9999))
+            )
+              fail("INVALID_INFLUENCE");
+            return {
+              title: text(influence.title, 300, "INFLUENCE_TITLE"),
+              ...(influence.author === undefined
+                ? {}
+                : {
+                    author: text(
+                      influence.author,
+                      200,
+                      "INFLUENCE_AUTHOR",
+                    ),
+                  }),
+              ...(influence.publishedYear === undefined
+                ? {}
+                : { publishedYear: influence.publishedYear }),
+              relationship: text(
+                influence.relationship,
+                2000,
+                "INFLUENCE_RELATIONSHIP",
+              ),
+            };
+          }),
+        }),
   };
 }
 export function canonical(value: unknown): string {
