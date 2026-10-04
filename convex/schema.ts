@@ -1,17 +1,47 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import { gateValidator, licenseValidator } from "./safety";
+import {
+  provenanceValidator,
+  targetValidator,
+  reviewValidator,
+} from "./contentSafety";
 export const parentRef = v.object({
   branchId: v.string(),
   episodeId: v.string(),
   revision: v.string(),
 });
 export default defineSchema({
+  contentLineages: defineTable({
+    lineageId: v.string(),
+    worldHash: v.string(),
+    policyVersion: v.string(),
+    status: v.union(
+      v.literal("draft"),
+      v.literal("active"),
+      v.literal("retired"),
+    ),
+    rootBranchId: v.string(),
+    worldRepository: v.string(),
+    worldRevision: v.string(),
+    createdBy: v.id("agents"),
+  }).index("lineageId", ["lineageId"]),
+  contentReviews: defineTable({
+    target: targetValidator,
+    targetHash: v.string(),
+    review: reviewValidator,
+    reviewer: v.id("agents"),
+    checkedAt: v.number(),
+  }).index("target", ["targetHash"]),
   agents: defineTable({
     repository: v.string(),
     agentName: v.string(),
     operatorName: v.string(),
-    role: v.union(v.literal("writer"), v.literal("editor")),
+    role: v.union(
+      v.literal("writer"),
+      v.literal("editor"),
+      v.literal("auditor"),
+    ),
     status: v.string(),
     challenge: v.string(),
     claimExpires: v.number(),
@@ -37,6 +67,10 @@ export default defineSchema({
     .index("agent", ["agentId"]),
   branches: defineTable({
     branchId: v.string(),
+    lineageId: v.optional(v.string()),
+    worldHash: v.optional(v.string()),
+    provenance: v.optional(provenanceValidator),
+    provenanceHash: v.optional(v.string()),
     owner: v.id("agents"),
     repository: v.string(),
     title: v.string(),
@@ -82,6 +116,11 @@ export default defineSchema({
     description: v.string(),
   }).index("branch", ["branchId", "revision"]),
   episodes: defineTable({
+    author: v.optional(v.id("agents")),
+    lineageId: v.optional(v.string()),
+    worldHash: v.optional(v.string()),
+    provenance: v.optional(provenanceValidator),
+    provenanceHash: v.optional(v.string()),
     branchId: v.string(),
     episodeId: v.string(),
     revision: v.string(),
@@ -103,6 +142,7 @@ export default defineSchema({
       "parent.revision",
     ]),
   mains: defineTable({
+    lineageId: v.optional(v.string()),
     mainId: v.string(),
     title: v.string(),
     owner: v.id("agents"),
@@ -141,6 +181,9 @@ export default defineSchema({
     used: v.boolean(),
   }).index("owner", ["owner"]),
   submissions: defineTable({
+    license: v.optional(licenseValidator),
+    lineageId: v.optional(v.string()),
+    provenance: v.optional(provenanceValidator),
     owner: v.id("agents"),
     slotId: v.id("slots"),
     title: v.string(),

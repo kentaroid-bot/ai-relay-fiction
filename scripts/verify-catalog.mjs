@@ -94,7 +94,52 @@ export async function verifyCatalog(fetcher = fetch) {
       body(fetcher, SITE + "/main-reader.js", 100000),
     ],
   );
-  if (
+  const empty = branches.data.length === 0 && mains.data.length === 0;
+  if (empty) {
+    const state = JSON.parse(
+      await body(fetcher, SITE + "/.well-known/ai-relay.json"),
+    );
+    if (
+      state.contentStatus !== "reset" ||
+      state.seedWork !== null ||
+      state.registrationOpen !== false
+    )
+      throw Error("EMPTY_FOREST_NOT_DECLARED");
+    const [world, join] = await Promise.all([
+      body(fetcher, SITE + "/world/", 500000),
+      body(fetcher, SITE + "/join/", 500000),
+    ]);
+    for (const page of [home, html, reader, world, join]) {
+      if (
+        !page.includes("つづきの森") ||
+        !page.includes("旧作品") ||
+        !page.includes("公開を終了") ||
+        !page.includes("受付") ||
+        !page.includes("停止")
+      )
+        throw Error("SITE_RESET_NOTICE_MISSING");
+    }
+    if (
+      !html.includes("旧作品と旧世界設定の公開を終了") ||
+      !reader.includes("旧作品と旧世界設定の公開を終了")
+    )
+      throw Error("SITE_RESET_NOTICE_MISSING");
+    for (const route of [
+      "/read/ep-001/",
+      "/read/ep-002/",
+      "/texts/ep-001.md",
+      "/texts/ep-002.md",
+    ]) {
+      const response = await fetcher(SITE + route, {
+        credentials: "omit",
+        redirect: "error",
+        cache: "no-store",
+        signal: AbortSignal.timeout(15000),
+      });
+      await response.body?.cancel();
+      if (response.status !== 404) throw Error("WITHDRAWN_ROUTE_STILL_PUBLIC");
+    }
+  } else if (
     !html.includes('id="live-branches"') ||
     !html.includes('src="../branches.js"') ||
     !js.includes("/api/v1/catalog") ||
@@ -107,7 +152,7 @@ export async function verifyCatalog(fetcher = fetch) {
     !readerJs.includes("SHA-256")
   )
     throw Error("SITE_READING_ROUTE_MISMATCH");
-  if (!branches.data.some((b) => b.branchId === "origin"))
+  if (!empty && !branches.data.some((b) => b.branchId === "origin"))
     throw Error("PUBLIC_ROOT_MISSING");
   for (const b of branches.data) {
     if (
@@ -132,14 +177,21 @@ export async function verifyCatalog(fetcher = fetch) {
     );
   }
   // A concurrent listing or withdrawal must be retried, not certified against a stale view.
-  const again = await pages(fetcher, SOURCE, "/catalog");
-  if (canonical(again.rows) !== canonical(branches.rows))
+  const again = await compare("/catalog", branches.version);
+  if (
+    canonical(again.rows) !== canonical(branches.rows) ||
+    again.version !== branches.version
+  )
     throw Error("PUBLIC_VERSION_CHANGED");
-  const mainsAgain = await pages(fetcher, SOURCE, "/mains");
-  if (canonical(mainsAgain.rows) !== canonical(mains.rows))
+  const mainsAgain = await compare("/mains", mains.version);
+  if (
+    canonical(mainsAgain.rows) !== canonical(mains.rows) ||
+    mainsAgain.version !== mains.version
+  )
     throw Error("PUBLIC_VERSION_CHANGED");
   return {
     outcome: "confirmed",
+    mode: empty ? "reset" : "published",
     url: SITE + "/branches/",
     checkedAt: new Date().toISOString(),
     catalogHash: createHash("sha256")
