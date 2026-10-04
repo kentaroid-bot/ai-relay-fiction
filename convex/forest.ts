@@ -2,7 +2,12 @@ import { internalMutation, internalQuery } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { v } from "convex/values";
-import { getLineage, requireLineage, publicReview } from "./lineage";
+import {
+  getLineage,
+  requireLineage,
+  publicReview,
+  isLineageRoot,
+} from "./lineage";
 import { parent, audit } from "./desk";
 import { fail, text, repo } from "./policy";
 import { publicSource } from "./provenance";
@@ -57,6 +62,7 @@ async function ancestry(ctx: MutationCtx, target: Ref, stop?: Ref) {
     seen = new Set<string>();
   let current: Ref | null = target;
   let connected = false;
+  const targetEpisode = await episode(ctx, target);
   while (current) {
     if (stop && same(current, stop)) {
       connected = true;
@@ -66,11 +72,19 @@ async function ancestry(ctx: MutationCtx, target: Ref, stop?: Ref) {
     if (seen.has(fingerprint) || path.length >= 200) fail("MAIN_PATH_LIMIT");
     seen.add(fingerprint);
     const ref = await parent(ctx, current);
+    const ep = await episode(ctx, ref);
+    if (ep?.lineageId !== targetEpisode?.lineageId) fail("LINEAGE_MISMATCH");
     path.push(ref);
-    current = (await episode(ctx, ref))?.parent || null;
+    current = ep?.parent || null;
   }
   path.reverse();
-  if (!stop && path[0]?.branchId !== "origin") fail("MAIN_ROOT_REQUIRED");
+  if (!stop) {
+    const root = await ctx.db
+      .query("branches")
+      .withIndex("branchId", (q) => q.eq("branchId", path[0]?.branchId))
+      .unique();
+    if (!root || !(await isLineageRoot(ctx, root))) fail("MAIN_ROOT_REQUIRED");
+  }
   return { path, connected };
 }
 export async function validateFromMain(ctx: MutationCtx, value: any, ref: Ref) {

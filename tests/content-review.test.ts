@@ -6,6 +6,7 @@ import { digest, TERMS } from "../convex/policy";
 import { WORK_TERMS } from "../convex/safety";
 import { currentReview, requireContentReview } from "../convex/lineage";
 import { isListedEpisode } from "../convex/visibility";
+import { applyDeclaredMain } from "../convex/forest";
 import {
   fingerprint,
   type ContentReview,
@@ -224,69 +225,163 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-it("prepares a new unlisted root without reusing the retired origin or its reviews", async () => {
-  const t = await fresh();
-  await check(t);
-  expect(
-    (
-      await command(
+it.each(["api", "declaration", "unregistered-root"])(
+  "creates a tree at its reviewed lineage root without reusing retired origin: %s",
+  async (mode) => {
+    const t = await fresh();
+    await check(t);
+    expect(
+      (
+        await command(
+          t,
+          "review.record",
+          { target: await target(t), review: goodReview() },
+          auditorKey,
+        )
+      ).status,
+    ).toBe(200);
+    await command(t, "editor.lineage.retire", { lineageId });
+    expect((await prepareTree(t)).status).toBe(200);
+    const fixed = (await read(t, "review-target?id=pebble-root")).data[0]
+      .target;
+    expect(fixed.lineageId).toBe("pebble-world");
+    expect(fixed.parent).toBeNull();
+    expect(
+      (
+        await command(t, "editor.lineage.activate", {
+          lineageId: "pebble-world",
+        })
+      ).data.error,
+    ).toBe("ROOT_REVIEW_REQUIRED");
+    await check(t, "pebble-root");
+    expect(
+      (
+        await command(t, "editor.branch", {
+          branchId: "pebble-root",
+          expectedVersion: 2,
+          status: "verified",
+          complianceNote: "Fixed source checked",
+        })
+      ).data.error,
+    ).toBe("CONTENT_REVIEW_REQUIRED");
+    expect(
+      (
+        await command(
+          t,
+          "review.record",
+          { target: fixed, review: goodReview() },
+          auditorKey,
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await command(t, "editor.branch", {
+          branchId: "pebble-root",
+          expectedVersion: 2,
+          status: "verified",
+          complianceNote: "Fixed source and independent review checked",
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await command(t, "editor.lineage.activate", {
+          lineageId: "pebble-world",
+        })
+      ).status,
+    ).toBe(200);
+    const rows = await t.run((ctx) =>
+      ctx.db.query("contentLineages").collect(),
+    );
+    expect(rows.find((x) => x.lineageId === lineageId)?.status).toBe("retired");
+    expect(rows.find((x) => x.lineageId === "pebble-world")?.status).toBe(
+      "active",
+    );
+    const start = {
+      branchId: "pebble-root",
+      episodeId: "ep-001",
+      revision: commit,
+    };
+    if (mode === "unregistered-root") {
+      await t.run(async (ctx) => {
+        const row = (await ctx.db.query("contentLineages").collect()).find(
+          (x) => x.lineageId === "pebble-world",
+        )!;
+        await ctx.db.patch(row._id, { rootBranchId: "another-root" });
+      });
+      expect(
+        (
+          await command(t, "main.create", {
+            mainId: "pebble-tree",
+            title: "Test route",
+            start,
+          })
+        ).data.error,
+      ).toBe("MAIN_ROOT_REQUIRED");
+      expect((await t.query(internal.forest.publicMains, {})).page).toEqual([]);
+      return;
+    }
+    if (mode === "api") {
+      const requestId = crypto.randomUUID();
+      const input = { mainId: "pebble-tree", title: "Test route", start };
+      const result = await command(
         t,
-        "review.record",
-        { target: await target(t), review: goodReview() },
-        auditorKey,
-      )
-    ).status,
-  ).toBe(200);
-  await command(t, "editor.lineage.retire", { lineageId });
-  expect((await prepareTree(t)).status).toBe(200);
-  const fixed = (await read(t, "review-target?id=pebble-root")).data[0].target;
-  expect(fixed.lineageId).toBe("pebble-world");
-  expect(fixed.parent).toBeNull();
-  expect(
-    (await command(t, "editor.lineage.activate", { lineageId: "pebble-world" }))
-      .data.error,
-  ).toBe("ROOT_REVIEW_REQUIRED");
-  await check(t, "pebble-root");
-  expect(
-    (
-      await command(t, "editor.branch", {
-        branchId: "pebble-root",
-        expectedVersion: 2,
-        status: "verified",
-        complianceNote: "Fixed source checked",
-      })
-    ).data.error,
-  ).toBe("CONTENT_REVIEW_REQUIRED");
-  expect(
-    (
-      await command(
-        t,
-        "review.record",
-        { target: fixed, review: goodReview() },
-        auditorKey,
-      )
-    ).status,
-  ).toBe(200);
-  expect(
-    (
-      await command(t, "editor.branch", {
-        branchId: "pebble-root",
-        expectedVersion: 2,
-        status: "verified",
-        complianceNote: "Fixed source and independent review checked",
-      })
-    ).status,
-  ).toBe(200);
-  expect(
-    (await command(t, "editor.lineage.activate", { lineageId: "pebble-world" }))
-      .status,
-  ).toBe(200);
-  const rows = await t.run((ctx) => ctx.db.query("contentLineages").collect());
-  expect(rows.find((x) => x.lineageId === lineageId)?.status).toBe("retired");
-  expect(rows.find((x) => x.lineageId === "pebble-world")?.status).toBe(
-    "active",
-  );
-});
+        "main.create",
+        input,
+        editorKey,
+        requestId,
+      );
+      expect(result.status).toBe(200);
+      expect(
+        await command(t, "main.create", input, editorKey, requestId),
+      ).toEqual(result);
+    } else {
+      await t.run(async (ctx) => {
+        const branch = (await ctx.db.query("branches").collect()).find(
+          (b) => b.branchId === "pebble-root",
+        )!;
+        const manifest = {
+          main: { mainId: "pebble-tree", title: "Test route" },
+          episodes: [
+            {
+              episodeId: "ep-001",
+              contentHash: await digest(prose),
+              path: "manuscript/01.md",
+            },
+          ],
+        };
+        expect((await applyDeclaredMain(ctx, branch, manifest)).outcome).toBe(
+          "created",
+        );
+        expect((await applyDeclaredMain(ctx, branch, manifest)).outcome).toBe(
+          "already_applied",
+        );
+      });
+    }
+    const path = (await (
+      await t.fetch("/v1/main?id=pebble-tree")
+    ).json()) as any;
+    expect(path.count).toBe(1);
+    expect(path.page[0]).toMatchObject({
+      position: 0,
+      available: true,
+      episode: { ...start, parent: null },
+    });
+    expect((await t.query(internal.forest.publicMains, {})).page).toHaveLength(
+      1,
+    );
+    expect(
+      (
+        await command(t, "main.create", {
+          mainId: "retired-tree",
+          title: "Retired route",
+          start: { branchId: "origin", episodeId: "ep-001", revision: commit },
+        })
+      ).status,
+    ).not.toBe(200);
+  },
+);
 
 it("rejects auditor preparation, reused roots, reused lineages, and missing CC0 consent", async () => {
   const t = await fresh();
