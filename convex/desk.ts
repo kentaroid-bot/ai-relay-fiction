@@ -2,7 +2,25 @@ import { internalMutation, internalQuery } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { v } from "convex/values";
-import { scanText, workLicense, gateValidator } from "./safety";
+import { contentCommand, reviewRead } from "./contentCommands";
+import {
+  fingerprint as contentFingerprint,
+  lineageId,
+  provenanceValidator,
+  validateProvenance,
+  REVIEW_POLICY,
+} from "./contentSafety";
+import {
+  declarationForBranch,
+  requireLineage,
+  requireContentReview,
+} from "./lineage";
+import {
+  scanText,
+  workLicense,
+  gateValidator,
+  licenseValidator,
+} from "./safety";
 import { forestCommand, validateFromMain, applyDeclaredMain } from "./forest";
 import { parentRef } from "./schema";
 import { checkSource, awardAcorn, preserveListedEdition } from "./provenance";
@@ -76,7 +94,8 @@ export async function parent(ctx: QueryCtx | MutationCtx, value: any) {
         .eq("revision", ref.revision),
     )
     .unique();
-  if (!ep || !isListedEpisode(branch, ep)) fail("PARENT_EPISODE_NOT_VERIFIED");
+  if (!ep || !(await isListedEpisode(ctx, branch, ep)))
+    fail("PARENT_EPISODE_NOT_VERIFIED");
   return ref;
 }
 export async function audit(
@@ -347,6 +366,13 @@ export const importGithubBranch = internalMutation({
       .query("branches")
       .withIndex("branchId", (q) => q.eq("branchId", branchId))
       .unique();
+    const ref = await parent(ctx, manifest.parent);
+    const contentDeclaration = await declarationForBranch(
+      ctx,
+      manifest,
+      ref,
+      branch ?? undefined,
+    );
     if ((branch?.version ?? null) !== input.expectedVersion)
       fail("VERSION_CONFLICT");
     if (branch) {
@@ -363,6 +389,7 @@ export const importGithubBranch = internalMutation({
         manifest.license === branch.license.id &&
         manifest.termsVersion === branch.license.termsVersion &&
         manifest.title === branch.title &&
+        contentDeclaration.provenanceHash === branch.provenanceHash &&
         manifest.parent?.branchId === branch.parent?.branchId &&
         manifest.parent?.episodeId === branch.parent?.episodeId &&
         manifest.parent?.revision === branch.parent?.revision
@@ -391,7 +418,6 @@ export const importGithubBranch = internalMutation({
     });
     const agentName = text(declaration.agentName, 100, "AGENT_NAME"),
       operatorName = text(declaration.operatorName, 100, "OPERATOR_NAME");
-    const ref = await parent(ctx, manifest.parent);
     if (
       branch &&
       (branch.parent?.branchId !== ref.branchId ||
@@ -425,6 +451,7 @@ export const importGithubBranch = internalMutation({
     const first = manifest.episodes?.[0];
     const title = text(manifest.title, 200, "TITLE");
     const data = {
+      ...contentDeclaration,
       repository,
       owner,
       title,
@@ -527,6 +554,9 @@ export const applyGithubMain = internalMutation({
       m.branchId !== branch.branchId ||
       m.repository !== branch.repository ||
       m.title !== branch.title ||
+      m.lineageId !== branch.lineageId ||
+      (await contentFingerprint(validateProvenance(m.provenance))) !==
+        branch.provenanceHash ||
       m.license !== branch.license?.id ||
       m.termsVersion !== branch.license?.termsVersion ||
       m.parent?.branchId !== branch.parent?.branchId ||
@@ -554,6 +584,11 @@ export const command = internalMutation({
   },
   handler: async (ctx, { hash, operation, requestId, fingerprint, body }) => {
     const { agent, key } = await identity(ctx, hash);
+    if (
+      agent.role === "auditor" &&
+      !["review.record", "key.rotate", "key.revoke"].includes(operation)
+    )
+      fail("FORBIDDEN");
     text(requestId, 100, "REQUEST_ID");
     const receipt = await ctx.db
       .query("receipts")
@@ -568,6 +603,21 @@ export const command = internalMutation({
     await limit(ctx, "writes:" + agent._id, 100);
     let result: any;
     if (
+      operation === "review.record" ||
+      operation.startsWith("editor.lineage.") ||
+      operation === "editor.publication.prepare"
+    ) {
+      result = await contentCommand(ctx, agent, operation, body);
+      await audit(
+        ctx,
+        agent._id,
+        operation,
+        body.lineageId ||
+          body.target?.branchId ||
+          body.submissionId ||
+          "content",
+      );
+    } else if (
       operation.startsWith("main.") ||
       operation === "reading.note" ||
       operation === "submission.linkBranch" ||
@@ -619,9 +669,11 @@ export const command = internalMutation({
           .unique()
       )
         fail("BRANCH_ID_TAKEN");
+      const declaration = await declarationForBranch(ctx, body, ref);
       const license = workLicense(body.license);
       const fromMain = await validateFromMain(ctx, body.fromMain, ref);
       const data = {
+        ...declaration,
         license,
         ...(fromMain ? { fromMain } : {}),
         gate: scanText(
@@ -658,8 +710,15 @@ export const command = internalMutation({
       )
         fail("FORBIDDEN");
       if (body.expectedVersion !== branch.version) fail("VERSION_CONFLICT");
+      const declaration = await declarationForBranch(
+        ctx,
+        body,
+        branch.parent,
+        branch,
+      );
       await preserveListedEdition(ctx, branch);
       await ctx.db.patch(branch._id, {
+        ...declaration,
         githubPr: undefined,
         license: workLicense(body.license),
         gate: scanText(
@@ -694,7 +753,11 @@ export const command = internalMutation({
         fail("ACTIVE_SLOT_REQUIRED");
       if (body.termsVersion !== TERMS) fail("CONSENT_REQUIRED");
       const ref = await parent(ctx, slot.parent);
+      const declaration = await declarationForBranch(ctx, body, ref);
       const data = {
+        license: workLicense(body.license),
+        lineageId: declaration.lineageId,
+        provenance: declaration.provenance,
         owner: agent._id,
         slotId: slot._id,
         title: text(body.title, 200, "TITLE"),
@@ -735,7 +798,11 @@ export const command = internalMutation({
       if (body.expectedVersion !== sub.version) fail("VERSION_CONFLICT");
       if (!["submitted", "changes_requested"].includes(sub.status))
         fail("REVISION_NOT_OPEN");
+      const declaration = await declarationForBranch(ctx, body, sub.parent);
+      if (sub.lineageId !== declaration.lineageId) fail("LINEAGE_MISMATCH");
       const changes = {
+        license: workLicense(body.license),
+        provenance: declaration.provenance,
         branchReference: undefined,
         body: text(body.markdown, 100000, "MANUSCRIPT"),
         gate: scanText(
@@ -874,7 +941,12 @@ export const command = internalMutation({
           .query("branches")
           .withIndex("branchId", (q) => q.eq("branchId", body.branchId))
           .unique();
-        if (!branch || branch.branchId === "origin") fail("NOT_FOUND");
+        if (!branch) fail("NOT_FOUND");
+        await requireLineage(
+          ctx,
+          branch.lineageId,
+          branch.branchId === "origin",
+        );
         if (body.expectedVersion !== branch.version) fail("VERSION_CONFLICT");
         if (
           body.status !== "suspended" &&
@@ -883,7 +955,8 @@ export const command = internalMutation({
           fail("CHECK_REQUIRED");
         let compliance;
         if (body.status === "verified") {
-          await parent(ctx, branch.parent);
+          if (branch.parent) await parent(ctx, branch.parent);
+          else if (branch.branchId !== "origin") fail("INVALID_PARENT");
           const checkedEpisodes = await ctx.db
             .query("episodes")
             .withIndex("branchRevision", (q) =>
@@ -893,6 +966,7 @@ export const command = internalMutation({
           if (!checkedEpisodes.length || checkedEpisodes.length > 20)
             fail("CHECK_REQUIRED");
           for (const ep of checkedEpisodes) {
+            await requireContentReview(ctx, branch, ep);
             if (ep.sourceRef) {
               await awardAcorn(ctx, branch, ep);
             }
@@ -959,6 +1033,8 @@ export const read = internalQuery({
   },
   handler: async (ctx, { hash, kind, id, cursor }) => {
     const { agent } = await identity(ctx, hash);
+    if (["review-target", "review-evidence", "content-reviews"].includes(kind))
+      return reviewRead(ctx, agent, kind, id);
     if (kind === "me")
       return {
         agentId: agent._id,
@@ -1107,6 +1183,7 @@ export const branchContext = internalMutation({
   args: { hash: v.string(), branchId: v.string() },
   handler: async (ctx, { hash, branchId }) => {
     const { agent } = await identity(ctx, hash);
+    if (agent.role === "auditor") fail("FORBIDDEN");
     const b = await ctx.db
       .query("branches")
       .withIndex("branchId", (q) => q.eq("branchId", branchId))
@@ -1132,7 +1209,7 @@ export const recordCheck = internalMutation({
         path: v.string(),
         contentHash: v.string(),
         title: v.string(),
-        parent: parentRef,
+        parent: v.union(parentRef, v.null()),
         sourceRef: v.optional(parentRef),
       }),
     ),
@@ -1151,6 +1228,7 @@ export const recordCheck = internalMutation({
     { hash, branchId, version, episodes, characters, gate },
   ) => {
     const { agent } = await identity(ctx, hash);
+    if (agent.role === "auditor") fail("FORBIDDEN");
     const b = await ctx.db
       .query("branches")
       .withIndex("branchId", (q) => q.eq("branchId", branchId))
@@ -1159,17 +1237,26 @@ export const recordCheck = internalMutation({
       fail("FORBIDDEN");
     if (b.status !== "pending" || b.version !== version)
       fail("VERSION_CONFLICT");
+    await requireLineage(ctx, b.lineageId, b.branchId === "origin");
+    if (
+      !b.provenance ||
+      !b.provenanceHash ||
+      (await contentFingerprint(validateProvenance(b.provenance))) !==
+        b.provenanceHash
+    )
+      fail("PROVENANCE_REQUIRED");
     const existingEpisode = await ctx.db
       .query("episodes")
       .withIndex("reference", (q) => q.eq("branchId", branchId))
       .first();
     if (
+      branchId !== "origin" &&
       !existingEpisode &&
       (!b.parent ||
         !episodes[0] ||
-        episodes[0].parent.branchId !== b.parent.branchId ||
-        episodes[0].parent.episodeId !== b.parent.episodeId ||
-        episodes[0].parent.revision !== b.parent.revision)
+        episodes[0].parent?.branchId !== b.parent.branchId ||
+        episodes[0].parent?.episodeId !== b.parent.episodeId ||
+        episodes[0].parent?.revision !== b.parent.revision)
     )
       fail("FORK_POINT_MISMATCH");
     const checkingRevision = b.revision;
@@ -1198,7 +1285,9 @@ export const recordCheck = internalMutation({
       return ref;
     }
     for (const ep of episodes) {
-      await episodeSource(ep.parent);
+      if (ep.parent) await episodeSource(ep.parent);
+      else if (branchId !== "origin" || ep !== episodes[0])
+        fail("INVALID_PARENT");
       if (ep.sourceRef) {
         if (
           ep.sourceRef.branchId === branchId &&
@@ -1221,9 +1310,12 @@ export const recordCheck = internalMutation({
         (old.path !== ep.path ||
           old.contentHash !== ep.contentHash ||
           old.title !== ep.title ||
+          old.lineageId !== b.lineageId ||
+          old.worldHash !== b.worldHash ||
+          old.provenanceHash !== b.provenanceHash ||
           (["branchId", "episodeId", "revision"] as const).some(
             (k) =>
-              old.parent?.[k] !== ep.parent[k] ||
+              old.parent?.[k] !== ep.parent?.[k] ||
               old.sourceRef?.[k] !== ep.sourceRef?.[k],
           ))
       )
@@ -1231,6 +1323,11 @@ export const recordCheck = internalMutation({
       if (!old)
         await ctx.db.insert("episodes", {
           ...ep,
+          author: b.owner,
+          lineageId: b.lineageId,
+          worldHash: b.worldHash,
+          provenance: b.provenance,
+          provenanceHash: b.provenanceHash,
           ...(b.license ? { license: b.license } : {}),
           listed: false,
           branchId,
@@ -1297,7 +1394,14 @@ export const publicBranches = internalQuery({
             q.eq("branchId", b.branchId).eq("revision", published.revision),
           )
           .collect();
-        if (!episodes.some((ep) => isListedEpisode(published, ep))) return null;
+        if (
+          !(
+            await Promise.all(
+              episodes.map((ep) => isListedEpisode(ctx, published, ep)),
+            )
+          ).some(Boolean)
+        )
+          return null;
         return {
           branchId: b.branchId,
           title: published.title,
@@ -1322,11 +1426,32 @@ export const bootstrap = internalMutation({
     editorKeyHash: v.string(),
     rootRevision: v.string(),
     rootContentHash: v.string(),
+    lineageId: v.string(),
+    worldHash: v.string(),
+    provenance: provenanceValidator,
+    rootTitle: v.string(),
+    episodeTitle: v.string(),
+    license: licenseValidator,
   },
   handler: async (ctx, a) => {
     keyHash(a.editorKeyHash);
     revision(a.rootRevision);
     keyHash(a.rootContentHash);
+    const provenance = validateProvenance(a.provenance);
+    const license = workLicense(a.license);
+    const declaration = {
+      lineageId: lineageId(a.lineageId),
+      worldHash: keyHash(a.worldHash),
+      provenance,
+      provenanceHash: await contentFingerprint(provenance),
+    };
+    if (
+      await ctx.db
+        .query("contentLineages")
+        .withIndex("lineageId", (q) => q.eq("lineageId", declaration.lineageId))
+        .unique()
+    )
+      fail("LINEAGE_ID_TAKEN");
     if (
       await ctx.db
         .query("branches")
@@ -1351,26 +1476,42 @@ export const bootstrap = internalMutation({
       expiresAt: Date.now() + 90 * 86400000,
       revoked: false,
     });
+    await ctx.db.insert("contentLineages", {
+      lineageId: declaration.lineageId,
+      worldHash: declaration.worldHash,
+      policyVersion: REVIEW_POLICY,
+      status: "draft",
+      rootBranchId: "origin",
+      worldRepository: repository,
+      worldRevision: a.rootRevision,
+      createdBy: id,
+    });
     await ctx.db.insert("branches", {
+      ...declaration,
+      license,
       branchId: "origin",
       owner: id,
       repository,
-      title: "男女10人AI物語",
+      title: text(a.rootTitle, 200, "TITLE"),
       readingUrl: repository + "/blob/" + a.rootRevision + "/manuscript/01.md",
       parent: null,
       revision: a.rootRevision,
-      status: "verified",
-      checkedAt: Date.now(),
+      status: "pending",
+      checkedAt: null,
       version: 1,
     });
     await ctx.db.insert("episodes", {
+      ...declaration,
+      author: id,
+      parent: null,
+      license,
       branchId: "origin",
       episodeId: "ep-001",
-      listed: true,
+      listed: false,
       revision: a.rootRevision,
       path: "manuscript/01.md",
       contentHash: a.rootContentHash,
-      title: "三割の午後",
+      title: text(a.episodeTitle, 200, "TITLE"),
     });
     await audit(ctx, id, "bootstrap", "origin");
     return { editorId: id };
@@ -1401,6 +1542,9 @@ export const recordPublication = internalMutation({
       .withIndex("branchId", (q) => q.eq("branchId", "origin"))
       .unique();
     if (!root) fail("NOT_FOUND");
+    await requireLineage(ctx, sub.lineageId);
+    if (root.lineageId !== sub.lineageId) fail("LINEAGE_MISMATCH");
+    await parent(ctx, sub.parent);
     const old = await ctx.db
       .query("episodes")
       .withIndex("reference", (q) =>
@@ -1410,23 +1554,27 @@ export const recordPublication = internalMutation({
           .eq("revision", a.revision),
       )
       .unique();
-    if (old) fail("EPISODE_EXISTS");
-    await ctx.db.insert("episodes", {
-      branchId: "origin",
-      episodeId: a.episodeId,
-      listed: true,
-      revision: a.revision,
-      path: a.path,
-      contentHash: a.contentHash,
-      title: sub.title,
-      parent: sub.parent,
-    });
+    if (!old) fail("CONTENT_REVIEW_REQUIRED");
+    if (old.listed) fail("EPISODE_EXISTS");
+    if (
+      old.path !== a.path ||
+      old.contentHash !== a.contentHash ||
+      old.title !== sub.title ||
+      old.author !== sub.owner ||
+      (await contentFingerprint(sub.provenance)) !== old.provenanceHash ||
+      (await contentFingerprint(old.parent)) !==
+        (await contentFingerprint(sub.parent))
+    )
+      fail("REVIEW_TARGET_MISMATCH");
+    await requireContentReview(ctx, root, old);
+    await ctx.db.patch(old._id, { listed: true });
     await ctx.db.patch(sub._id, {
       status: "published",
       version: sub.version + 1,
     });
     await ctx.db.patch(root._id, {
       revision: a.revision,
+      readingUrl: root.repository + "/blob/" + a.revision + "/" + a.path,
       checkedAt: Date.now(),
       version: root.version + 1,
     });

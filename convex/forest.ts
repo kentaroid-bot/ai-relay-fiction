@@ -2,6 +2,7 @@ import { internalMutation, internalQuery } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { v } from "convex/values";
+import { getLineage, requireLineage, publicReview } from "./lineage";
 import { parent, audit } from "./desk";
 import { fail, text, repo } from "./policy";
 import { publicSource } from "./provenance";
@@ -33,10 +34,12 @@ async function visible(ctx: QueryCtx | MutationCtx, ref: Ref) {
   const owner = await ctx.db.get(branch.owner);
   if (owner?.status !== "active") return null;
   const ep = await episode(ctx, ref);
-  return ep && isListedEpisode(branch, ep)
+  return ep && (await isListedEpisode(ctx, branch, ep))
     ? {
         ...ref,
         title: ep.title,
+        lineageId: ep.lineageId,
+        contentReview: await publicReview(ctx, branch, ep),
         parent: ep.parent || null,
         contentHash: ep.contentHash,
         readingUrl: branch.repository + "/blob/" + ref.revision + "/" + ep.path,
@@ -81,6 +84,12 @@ export async function validateFromMain(ctx: MutationCtx, value: any, ref: Ref) {
     .unique();
   if (!main || (await ctx.db.get(main.owner))?.status !== "active")
     fail("MAIN_NOT_FOUND");
+  await requireLineage(ctx, main.lineageId);
+  const parentBranch = await ctx.db
+    .query("branches")
+    .withIndex("branchId", (q) => q.eq("branchId", ref.branchId))
+    .unique();
+  if (main.lineageId !== parentBranch?.lineageId) fail("LINEAGE_MISMATCH");
   const step = await ctx.db
     .query("mainSteps")
     .withIndex("path", (q) =>
@@ -180,9 +189,15 @@ export async function forestCommand(
       .take(21);
     if (owned.length >= 20) fail("MAIN_COUNT_LIMIT");
     const start = await parent(ctx, body.start);
+    const startBranch = await ctx.db
+      .query("branches")
+      .withIndex("branchId", (q) => q.eq("branchId", start.branchId))
+      .unique();
+    const lineage = await requireLineage(ctx, startBranch?.lineageId);
     const { path } = await ancestry(ctx, start);
     await ctx.db.insert("mains", {
       mainId,
+      lineageId: lineage.lineageId,
       title: text(body.title, 200, "TITLE"),
       owner: agent._id,
       head: start,
@@ -202,6 +217,7 @@ export async function forestCommand(
   if (!["main.append", "main.rename"].includes(operation))
     fail("UNKNOWN_OPERATION");
   if (!main || main.owner !== agent._id) fail("FORBIDDEN");
+  await requireLineage(ctx, main.lineageId);
   if (body.expectedVersion !== main.version) fail("VERSION_CONFLICT");
   if (operation === "main.rename") {
     const title = text(body.title, 200, "TITLE");
@@ -214,6 +230,7 @@ export async function forestCommand(
   await parent(ctx, main.head);
   const next = await parent(ctx, body.episode);
   const ep = await episode(ctx, next);
+  if (ep?.lineageId !== main.lineageId) fail("LINEAGE_MISMATCH");
   if (!ep || !same(ep.parent, main.head)) fail("MAIN_CONTINUITY_REQUIRED");
   await ctx.db.insert("mainSteps", {
     mainId,
@@ -279,6 +296,8 @@ export async function applyDeclaredMain(
     .withIndex("mainId", (q) => q.eq("mainId", mainId))
     .unique();
   if (main && main.owner !== branch.owner) fail("FORBIDDEN");
+  await requireLineage(ctx, branch.lineageId);
+  if (main && main.lineageId !== branch.lineageId) fail("LINEAGE_MISMATCH");
   if (main && main.title !== title) fail("MAIN_TITLE_MISMATCH");
   // Check the recorded target before ancestry traversal: a retry of an old
   // selection remains idempotent even after the owner has extended the tree.
@@ -315,6 +334,7 @@ export async function applyDeclaredMain(
       mainId,
       title,
       owner: branch.owner,
+      lineageId: branch.lineageId,
       head: target,
       count,
       version,
@@ -352,6 +372,7 @@ export const repairMainAncestry = internalMutation({
       .unique();
     if (!main || (await ctx.db.get(main.owner))?.status !== "active")
       fail("MAIN_NOT_FOUND");
+    await requireLineage(ctx, main.lineageId);
     if (main.version !== expectedVersion) fail("VERSION_CONFLICT");
     const steps = await ctx.db
       .query("mainSteps")
@@ -433,7 +454,11 @@ export const publicMains = internalQuery({
     const rows = await Promise.all(
       result.page.map(async (m) => {
         const owner = await ctx.db.get(m.owner);
-        if (owner?.status !== "active") return null;
+        if (
+          owner?.status !== "active" ||
+          (await getLineage(ctx, m.lineageId))?.status !== "active"
+        )
+          return null;
         let isTreeVisible = await visible(ctx, m.head);
         if (!isTreeVisible) {
           const steps = await ctx.db
@@ -471,6 +496,8 @@ export const publicMain = internalQuery({
       .withIndex("mainId", (q) => q.eq("mainId", id))
       .unique();
     if (!main || (await ctx.db.get(main.owner))?.status !== "active")
+      fail("NOT_FOUND");
+    if ((await getLineage(ctx, main.lineageId))?.status !== "active")
       fail("NOT_FOUND");
     const steps = await ctx.db
       .query("mainSteps")
@@ -520,6 +547,7 @@ export const publicCandidates = internalQuery({
       .unique();
     if (
       !main ||
+      (await getLineage(ctx, main.lineageId))?.status !== "active" ||
       (await ctx.db.get(main.owner))?.status !== "active" ||
       !(await visible(ctx, main.head))
     )

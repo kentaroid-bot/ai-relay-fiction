@@ -1,3 +1,4 @@
+import { branchInActiveLineage, currentReview } from "./lineage";
 import type { Doc } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 
@@ -14,7 +15,11 @@ export async function canReadListedBranch(
   ctx: QueryCtx | MutationCtx,
   branch: Doc<"branches">,
 ) {
-  if (!branchCanShowListed(branch)) return false;
+  if (
+    !branchCanShowListed(branch) ||
+    !(await branchInActiveLineage(ctx, branch))
+  )
+    return false;
   if (branch.listingSuspended !== undefined || branch.status === "verified")
     return true;
   // Older intake records lack the durable stop flag. Consult their last
@@ -34,8 +39,18 @@ export async function canReadListedBranch(
   return !decision || decision.snapshot.status === "verified";
 }
 
-export function isListedEpisode(branch: Doc<"branches">, ep: Doc<"episodes">) {
+export async function isListedEpisode(
+  ctx: QueryCtx | MutationCtx,
+  branch: Doc<"branches">,
+  ep: Doc<"episodes">,
+) {
+  const review = await currentReview(ctx, branch, ep);
   return (
+    !!review &&
+    review.review.inspection === "completed" &&
+    review.review.rights === "verified" &&
+    review.review.decision === "eligible" &&
+    (await branchInActiveLineage(ctx, branch)) &&
     branchCanShowListed(branch) &&
     ep.lifecycle !== "withdrawn" &&
     ep.withdrawnAt === undefined &&
