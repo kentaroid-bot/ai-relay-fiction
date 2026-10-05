@@ -15,6 +15,7 @@ DIST = SITE / 'dist'
 DATA = json.loads((WORK / 'episodes.json').read_text())
 BRANCHES = json.loads((WORK / 'branches.json').read_text())
 PLATFORM_TITLE = 'つづきの森'
+SITE_DESCRIPTION = '言葉の人生を変えるリレー小説。人間とAIが紡ぐ、つづきの森。'
 
 def participation(name):
     """Resolve source material in the authoring folder or a standalone clone."""
@@ -137,29 +138,38 @@ def visible(ep):
 def markdown(text, skip_title=False):
     result = []
     for block in re.split(r'\n\s*\n', text.strip()):
-        if block.startswith('# '):
-            if not skip_title:
-                result.append('<h1>' + inline(block[2:]) + '</h1>')
-        elif block.startswith('### '):
-            result.append('<h3>' + inline(block[4:]) + '</h3>')
-        elif block.startswith('## '):
-            result.append('<h2>' + inline(block[3:]) + '</h2>')
+        heading = re.match(r'^(#{1,4}) ([^\n]+)(?:\n(.*))?$', block, re.S)
+        if heading:
+            level = len(heading[1])
+            if level != 1 or not skip_title:
+                result.append(f'<h{level}>' + inline(heading[2]) + f'</h{level}>')
+            if heading[3]:
+                result.append(markdown(heading[3], skip_title))
+        elif block.strip() == '---':
+            result.append('<hr>')
         elif block.startswith('|'):
             rows = [line.strip().strip('|').split('|') for line in block.splitlines()]
             head = ''.join('<th scope="col">'+inline(c.strip())+'</th>' for c in rows[0])
             body = ''.join('<tr>'+''.join('<td>'+inline(c.strip())+'</td>' for c in row)+'</tr>' for row in rows[2:])
             result.append('<table><thead><tr>'+head+'</tr></thead><tbody>'+body+'</tbody></table>')
         elif block.startswith('- '):
-            result.append('<ul>'+''.join('<li>'+inline(line[2:])+'</li>' for line in block.splitlines())+'</ul>')
+            items = []
+            for line in block.splitlines():
+                if line.startswith('- '):
+                    items.append(line[2:])
+                elif items:
+                    items[-1] += '\n' + line.strip()
+            result.append('<ul>'+''.join('<li>'+inline(item).replace('\n','<br>')+'</li>' for item in items)+'</ul>')
         elif block.startswith('> '):
-            result.append('<blockquote><p>'+inline(block[2:])+'</p></blockquote>')
+            quoted = '\n'.join(re.sub(r'^> ?', '', line) for line in block.splitlines())
+            result.append('<blockquote><p>'+inline(quoted).replace('\n','<br>')+'</p></blockquote>')
         elif block.strip() == '＊':
             result.append('<p class="scene-break" aria-label="場面の区切り">＊</p>')
         else:
             result.append('<p>'+inline(block).replace('\n','<br>')+'</p>')
     return '\n'.join(result)
 
-def page(path, title, body, active='', description='AIをめぐる人々の日常を、AIが書き継ぐ群像リレー小説。'):
+def page(path, title, body, active='', description=SITE_DESCRIPTION):
     depth = len(Path(path).parts)-1
     root = '../' * depth or './'
     nav = [('','木を選ぶ','home'),('about/','森の案内','about'),('world/','世界と人物','world')]
@@ -205,6 +215,9 @@ def render_reset():
         shutil.copyfile(participation(source), texts/name)
     api_source = WORK/'participation/api.md' if (WORK/'participation').is_dir() else WORK/'docs/api.md'
     shutil.copyfile(api_source, texts/'api.md')
+    intake_source = api_source.with_name('intake-v2.md')
+    if intake_source.exists():
+        shutil.copyfile(intake_source, texts/'intake-v2.md')
     lifecycle_source = api_source.with_name('forest-lifecycle.md')
     if lifecycle_source.exists():
         shutil.copyfile(lifecycle_source, texts/'forest-lifecycle.md')
@@ -226,10 +239,11 @@ def render_catalog():
     # Keep withdrawn static routes absent; read only the approved live catalog.
     render_reset()
     render_main_reader()
-    page('branches/index.html', '物語の枝', '<article class="content"><h1>物語の枝をたどる。</h1><div id="live-branches"><p id="branch-status" role="status">枝を読み込んでいます</p><div id="branch-list"></div><button id="more-branches" type="button" hidden>続きを見る</button></div></article>', 'branches')
-    page('world/index.html', '最奥の木と小石の木', '<article class="content">'+markdown((WORK/'docs/initial-forest.md').read_text(),skip_title=False)+'</article>','world')
-    page('about/index.html', 'つづきの森について', '<article class="content"><h1>つづきの森</h1><p>『憎むにキスを』の精神を土壌に、『反芻の庭と、靴底の小石』を最初の木として育てます。木を選ぶと、審査を終えた固定版の物語を読めます。</p><p><a href="/">森へ戻る</a></p></article>')
-    page('join/index.html', '書き手になる', '<article class="content"><h1>この森のつづきを書く</h1><p>参加受付の条件を整えています。自作部分のCC0提供、出自の申告と固定本文・世界設定の独立審査を確認してから掲載します。</p><p>別の木の構想は公開リポジトリの<a href="https://github.com/kentaroid-bot/ai-relay-fiction/blob/main/docs/tree-proposals.md">提案案内</a>へ。一般の参加登録APIは準備中です。</p></article>', 'join')
+    for route, title in (('about', 'つづきの森について'), ('world', '森の土壌と、最初の木'), ('join', '書き手になる'), ('branches', '物語の枝')):
+        body = markdown((SITE/'content'/f'{route}.md').read_text())
+        if route == 'branches':
+            body += '<div id="live-branches"><p id="branch-status" role="status">枝を読み込んでいます</p><div id="branch-list"></div><button id="more-branches" type="button" hidden>続きを見る</button></div>'
+        page(route+'/index.html', title, '<article class="content guide-copy">'+body+'</article>', route)
     (DIST/'.well-known/ai-relay.json').write_text(json.dumps({'name': PLATFORM_TITLE, 'contentStatus': 'catalog', 'seedWork': 'kiss-and-pebble-2026-10-05', 'registrationOpen': False},ensure_ascii=False,indent=2)+'\n')
     (DIST/'llms.txt').write_text('# つづきの森\n\n最初の木：反芻の庭と、靴底の小石。公開APIの審査済みカタログから読む。旧作品は撤回済み。一般登録APIは準備中。\n')
     print(f'Rendered live-catalog forest in {DIST}')
@@ -364,8 +378,9 @@ def export_repository():
     copies += [('participation/review.md','docs/review.md'),
                ('participation/review-issue.md','.github/ISSUE_TEMPLATE/review.md'),
                ('site/build.py','site/build.py'),('site/style.css','site/style.css'),
-               ('site/main-reader.js','site/main-reader.js'),('site/reader.js','site/reader.js'),('site/branches.js','site/branches.js'),('site/_headers','site/_headers'),('site/public-readme.md','site/README.md'),('participation/api.md','docs/api.md')]
+               ('site/main-reader.js','site/main-reader.js'),('site/reader.js','site/reader.js'),('site/branches.js','site/branches.js'),('site/_headers','site/_headers'),('site/public-readme.md','site/README.md'),('participation/api.md','docs/api.md'),('participation/intake-v2.md','docs/intake-v2.md')]
     copies += [('site/'+name, 'site/'+name) for name in ('forest.js', 'forest.css', 'forest-home.html', 'forest-prototype.html', 'favicon.ico', 'apple-touch-icon.png', 'favicon-32x32.png', 'favicon-16x16.png')]
+    copies += [('site/content/'+name+'.md', 'site/content/'+name+'.md') for name in ('about', 'world', 'join', 'branches')]
     copies += [('site/assets/'+name, 'site/assets/'+name) for name in (
         'tree_emerald.png', 'tree_blue.png', 'tree_round.png', 'tree_olive.png', 'tree_sprout.png',
         'icon_stone.png', 'icon_bird.png', 'icon_ladybug.png', 'icon_butterfly.png', 'icon_acorn.png',

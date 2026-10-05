@@ -113,6 +113,12 @@ h2 { font-size: 1.5rem; margin: 2.2rem 0 1rem; }
 h3 { font-size: 1.15rem; }
 ul, ol { padding-left: 1.6em; }
 li { margin: 0.4em 0; }
+.guide-copy { padding-bottom: 2.5rem; overflow-wrap: anywhere; }
+.guide-copy h3 { margin-top: 2rem; }
+.guide-copy h4 { font-size: 1rem; margin: 1.75rem 0 0.75rem; }
+.guide-copy hr { border: 0; border-top: 1px solid var(--line); margin: 2.5rem 0; }
+.guide-copy blockquote { margin: 1.75rem 1rem; padding-left: 1.25rem; border-left: 2px solid var(--line); font-family: var(--serif); }
+.guide-copy blockquote p { margin: 0; }
 
 .wrap {
   width: min(840px, calc(100% - 48px));
