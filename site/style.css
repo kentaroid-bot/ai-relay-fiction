@@ -944,32 +944,34 @@ body[data-theme="dark"] .branch-candidates {
 }
 
 /* 影響関係は本文のあとがきとして、通常の読書導線の手前に置く。 */
-.influences-jump {
-  margin: -0.25rem 0 1.5rem;
-  font-size: 0.85rem;
-  color: var(--ink-subtle);
-}
 .episode-influences {
-  margin-top: 3rem;
-  padding: 2rem 0 0.5rem;
-  border-top: 1px solid var(--line);
-  scroll-margin-top: 2rem;
-  line-height: 1.9;
+  margin: 42px 32px 30px;
+  padding: 2px 0 2px 22px;
+  border-left: 2px solid var(--line);
+  color: #71685f;
+  font-size: 0.875rem;
+  line-height: 1.95;
   overflow-wrap: anywhere;
 }
+body[data-theme="dark"] .episode-influences { color: #aba399; }
 .episode-influences h2 {
-  margin: 0 0 0.35rem;
-  font-size: 1.2rem;
+  margin: 0 0 5px;
+  font-size: 1.15em;
+  font-weight: 500;
+  line-height: 1.8;
 }
 .influences-note {
-  margin: 0 0 1.75rem;
-  font-size: 0.82rem;
-  color: var(--ink-subtle);
+  margin: 0 0 25px;
+  font-size: 0.86em;
+  line-height: 1.8;
 }
-.influence-work { margin-bottom: 1.75rem; }
-.influence-work h3 { margin: 0 0 0.5rem; font-size: 1rem; }
-.influence-work p { margin: 0 0 0.65rem; font-size: 0.95rem; white-space: pre-line; }
-.influence-work a, .influences-declaration { font-size: 0.85rem; }
+.influence-work { margin-bottom: 25px; }
+.influence-work h3 { margin: 0 0 9px; font-size: 1em; font-weight: 500; line-height: 1.9; }
+.influence-work p { margin: 0 0 10px; font-size: 1em; white-space: pre-line; }
+.influence-work a, .influences-declaration { font-size: 0.88em; }
+@media (max-width: 520px) {
+  .episode-influences { margin-left: 16px; margin-right: 16px; padding-left: 15px; }
+}
 
 /* 切り株（取り下げエピソード） */
 .tombstone-message {

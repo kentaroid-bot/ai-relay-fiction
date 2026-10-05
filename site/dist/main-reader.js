@@ -92,8 +92,6 @@ export function renderProvenance(document, target, episode) {
 
 export function renderInfluences(doc, episode, steps = [], link) {
   const target = doc.getElementById('episode-influences');
-  const jump = doc.getElementById('influences-jump');
-  if (jump) jump.hidden = true;
   if (!target) return;
   target.replaceChildren();
   target.hidden = true;
@@ -131,7 +129,6 @@ export function renderInfluences(doc, episode, steps = [], link) {
   declaration.textContent = '申告の全文を見る（公開元）';
   target.append(declaration);
   target.hidden = false;
-  if (jump) jump.hidden = false;
 }
 
 export function renderUnavailablePlate(doc, steps, position, link) {

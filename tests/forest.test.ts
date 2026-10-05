@@ -928,7 +928,6 @@ it("shows declared influences as plain text, links only the available exact pare
   };
   const section = (elements["episode-influences"] =
     doc.createElement("section"));
-  const jump = (elements["influences-jump"] = doc.createElement("p"));
   const parent = {
     branchId: "parent",
     episodeId: "ep-001",
@@ -957,7 +956,6 @@ it("shows declared influences as plain text, links only the available exact pare
   }));
   reader.renderInfluences(doc, episode, steps, link);
   expect(section.hidden).toBe(false);
-  expect(jump.hidden).toBe(false);
   expect(section.children[1].textContent).toBe("作者による影響関係の説明");
   expect(section.children[2].children[1]).toMatchObject({
     tag: "p",
@@ -987,7 +985,6 @@ it("shows declared influences as plain text, links only the available exact pare
   expect(link).not.toHaveBeenCalled();
   reader.renderInfluences(doc, {});
   expect(section.hidden).toBe(true);
-  expect(jump.hidden).toBe(true);
   expect(section.children).toEqual([]);
   expect(() =>
     reader.renderInfluences(doc, {
@@ -996,7 +993,6 @@ it("shows declared influences as plain text, links only the available exact pare
     }),
   ).toThrow();
   expect(section.hidden).toBe(true);
-  expect(jump.hidden).toBe(true);
 });
 
 it("shows literal provenance credits with fixed source links, and clears withdrawn references", () => {
