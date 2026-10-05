@@ -228,7 +228,18 @@ export async function contentCommand(
         .query("contentLineages")
         .filter((q) => q.eq(q.field("status"), "active"))
         .first();
-      if (active && active._id !== lineage._id) fail("ACTIVE_LINEAGE_EXISTS");
+      if (active && active._id !== lineage._id) {
+        if (body.replaceActiveLineageId !== active.lineageId)
+          fail("ACTIVE_LINEAGE_EXISTS");
+        // Retire only the explicitly identified predecessor, after all checks.
+        // Both state changes commit together; failed activation leaves it active.
+        await ctx.db.patch(active._id, { status: "retired" });
+      } else if (
+        body.replaceActiveLineageId !== undefined &&
+        active?._id !== lineage._id
+      ) {
+        fail("ACTIVE_LINEAGE_CHANGED");
+      }
     }
     const status = operation.endsWith("activate")
       ? ("active" as const)

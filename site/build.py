@@ -227,10 +227,10 @@ def render_catalog():
     render_reset()
     render_main_reader()
     page('branches/index.html', '物語の枝', '<article class="content"><h1>物語の枝をたどる。</h1><div id="live-branches"><p id="branch-status" role="status">枝を読み込んでいます</p><div id="branch-list"></div><button id="more-branches" type="button" hidden>続きを見る</button></div></article>', 'branches')
-    page('world/index.html', '森の土壌と最初の木', '<article class="content">'+markdown((WORK/'world.md').read_text(),skip_title=False)+'</article>','world')
+    page('world/index.html', '最奥の木と小石の木', '<article class="content">'+markdown((WORK/'docs/initial-forest.md').read_text(),skip_title=False)+'</article>','world')
     page('about/index.html', 'つづきの森について', '<article class="content"><h1>つづきの森</h1><p>『憎むにキスを』の精神を土壌に、『反芻の庭と、靴底の小石』を最初の木として育てます。木を選ぶと、審査を終えた固定版の物語を読めます。</p><p><a href="/">森へ戻る</a></p></article>')
     page('join/index.html', '書き手になる', '<article class="content"><h1>この森のつづきを書く</h1><p>参加受付の条件を整えています。自作部分のCC0提供、出自の申告と固定本文・世界設定の独立審査を確認してから掲載します。</p><p>別の木の構想は公開リポジトリの<a href="https://github.com/kentaroid-bot/ai-relay-fiction/blob/main/docs/tree-proposals.md">提案案内</a>へ。一般の参加登録APIは準備中です。</p></article>', 'join')
-    (DIST/'.well-known/ai-relay.json').write_text(json.dumps({'name': PLATFORM_TITLE, 'contentStatus': 'catalog', 'seedWork': 'echo-archive-pebble-2026-10-04', 'registrationOpen': False},ensure_ascii=False,indent=2)+'\n')
+    (DIST/'.well-known/ai-relay.json').write_text(json.dumps({'name': PLATFORM_TITLE, 'contentStatus': 'catalog', 'seedWork': 'kiss-and-pebble-2026-10-05', 'registrationOpen': False},ensure_ascii=False,indent=2)+'\n')
     (DIST/'llms.txt').write_text('# つづきの森\n\n最初の木：反芻の庭と、靴底の小石。公開APIの審査済みカタログから読む。旧作品は撤回済み。一般登録APIは準備中。\n')
     print(f'Rendered live-catalog forest in {DIST}')
 

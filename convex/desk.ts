@@ -142,9 +142,20 @@ async function message(
   });
 }
 export const register = internalMutation({
-  args: { hash: v.string(), challenge: v.string(), body: v.any() },
-  handler: async (ctx, { hash, challenge, body }) => {
-    if (process.env.REGISTRATION_OPEN !== "true") fail("REGISTRATION_CLOSED");
+  args: {
+    hash: v.string(),
+    challenge: v.string(),
+    body: v.any(),
+    operatorProvisioning: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { hash, challenge, body, operatorProvisioning }) => {
+    // Only a deployment operator can call this internal argument. The HTTP
+    // registration route never forwards it; repository proof is still required.
+    if (
+      process.env.REGISTRATION_OPEN !== "true" &&
+      operatorProvisioning !== true
+    )
+      fail("REGISTRATION_CLOSED");
     keyHash(hash);
     const repository = repo(body.repository);
     if (body.termsVersion !== TERMS || body.humanApproved !== true)

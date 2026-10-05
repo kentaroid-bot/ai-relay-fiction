@@ -1501,3 +1501,108 @@ it("rechecks the reserved connection at publication even if an older check alrea
     ).data.error,
   ).toBe("ROOT_CONTINUATION_RESERVED");
 });
+
+it("allows operator preparation while public registration stays closed and ownership stays unverified", async () => {
+  const t = await fresh();
+  const key = "rly_" + "P".repeat(43);
+  const body = {
+    repository: "https://github.com/seed/story",
+    agentName: "Seed author",
+    operatorName: "Monku_AI",
+    termsVersion: TERMS,
+    humanApproved: true,
+    operatorProvisioning: true,
+  };
+  const r = await t.fetch("/v1/register", {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer " + key,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  expect(((await r.json()) as any).error).toBe("REGISTRATION_CLOSED");
+  const receipt = await t.mutation(internal.desk.register, {
+    hash: await digest(key),
+    challenge: "operator-proof",
+    body,
+    operatorProvisioning: true,
+  });
+  expect(receipt.status).toBe("pending");
+  expect((await t.run((ctx) => ctx.db.get(receipt.agentId)))?.role).toBe(
+    "writer",
+  );
+  expect(
+    (
+      await command(
+        t,
+        "main.create",
+        {
+          mainId: "not-yet",
+          title: "No proof",
+          start: { branchId: "origin", episodeId: "ep-001", revision: commit },
+        },
+        key,
+      )
+    ).status,
+  ).toBe(401);
+});
+
+it("switches only the identified active lineage after the new root passes every check", async () => {
+  const t = await fresh();
+  await activate(t);
+  await prepareTree(t);
+  expect(
+    (
+      await command(t, "editor.lineage.activate", {
+        lineageId: "pebble-world",
+        replaceActiveLineageId: lineageId,
+      })
+    ).data.error,
+  ).toBe("ROOT_REVIEW_REQUIRED");
+  expect(
+    (
+      await t.run((ctx) =>
+        ctx.db
+          .query("contentLineages")
+          .withIndex("lineageId", (q) => q.eq("lineageId", lineageId))
+          .unique(),
+      )
+    )?.status,
+  ).toBe("active");
+  await check(t, "pebble-root");
+  const fixed = (await read(t, "review-target?id=pebble-root")).data[0].target;
+  await command(
+    t,
+    "review.record",
+    { target: fixed, review: goodReview() },
+    auditorKey,
+  );
+  await command(t, "editor.branch", {
+    branchId: "pebble-root",
+    expectedVersion: 2,
+    status: "verified",
+    complianceNote: "Confirmed",
+  });
+  expect(
+    (
+      await command(t, "editor.lineage.activate", {
+        lineageId: "pebble-world",
+        replaceActiveLineageId: "wrong-world",
+      })
+    ).data.error,
+  ).toBe("ACTIVE_LINEAGE_EXISTS");
+  expect(
+    (
+      await command(t, "editor.lineage.activate", {
+        lineageId: "pebble-world",
+        replaceActiveLineageId: lineageId,
+      })
+    ).status,
+  ).toBe(200);
+  const rows = await t.run((ctx) => ctx.db.query("contentLineages").collect());
+  expect(rows.find((x) => x.lineageId === lineageId)?.status).toBe("retired");
+  expect(rows.find((x) => x.lineageId === "pebble-world")?.status).toBe(
+    "active",
+  );
+});
