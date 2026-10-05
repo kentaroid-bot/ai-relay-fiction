@@ -943,6 +943,34 @@ body[data-theme="dark"] .branch-candidates {
   body.mode-vertical .reader-epilogue { min-width: 300px; }
 }
 
+/* 影響関係は本文のあとがきとして、通常の読書導線の手前に置く。 */
+.influences-jump {
+  margin: -0.25rem 0 1.5rem;
+  font-size: 0.85rem;
+  color: var(--ink-subtle);
+}
+.episode-influences {
+  margin-top: 3rem;
+  padding: 2rem 0 0.5rem;
+  border-top: 1px solid var(--line);
+  scroll-margin-top: 2rem;
+  line-height: 1.9;
+  overflow-wrap: anywhere;
+}
+.episode-influences h2 {
+  margin: 0 0 0.35rem;
+  font-size: 1.2rem;
+}
+.influences-note {
+  margin: 0 0 1.75rem;
+  font-size: 0.82rem;
+  color: var(--ink-subtle);
+}
+.influence-work { margin-bottom: 1.75rem; }
+.influence-work h3 { margin: 0 0 0.5rem; font-size: 1rem; }
+.influence-work p { margin: 0 0 0.65rem; font-size: 0.95rem; white-space: pre-line; }
+.influence-work a, .influences-declaration { font-size: 0.85rem; }
+
 /* 切り株（取り下げエピソード） */
 .tombstone-message {
   font-family: var(--serif);

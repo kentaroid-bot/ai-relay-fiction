@@ -90,7 +90,52 @@ export function renderProvenance(document, target, episode) {
   }
 }
 
+export function renderInfluences(doc, episode, steps = [], link) {
+  const target = doc.getElementById('episode-influences');
+  const jump = doc.getElementById('influences-jump');
+  if (jump) jump.hidden = true;
+  if (!target) return;
+  target.replaceChildren();
+  target.hidden = true;
+  const influences = episode?.influences;
+  if (!Array.isArray(influences) || !influences.length) return;
+  const heading = doc.createElement('h2');
+  heading.id = 'influences-title';
+  heading.textContent = 'この話が受け継いだもの';
+  const note = doc.createElement('p');
+  note.className = 'influences-note';
+  note.textContent = '作者による影響関係の説明';
+  target.append(heading, note);
+  for (const influence of influences) {
+    const item = doc.createElement('section');
+    item.className = 'influence-work';
+    const title = doc.createElement('h3');
+    title.textContent = '『' + influence.title + '』' +
+      (influence.author ? ' — ' + influence.author : '') +
+      (influence.publishedYear !== undefined ? '（' + influence.publishedYear + '）' : '');
+    const relationship = doc.createElement('p');
+    relationship.textContent = influence.relationship;
+    item.append(title, relationship);
+    // Only link a named, available parent already present in this verified path.
+    const parent = steps.find(step => step.available &&
+      isSameRef(step.episode, episode.parent) && step.episode.title === influence.title);
+    if (parent && link) item.append(link('『' + influence.title + '』を読む', parent.position));
+    target.append(item);
+  }
+  // The full declaration lives with the same fixed public manuscript edition.
+  rawSource(episode.readingUrl);
+  const declaration = doc.createElement('a');
+  declaration.className = 'influences-declaration';
+  declaration.href = episode.readingUrl.match(/^https:\/\/github\.com\/[^/]+\/[^/]+\/blob\/[0-9a-f]{40}\//)[0] + 'relay-branch.json';
+  declaration.rel = 'noopener noreferrer';
+  declaration.textContent = '申告の全文を見る（公開元）';
+  target.append(declaration);
+  target.hidden = false;
+  if (jump) jump.hidden = false;
+}
+
 export function renderUnavailablePlate(doc, steps, position, link) {
+  renderInfluences(doc, null);
   const isWithdrawn = steps[position]?.reason === 'withdrawn';
   doc.getElementById('episode-title').textContent = (position+1)+'話目 · ' + (isWithdrawn ? '切り株' : '掲載停止中');
   const provenance = doc.getElementById('episode-source');
@@ -202,6 +247,7 @@ async function navigationExtras(doc, id, steps, position, version) {
 }
 
 export async function readTree() {
+  renderInfluences(document, null);
   const params = new URLSearchParams(location.search), id = params.get('id') || '';
   const status = document.getElementById('reading-status');
   const refresh = document.getElementById('refresh-tree');
@@ -287,6 +333,7 @@ export async function readTree() {
     if (!liveSteps[position]?.available || !isSameRef(liveSteps[position].episode, ep) || liveSteps[position].episode.contentHash !== ep.contentHash) throw Error('Unavailable step');
     renderProvenance(document,document.getElementById('episode-source'),liveSteps[position].episode);
     renderStory(document,document.getElementById('tree-story'),prose,ep.title);
+    renderInfluences(document,liveSteps[position].episode,liveSteps,link);
     try {
       sessionStorage.setItem('relay-reading-route', JSON.stringify({mainId:id, version, position}));
     } catch {}
@@ -319,6 +366,7 @@ export async function readTree() {
     }
     await navigationExtras(document, id, steps, position, version);
   } catch {
+    renderInfluences(document, null);
     document.getElementById('tree-story').replaceChildren();
     const provenance = document.getElementById('episode-source');
     if (provenance) { provenance.replaceChildren(); provenance.hidden = true; }
