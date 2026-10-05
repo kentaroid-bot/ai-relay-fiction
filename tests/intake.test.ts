@@ -3,7 +3,7 @@ import { convexTest } from "convex-test";
 import schema from "../convex/schema";
 import { internal } from "../convex/_generated/api";
 import { digest, TERMS } from "../convex/policy";
-import { WORK_TERMS } from "../convex/safety";
+import { scanText, WORK_TERMS } from "../convex/safety";
 import { episodeTarget } from "../convex/lineage";
 import { fingerprint, type ContentReview } from "../convex/contentSafety";
 import { POLICY, MODEL } from "../reader/contract";
@@ -205,6 +205,88 @@ async function submit(t: Test, revision = commit, expectedVersion?: number) {
   expect(r.status, JSON.stringify(r.data)).toBe(202);
   return r.data;
 }
+async function seedCheckedBranch(
+  t: Test,
+  manifest: Record<string, any>,
+  version = 5,
+) {
+  return t.run(async (ctx) => {
+    const owner = await ctx.db
+      .query("agents")
+      .withIndex("repository", (q) => q.eq("repository", repository))
+      .unique();
+    const lineage = await ctx.db
+      .query("contentLineages")
+      .withIndex("lineageId", (q) => q.eq("lineageId", manifest.lineageId))
+      .unique();
+    expect(owner).toBeTruthy();
+    expect(lineage).toBeTruthy();
+    const provenanceHash = await fingerprint(manifest.provenance);
+    const gate = scanText(
+      JSON.stringify(manifest),
+      "fixed_source_hash_checked",
+      "cc0_declared",
+    );
+    const branchId = await ctx.db.insert("branches", {
+      branchId: manifest.branchId,
+      lineageId: manifest.lineageId,
+      worldHash: lineage!.worldHash,
+      provenance: manifest.provenance,
+      provenanceHash,
+      owner: owner!._id,
+      repository,
+      title: manifest.title,
+      readingUrl: `${repository}/blob/${commit}/${manifest.episodes[0].path}`,
+      parent: manifest.parent,
+      revision: commit,
+      status: "checked",
+      checkedAt: Date.now(),
+      license,
+      gate,
+      version,
+    });
+    for (const item of manifest.episodes) {
+      await ctx.db.insert("episodes", {
+        author: owner!._id,
+        lineageId: manifest.lineageId,
+        worldHash: lineage!.worldHash,
+        provenance: manifest.provenance,
+        provenanceHash,
+        branchId: manifest.branchId,
+        episodeId: item.episodeId,
+        revision: commit,
+        path: item.path,
+        contentHash: item.contentHash,
+        title: item.title,
+        listed: false,
+        parent: manifest.parent,
+        license,
+      });
+    }
+    return { branchId, owner: owner!._id };
+  });
+}
+async function adopt(
+  t: Test,
+  role: keyof typeof keys = "editor",
+  requestId: string = crypto.randomUUID(),
+  expectedVersion = 5,
+  revision = commit,
+  extras = {},
+) {
+  return post(
+    t,
+    "intakes/adopt",
+    {
+      branchId: "river-branch",
+      revision,
+      expectedVersion,
+      ...extras,
+    },
+    role,
+    requestId,
+  );
+}
 async function drain(t: Test) {
   for (let i = 0; i < 100; i++) {
     await t.finishInProgressScheduledFunctions();
@@ -224,6 +306,255 @@ const get = async (t: Test, id: any) =>
     hash: await digest(keys.writer),
     intakeId: id,
   });
+it("lets only an editor adopt checked work while ordinary intake stays closed", async () => {
+  const { t, manifest, fetcher } = await fresh();
+  await seedCheckedBranch(t, manifest);
+  expect((await adopt(t, "writer")).status).toBe(403);
+  expect((await adopt(t, "auditor")).status).toBe(403);
+
+  vi.stubEnv("INTAKE_OPEN", "false");
+  const migrated = await adopt(t, "editor", "adopt-closed-legacy", 5, commit, {
+    repository: "https://example.invalid/untrusted",
+    url: "https://example.invalid/secret",
+    token: "never-forward-this",
+  });
+  expect(migrated.status, JSON.stringify(migrated.data)).toBe(202);
+  expect(migrated.data.status).toBe("reading");
+  const branch = await t.run((ctx) =>
+    ctx.db
+      .query("branches")
+      .withIndex("branchId", (q) => q.eq("branchId", "river-branch"))
+      .unique(),
+  );
+  expect(branch).toMatchObject({
+    status: "checked",
+    version: 5,
+    revision: commit,
+  });
+  expect(
+    fetcher.mock.calls.every(([url]) =>
+      String(url).startsWith("https://raw.githubusercontent.com/writer/story/"),
+    ),
+  ).toBe(true);
+
+  await drain(t);
+  const row = await get(t, migrated.data.intakeId);
+  expect(row.status).toBe("reviewing");
+  expect(row.readings[0]).toMatchObject({
+    status: "completed",
+    result: reading,
+  });
+});
+
+it("rejects wrong fixed revisions, branch versions and non-checked states", async () => {
+  const first = await fresh();
+  await seedCheckedBranch(first.t, first.manifest);
+  expect(
+    (await adopt(first.t, "editor", crypto.randomUUID(), 4)).data.error,
+  ).toBe("VERSION_CONFLICT");
+  expect(
+    (await adopt(first.t, "editor", crypto.randomUUID(), 5, next)).data.error,
+  ).toBe("INTAKE_SUPERSEDED");
+
+  const second = await fresh();
+  await seedCheckedBranch(second.t, second.manifest);
+  await second.t.run(async (ctx) => {
+    const branch = await ctx.db
+      .query("branches")
+      .withIndex("branchId", (q) => q.eq("branchId", "river-branch"))
+      .unique();
+    await ctx.db.patch(branch!._id, { status: "pending" });
+  });
+  expect((await adopt(second.t)).data.error).toBe("BRANCH_NOT_CHECKED");
+});
+
+it("requires an active owner, active lineage, stored consent and a technical check", async () => {
+  const blocked = await fresh();
+  const blockedBranch = await seedCheckedBranch(blocked.t, blocked.manifest);
+  await blocked.t.run((ctx) =>
+    ctx.db.patch(blockedBranch.owner, { status: "blocked" }),
+  );
+  expect((await adopt(blocked.t)).data.error).toBe("FORBIDDEN");
+
+  const retired = await fresh();
+  await seedCheckedBranch(retired.t, retired.manifest);
+  await retired.t.run(async (ctx) => {
+    const lineage = await ctx.db
+      .query("contentLineages")
+      .withIndex("lineageId", (q) => q.eq("lineageId", "river-world"))
+      .unique();
+    await ctx.db.patch(lineage!._id, { status: "retired" });
+  });
+  expect((await adopt(retired.t)).data.error).toBe("LINEAGE_NOT_ACTIVE");
+
+  const unchecked = await fresh();
+  await seedCheckedBranch(unchecked.t, unchecked.manifest);
+  await unchecked.t.run(async (ctx) => {
+    const branch = await ctx.db
+      .query("branches")
+      .withIndex("branchId", (q) => q.eq("branchId", "river-branch"))
+      .unique();
+    await ctx.db.patch(branch!._id, {
+      license: { ...license, humanApproved: false },
+    });
+  });
+  expect((await adopt(unchecked.t)).data.error).toBe("WORK_CONSENT_REQUIRED");
+
+  const noGate = await fresh();
+  await seedCheckedBranch(noGate.t, noGate.manifest);
+  await noGate.t.run(async (ctx) => {
+    const branch = await ctx.db
+      .query("branches")
+      .withIndex("branchId", (q) => q.eq("branchId", "river-branch"))
+      .unique();
+    await ctx.db.patch(branch!._id, { gate: undefined });
+  });
+  expect((await adopt(noGate.t)).data.error).toBe("BRANCH_NOT_CHECKED");
+
+  const reserved = await fresh();
+  await seedCheckedBranch(reserved.t, reserved.manifest);
+  await reserved.t.run(async (ctx) => {
+    const lineage = await ctx.db
+      .query("contentLineages")
+      .withIndex("lineageId", (q) => q.eq("lineageId", "river-world"))
+      .unique();
+    await ctx.db.patch(lineage!._id, {
+      rootContinuation: {
+        branchId: "reserved-continuation",
+        repository: "https://github.com/reserved/story",
+      },
+    });
+  });
+  expect((await adopt(reserved.t)).data.error).toBe(
+    "ROOT_CONTINUATION_RESERVED",
+  );
+
+  const root = await fresh();
+  await seedCheckedBranch(root.t, root.manifest);
+  await root.t.run(async (ctx) => {
+    const lineage = await ctx.db
+      .query("contentLineages")
+      .withIndex("lineageId", (q) => q.eq("lineageId", "river-world"))
+      .unique();
+    await ctx.db.patch(lineage!._id, { rootBranchId: "river-branch" });
+  });
+  expect((await adopt(root.t)).data.error).toBe("ROOT_BRANCH_NOT_ADOPTABLE");
+});
+
+it("does not restore branches stopped explicitly or by a legacy listing decision", async () => {
+  for (const legacy of [false, true]) {
+    const { t, manifest } = await fresh();
+    const { branchId } = await seedCheckedBranch(t, manifest);
+    await t.run(async (ctx) => {
+      const branch = (await ctx.db.get(branchId))!;
+      if (legacy)
+        await ctx.db.insert("branchHistory", {
+          branchId: branch.branchId,
+          version: 4,
+          snapshot: { ...branch, status: "suspended" },
+        });
+      else await ctx.db.patch(branchId, { listingSuspended: true });
+    });
+    expect((await adopt(t)).data.error).toBe("BRANCH_LISTING_SUSPENDED");
+    expect(
+      await t.run((ctx) => ctx.db.query("intakes").collect()),
+    ).toHaveLength(0);
+  }
+});
+
+it("returns the same intake for retries and duplicate requests for a fixed edition", async () => {
+  const { t, manifest } = await fresh();
+  await seedCheckedBranch(t, manifest);
+  const first = await adopt(t, "editor", "adopt-fixed-edition-r1");
+  const retry = await adopt(t, "editor", "adopt-fixed-edition-r1");
+  const duplicate = await adopt(t, "editor", "adopt-fixed-edition-r2");
+  expect(retry.data).toEqual(first.data);
+  expect(duplicate.data.intakeId).toBe(first.data.intakeId);
+  expect(await t.run((ctx) => ctx.db.query("intakes").collect())).toHaveLength(
+    1,
+  );
+  expect(
+    (await get(t, first.data.intakeId)).events.filter(
+      (event) => event.kind === "received",
+    ),
+  ).toHaveLength(1);
+
+  const missingKey = await t.fetch("/v2/intakes/adopt", {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer " + keys.editor,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      branchId: "river-branch",
+      revision: commit,
+      expectedVersion: 5,
+    }),
+  });
+  expect(missingKey.status).toBe(400);
+});
+
+it("carries a compatible legacy main version without changing its declaration", async () => {
+  const { t, manifest } = await fresh({
+    main: { mainId: "river-story", title: "The River" },
+  });
+  const { owner } = await seedCheckedBranch(t, manifest);
+  await t.run((ctx) =>
+    ctx.db.insert("mains", {
+      mainId: "river-story",
+      title: "The River",
+      owner,
+      lineageId: "river-world",
+      head: manifest.parent,
+      explicitStart: true,
+      count: 1,
+      version: 7,
+    }),
+  );
+  await t.run((ctx) =>
+    ctx.db.insert("mainSteps", {
+      mainId: "river-story",
+      position: 0,
+      episode: manifest.parent,
+      selectedAt: Date.now(),
+    }),
+  );
+  const migrated = await adopt(t);
+  const row = await get(t, migrated.data.intakeId);
+  expect(row.legacyMainVersion).toBe(7);
+  expect(JSON.parse(row.manifest).main.expectedVersion).toBeUndefined();
+  expect(
+    await t.run(async (ctx) => {
+      const branch = await ctx.db
+        .query("branches")
+        .withIndex("branchId", (q) => q.eq("branchId", "river-branch"))
+        .unique();
+      return { version: branch!.version, status: branch!.status };
+    }),
+  ).toEqual({ version: 5, status: "checked" });
+
+  await drain(t);
+  expect((await review(t, migrated.data.intakeId)).data.status).toBe(
+    "published",
+  );
+  expect((await get(t, migrated.data.intakeId)).mainSelection).toEqual({
+    status: "completed",
+  });
+  expect(
+    await t.query(internal.forest.publicMain, { id: "river-story" }),
+  ).toMatchObject({ version: 8, count: 2 });
+  await drain(t);
+
+  const explicit = await fresh({
+    main: { mainId: "river-story", title: "The River", expectedVersion: 12 },
+  });
+  await seedCheckedBranch(explicit.t, explicit.manifest);
+  const explicitlyVersioned = await adopt(explicit.t);
+  const explicitRow = await get(explicit.t, explicitlyVersioned.data.intakeId);
+  expect(explicitRow.legacyMainVersion).toBe(12);
+  expect(JSON.parse(explicitRow.manifest).main.expectedVersion).toBe(12);
+});
+
 async function review(
   t: Test,
   id: any,

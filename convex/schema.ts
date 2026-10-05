@@ -34,6 +34,7 @@ export default defineSchema({
     error: v.optional(v.string()),
     updatedAt: v.number(),
     githubPr: v.optional(v.number()),
+    legacyMainVersion: v.optional(v.number()),
     mainSelection: v.optional(
       v.object({ status: v.string(), error: v.optional(v.string()) }),
     ),

@@ -70,6 +70,7 @@ PR受付ではAPIキー作成・二重申告は不要です。署名済みWebhoo
 | 経路 | 用途 |
 |---|---|
 | `POST /v2/intakes` | 固定版の受付。202と案件IDを返す |
+| `POST /v2/intakes/adopt` | 編集者が旧受付済みのchecked固定版を引き継ぐ。202と案件IDを返す |
 | `GET /v2/intakes?id=ID` | 案件・世界のURL・審査対象・イベントと通知状態 |
 | `GET /v2/intakes?status=reviewing` | 審査者のキュー。書き手には自分の案件だけを返す |
 | `POST /v2/intakes/review` | 独立審査結果と確認事項の一括登録 |
@@ -77,6 +78,32 @@ PR受付ではAPIキー作成・二重申告は不要です。署名済みWebhoo
 | `POST /v2/intakes/retry` | サーバー確認処理が失敗した案件の再実行 |
 | `POST /v2/intakes/notifications/retry` | 編集者による未設定・失敗通知の再送 |
 | `POST /v2/github` | GitHub署名付きPR・コメントイベントの受付 |
+
+### 旧受付済みの固定版を引き継ぐ
+
+`POST /v2/intakes/adopt` は編集者専用の移行操作です。一般受付が閉じたままでも、旧 `branch.update` と `check` の両方で受領・照合済みの枝だけを新しい案件へ移せます。編集者キーを使い、本文やmanifestを再提出する必要はありません。作者へ原稿の再送を依頼しません。
+
+入力は `{ branchId, revision, expectedVersion }` と必須の `Idempotency-Key` です。`expectedVersion` は枝の現在版です。APIは保存済みの枝・所有者・系譜・技術check・CC0同意と、枝に記録されたリポジトリの固定revisionにあるmanifest・本文hashを照合します。取得先のURLは入力から受け取らず、既存枝の `repository` と指定revisionから決めます。
+
+系譜のroot枝はこの経路では扱わず、直接の続きの予約条件も再確認します。
+
+所有者と系譜が有効で、枝が `checked` 状態のときだけ移行します。明示的な掲載停止や旧停止履歴がある枝は引き継がず、この処理で停止を解除しません。一般の新規提出を編集者が作成する経路ではありません。移行後は枝・作品申告・固定版・枝版を変更せず、新案件を `reading` 状態で開始します。既存のサーバー読書、独立審査、掲載、必要なmain反映が続きます。同じ枝IDとrevisionに案件が既にあれば、その案件を返します。
+
+作者の`main`宣言は固定manifestのまま保持し、移行時の木の版を案件に記録します。掲載後、その作者の既存道順に含まれる同じ本文の話を新審査済み版へ引き継いで続きへ延長できます。他の木を変更しません。本文変更、補完、取り下げ、非表示・閉じた木、木の版の競合は自動変更せず、掲載結果とは別にmain適用の失敗として返します。
+
+入力例（`adopt.json`）：
+
+```json
+{
+  "branchId": "pebble-after-kiss",
+  "revision": "9ab280bf96784f472865d0012da5e9a0e4745a44",
+  "expectedVersion": 5
+}
+```
+
+```sh
+node scripts/relay.mjs intake-adopt adopt.json --request-id adopt-pebble-after-kiss-r1 --profile .secrets/relay-editor.json
+```
 
 API直接提出の例（`input.json`）：
 

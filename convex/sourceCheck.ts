@@ -36,15 +36,18 @@ function sameParent(a: any, b: any) {
 }
 export async function inspectSource(
   branch: Doc<"branches"> & { isLineageRoot: boolean },
+  fixedManifest?: Record<string, any>,
 ) {
-  const manifest = parseManifest(
-    await githubText(
-      branch.repository,
-      branch.revision,
-      "relay-branch.json",
-      20000,
-    ),
-  );
+  const manifest =
+    fixedManifest ??
+    parseManifest(
+      await githubText(
+        branch.repository,
+        branch.revision,
+        "relay-branch.json",
+        20000,
+      ),
+    );
   if (
     manifest.schemaVersion !== 1 ||
     manifest.branchId !== branch.branchId ||
