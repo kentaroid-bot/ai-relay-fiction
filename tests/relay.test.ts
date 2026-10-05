@@ -3460,6 +3460,225 @@ it("lets a curator select a reviewed replacement only in their own tree and pres
   ]);
 });
 
+// Match production: the author's tree advances to a new repository commit,
+// while a third party keeps its continuation attached to the old fixed text.
+async function multiEditionForest() {
+  const forest = await withdrawalForest();
+  const { t, pebble, next } = forest;
+  const revision = "3".repeat(40);
+  const currentPebble = { ...pebble, revision };
+  const currentNext = { ...next, revision };
+  await t.run(async (ctx) => {
+    for (const ref of [pebble, next]) {
+      const old = (await ctx.db
+        .query("episodes")
+        .withIndex("reference", (q) =>
+          q
+            .eq("branchId", ref.branchId)
+            .eq("episodeId", ref.episodeId)
+            .eq("revision", ref.revision),
+        )
+        .unique())!;
+      const { _id, _creationTime, ...value } = old;
+      await ctx.db.insert("episodes", {
+        ...value,
+        revision,
+        ...(ref === next ? { parent: currentPebble } : {}),
+      });
+      const branch = (await ctx.db
+        .query("branches")
+        .withIndex("branchId", (q) => q.eq("branchId", ref.branchId))
+        .unique())!;
+      await ctx.db.patch(branch._id, { revision });
+    }
+    for (const [position, ref] of [
+      [1, currentPebble],
+      [2, currentNext],
+    ] as const) {
+      const step = (await ctx.db
+        .query("mainSteps")
+        .withIndex("path", (q) =>
+          q.eq("mainId", "pebble-tree").eq("position", position),
+        )
+        .unique())!;
+      await ctx.db.patch(step._id, { episode: ref });
+    }
+    const tree = (await ctx.db
+      .query("mains")
+      .withIndex("mainId", (q) => q.eq("mainId", "pebble-tree"))
+      .unique())!;
+    await ctx.db.patch(tree._id, { head: currentNext, version: 2 });
+  });
+  await approveFixture(t, pebble.branchId);
+  await approveFixture(t, next.branchId);
+  return { ...forest, currentPebble, currentNext };
+}
+it("shares continuations across identical listed parent editions in either tree, preserving fixed references", async () => {
+  const { t, pebble, next, alternate, currentPebble, currentNext } =
+    await multiEditionForest();
+  for (const path of ["pebble-tree&at=1&v=2", "alternate-tree&at=0&v=1"]) {
+    const nav = (await request(t, "", "candidates?id=" + path)).data;
+    expect(nav.isDone).toBe(true);
+    expect(nav.page.map((e: any) => [e.branchId, e.revision]).sort()).toEqual(
+      [
+        [next.branchId, next.revision],
+        [currentNext.branchId, currentNext.revision],
+        [alternate.branchId, alternate.revision],
+      ].sort(),
+    );
+    expect(
+      nav.page.find((e: any) => e.branchId === alternate.branchId),
+    ).toMatchObject({
+      parent: pebble,
+      route: { mainId: "alternate-tree", position: 1 },
+    });
+    expect(
+      nav.page.find((e: any) => e.revision === currentNext.revision),
+    ).toMatchObject({
+      parent: currentPebble,
+      currentEdition: true,
+      route: { mainId: "pebble-tree", position: 2, authorTree: true },
+    });
+  }
+  const root = (await request(t, "", "candidates?id=kiss-tree&at=0&v=1")).data;
+  expect([...new Set(root.page.map((e: any) => e.branchId))]).toEqual([
+    pebble.branchId,
+  ]);
+  expect(root.page.find((e: any) => e.currentEdition)).toMatchObject({
+    route: { mainId: "pebble-tree", position: 1, authorTree: true },
+  });
+  // Legacy selection still refers to one exact edition, not the UI's union.
+  expect(
+    (
+      await command(t, writerKey, "main.create", {
+        mainId: "head-tree",
+        title: "Head",
+        start: parent,
+        head: currentPebble,
+      })
+    ).status,
+  ).toBe(200);
+  const legacy = (await request(t, "", "candidates?id=head-tree")).data;
+  expect(legacy.page.map((e: any) => e.revision)).toEqual([
+    currentNext.revision,
+  ]);
+});
+it.each([
+  "different-text",
+  "unlisted",
+  "withdrawn",
+  "unreviewed",
+  "reparented",
+])("does not share continuations from a %s parent edition", async (kind) => {
+  const { t, pebble, currentNext } = await multiEditionForest();
+  await t.run(async (ctx) => {
+    const old = (await ctx.db
+      .query("episodes")
+      .withIndex("reference", (q) =>
+        q
+          .eq("branchId", pebble.branchId)
+          .eq("episodeId", pebble.episodeId)
+          .eq("revision", pebble.revision),
+      )
+      .unique())!;
+    if (kind === "different-text")
+      await ctx.db.patch(old._id, { contentHash: "a".repeat(64) });
+    if (kind === "unlisted") await ctx.db.patch(old._id, { listed: false });
+    if (kind === "withdrawn")
+      await ctx.db.patch(old._id, { lifecycle: "withdrawn", withdrawnAt: 1 });
+    if (kind === "reparented") await ctx.db.patch(old._id, { parent: null });
+    if (kind === "unreviewed") {
+      for (const review of await ctx.db.query("contentReviews").collect()) {
+        if (
+          review.target.branchId === pebble.branchId &&
+          review.target.revision === pebble.revision
+        )
+          await ctx.db.delete(review._id);
+      }
+    }
+  });
+  // Renew changed targets so the text/connection guards are independently tested.
+  if (["different-text", "reparented"].includes(kind)) {
+    await t.run(async (ctx) => {
+      const b = (await ctx.db
+        .query("branches")
+        .withIndex("branchId", (q) => q.eq("branchId", pebble.branchId))
+        .unique())!;
+      const e = (await ctx.db
+        .query("episodes")
+        .withIndex("reference", (q) =>
+          q
+            .eq("branchId", pebble.branchId)
+            .eq("episodeId", pebble.episodeId)
+            .eq("revision", pebble.revision),
+        )
+        .unique())!;
+      const reviewer = (await ctx.db
+        .query("agents")
+        .filter((q) => q.eq(q.field("role"), "auditor"))
+        .first())!;
+      const target = episodeTarget(b, e)!;
+      await ctx.db.insert("contentReviews", {
+        target,
+        targetHash: await fingerprint(target),
+        review: eligibleReview,
+        reviewer: reviewer._id,
+        checkedAt: Date.now(),
+      });
+    });
+  }
+  const nav = (await request(t, "", "candidates?id=pebble-tree&at=1&v=2")).data;
+  expect(nav.page.map((e: any) => [e.branchId, e.revision])).toEqual([
+    [currentNext.branchId, currentNext.revision],
+  ]);
+});
+
+it("continues pagination after a full page of candidates attached to a different text", async () => {
+  const { t, pebble, currentPebble, currentNext } = await multiEditionForest();
+  await t.run(async (ctx) => {
+    const ep = (await ctx.db
+      .query("episodes")
+      .withIndex("reference", (q) =>
+        q
+          .eq("branchId", pebble.branchId)
+          .eq("episodeId", pebble.episodeId)
+          .eq("revision", pebble.revision),
+      )
+      .unique())!;
+    const { _id, _creationTime, ...value } = ep;
+    const changed = { ...pebble, revision: "0".repeat(40) };
+    await ctx.db.insert("episodes", {
+      ...value,
+      revision: changed.revision,
+      contentHash: "c".repeat(64),
+    });
+    for (let i = 0; i < 50; i++) {
+      await ctx.db.insert("episodes", {
+        ...value,
+        branchId: "other-text-child-" + i,
+        parent: changed,
+      });
+    }
+  });
+  const first = (await request(t, "", "candidates?id=pebble-tree&at=1&v=2"))
+    .data;
+  expect(first.page).toEqual([]);
+  expect(first.isDone).toBe(false);
+  const second = (
+    await request(
+      t,
+      "",
+      "candidates?id=pebble-tree&at=1&v=2&cursor=" +
+        encodeURIComponent(first.continueCursor),
+    )
+  ).data;
+  expect(second.isDone).toBe(true);
+  expect(second.page).toHaveLength(3);
+  expect(
+    second.page.find((e: any) => e.revision === currentNext.revision).parent,
+  ).toEqual(currentPebble);
+});
+
 it("routes a shared episode to its author's tree even when another tree indexed it first", async () => {
   const { t, pebble } = await withdrawalForest();
   await t.run(async (ctx) => {

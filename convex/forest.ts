@@ -949,20 +949,50 @@ export const publicCandidates = internalQuery({
       !!step.replaces &&
       cursor?.startsWith("replacement:");
     const anchor = inherited ? step.replaces! : step.episode;
+    const anchorEpisode = inherited ? await episode(ctx, anchor) : ep;
+    // A repository commit may change while this story's text stays identical.
+    // Share its continuations across listed editions, without changing any
+    // fixed parent reference or the selected reading path.
+    const parentEditions = new Map<string, Promise<boolean>>();
+    const acceptsParent = (ref: Ref): Promise<boolean> => {
+      if (same(ref, anchor)) return Promise.resolve(true);
+      if (position === undefined) return Promise.resolve(false);
+      let accepted = parentEditions.get(ref.revision);
+      if (!accepted) {
+        accepted = (async () => {
+          const other = await episode(ctx, ref);
+          return !!(
+            anchorEpisode &&
+            other &&
+            other.contentHash === anchorEpisode.contentHash &&
+            other.lineageId === anchorEpisode.lineageId &&
+            other.worldHash === anchorEpisode.worldHash &&
+            other.parent?.branchId === anchorEpisode.parent?.branchId &&
+            other.parent?.episodeId === anchorEpisode.parent?.episodeId &&
+            (await visible(ctx, ref))
+          );
+        })();
+        parentEditions.set(ref.revision, accepted);
+      }
+      return accepted;
+    };
     const pageCursor = inherited
       ? cursor!.slice("replacement:".length) || null
       : cursor || null;
     const result = await ctx.db
       .query("episodes")
-      .withIndex("parent", (q) =>
-        q
+      .withIndex("parent", (q) => {
+        const byEpisode = q
           .eq("parent.branchId", anchor.branchId)
-          .eq("parent.episodeId", anchor.episodeId)
-          .eq("parent.revision", anchor.revision),
-      )
+          .eq("parent.episodeId", anchor.episodeId);
+        return position === undefined
+          ? byEpisode.eq("parent.revision", anchor.revision)
+          : byEpisode;
+      })
       .paginate({ numItems: 50, cursor: pageCursor });
     const rows = await Promise.all(
       result.page.map(async (e) => {
+        if (!e.parent || !(await acceptsParent(e.parent))) return null;
         const ref = {
           branchId: e.branchId,
           episodeId: e.episodeId,
