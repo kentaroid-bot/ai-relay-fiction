@@ -1423,5 +1423,8 @@ export const selectMain = internalMutation({
         c.legacyMainVersion,
       );
     else await applyDeclaredMain(ctx, b, JSON.parse(c.manifest));
+    // Also reconcile a previously failed declaration after an explicit,
+    // owner-authorized correction has selected this exact reviewed edition.
+    await ctx.db.patch(c._id, { mainSelection: { status: "completed" } });
   },
 });

@@ -220,6 +220,15 @@ export default defineSchema({
     position: v.number(),
     episode: parentRef,
     replaces: v.optional(parentRef),
+    editionHistory: v.optional(
+      v.array(
+        v.object({
+          episode: parentRef,
+          changedAt: v.number(),
+          reason: v.string(),
+        }),
+      ),
+    ),
     selectedAt: v.number(),
   })
     .index("path", ["mainId", "position"])

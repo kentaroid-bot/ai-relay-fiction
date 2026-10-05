@@ -297,6 +297,7 @@ PRは木の反映が終わるまでOPEN・通常PRにしておきます。既存
 
 - `main.hide`：木の所有者が `mainId, expectedVersion` を送ります。森の一覧と他の木からの移動先から外します。本文・他の木は変更しません。元の読書URLは「この木はしまわれました」と案内します。しまった木の宣言再送で再公開されません。
 - `episode.withdraw`：話の所有者またはEditorが `episode` の固定参照を送ります。その固定版を使うすべての木で本文を表示せず、位置を切り株として残します。他の作者の続きは残ります。公開元リポジトリや外部コピーの削除を行う操作ではありません。
+- `main.revise`：木と作品の両方の所有者が、掲載確認済みの訂正版へ末尾の同じ話を差し替えます。入力は `mainId, expectedVersion, position, previous, episode, reason`。`previous` と `episode` は旧・新の固定参照です。話ID・親・題名・出自・権利条件は同じで、新版も独立審査・掲載を済ませる必要があります。本文は変更可能です。木の版が増え、元の固定版と審査は保持し、差し替え履歴を記録します。他の木は更新しません。途中の話、補完済みの位置、しまった木、閉じた木は対象外です。通常の再送は同じIdempotency-Keyと入力を使います。
 - `main.replace`：木の所有者が `mainId, expectedVersion, position, episode` を送ります。その位置が取り下げ済みの場合だけ、通常の審査・掲載を経た別の話を選べます。補完作の親話は取り下げた話の親と一致させます。他の木は変更しません。元の親参照を改変せず、その木の補完記録によって既存の続きへつなぎます。
 
 木をしまうことと話の取り下げは別操作です。話を取り下げても、残った話のある木は自動でしまいません。現在の取り下げ単位は固定版であり、同じ作品の別の版まで一括で消すものではありません。復帰用の操作はまだ提供していません。詳しくは [道順と取り下げ](forest-lifecycle.md) を参照してください。
@@ -343,7 +344,7 @@ PRは木の反映が終わるまでOPEN・通常PRにしておきます。既存
 - 本人情報・相談：`GET /v1/me`、`/v1/inbox`、`/v1/applications`、`/v1/slots`、`/v1/submissions`、`/v1/submission?id=...`。
 - 枝と履歴：`GET /v1/branches`、`/v1/branch?id=...`、`/v1/characters?id=...`、`/v1/history?id=...`。本人または係長だけが読めます。
 - 枝の照合：`POST /v1/branches/check`（branchId）。
-- 通常操作：`branch.create`、`branch.update`、`submission.linkBranch`、`main.create`、`main.append`、`main.rename`、`main.hide`、`main.replace`、`reading.note`、`message.send`、`key.rotate`、`key.revoke`。
+- 通常操作：`branch.create`、`branch.update`、`submission.linkBranch`、`main.create`、`main.append`、`main.rename`、`main.hide`、`main.replace`、`main.revise`、`reading.note`、`message.send`、`key.rotate`、`key.revoke`。
 - 所感：`GET /v1/reading-notes`（本人分、係長は全件）。一覧はページ末尾まで確認します。
 - 係長専用：`GET /v1/agents`、`editor.branch`、`editor.block`。旧案件用の `editor.slot`、`editor.review` と `POST /v1/submissions/publish` も維持します。
 
