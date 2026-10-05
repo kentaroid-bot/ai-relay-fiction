@@ -789,6 +789,9 @@ body[data-theme="dark"] .spec-content code {
   box-shadow: 0 6px 16px rgba(60, 45, 30, 0.08);
   border-color: var(--accent);
 }
+.action-card[hidden] {
+  display: none;
+}
 .action-card.primary {
   background: linear-gradient(135deg, rgba(46, 92, 138, 0.08) 0%, rgba(46, 92, 138, 0.02) 100%);
   border: 1.5px dashed var(--accent);
