@@ -55,7 +55,7 @@ async function visible(ctx: QueryCtx | MutationCtx, ref: Ref) {
       }
     : null;
 }
-// Both API and PR trees include the fixed ancestry of the chosen episode.
+// Legacy repair alone walks to the root; new trees explicitly choose their start.
 // Only recorded, listed references are followed; never fetch or guess a route.
 async function ancestry(ctx: MutationCtx, target: Ref, stop?: Ref) {
   const path: Ref[] = [],
@@ -87,6 +87,37 @@ async function ancestry(ctx: MutationCtx, target: Ref, stop?: Ref) {
   }
   return { path, connected };
 }
+// Follow only the selected interval. Earlier ancestors belong to another tree.
+async function selectedPath(ctx: MutationCtx, start: Ref, head: Ref) {
+  const first = await parent(ctx, start);
+  const firstEpisode = await episode(ctx, first);
+  if (!firstEpisode?.parent) {
+    const branch = await ctx.db
+      .query("branches")
+      .withIndex("branchId", (q) => q.eq("branchId", first.branchId))
+      .unique();
+    if (!branch || !(await isLineageRoot(ctx, branch)))
+      fail("MAIN_ROOT_REQUIRED");
+  }
+  if (same(first, head)) return [first];
+  const { path, connected } = await ancestry(ctx, head, first);
+  if (!connected) fail("MAIN_CONTINUITY_REQUIRED");
+  const a = await episode(ctx, first),
+    b = await episode(ctx, head);
+  if (a?.lineageId !== b?.lineageId) fail("LINEAGE_MISMATCH");
+  return [first, ...path];
+}
+async function mainVisible(
+  ctx: QueryCtx | MutationCtx,
+  main: Doc<"mains"> | null,
+) {
+  return (
+    !!main &&
+    main.hiddenAt === undefined &&
+    (await ctx.db.get(main.owner))?.status === "active" &&
+    (await getLineage(ctx, main.lineageId))?.status === "active"
+  );
+}
 export async function validateFromMain(ctx: MutationCtx, value: any, ref: Ref) {
   if (value === undefined) return undefined;
   const mainId = text(value?.mainId, 80, "MAIN_ID");
@@ -96,8 +127,8 @@ export async function validateFromMain(ctx: MutationCtx, value: any, ref: Ref) {
     .query("mains")
     .withIndex("mainId", (q) => q.eq("mainId", mainId))
     .unique();
-  if (!main || (await ctx.db.get(main.owner))?.status !== "active")
-    fail("MAIN_NOT_FOUND");
+  if (!(await mainVisible(ctx, main))) fail("MAIN_NOT_FOUND");
+  if (!main) fail("MAIN_NOT_FOUND");
   await requireLineage(ctx, main.lineageId);
   const parentBranch = await ctx.db
     .query("branches")
@@ -208,13 +239,15 @@ export async function forestCommand(
       .withIndex("branchId", (q) => q.eq("branchId", start.branchId))
       .unique();
     const lineage = await requireLineage(ctx, startBranch?.lineageId);
-    const { path } = await ancestry(ctx, start);
+    const head = body.head === undefined ? start : await parent(ctx, body.head);
+    const path = await selectedPath(ctx, start, head);
     await ctx.db.insert("mains", {
       mainId,
       lineageId: lineage.lineageId,
       title: text(body.title, 200, "TITLE"),
       owner: agent._id,
-      head: start,
+      head,
+      explicitStart: true,
       count: path.length,
       version: 1,
     });
@@ -226,13 +259,82 @@ export async function forestCommand(
         selectedAt: Date.now(),
       });
     await audit(ctx, agent._id, operation, mainId, 1);
-    return { mainId, version: 1, head: start };
+    return { mainId, version: 1, head };
   }
-  if (!["main.append", "main.rename"].includes(operation))
+  if (
+    !["main.append", "main.rename", "main.hide", "main.replace"].includes(
+      operation,
+    )
+  )
     fail("UNKNOWN_OPERATION");
   if (!main || main.owner !== agent._id) fail("FORBIDDEN");
   await requireLineage(ctx, main.lineageId);
   if (body.expectedVersion !== main.version) fail("VERSION_CONFLICT");
+  if (operation === "main.hide") {
+    if (main.hiddenAt !== undefined)
+      return { mainId, version: main.version, hidden: true };
+    await ctx.db.patch(main._id, {
+      hiddenAt: Date.now(),
+      version: main.version + 1,
+    });
+    await audit(ctx, agent._id, operation, mainId, main.version + 1);
+    return { mainId, version: main.version + 1, hidden: true };
+  }
+  if (main.hiddenAt !== undefined) fail("MAIN_HIDDEN");
+  if (operation === "main.replace") {
+    if (!Number.isSafeInteger(body.position) || body.position < 0)
+      fail("INVALID_MAIN_POSITION");
+    const step = await ctx.db
+      .query("mainSteps")
+      .withIndex("path", (q) =>
+        q.eq("mainId", mainId).eq("position", body.position),
+      )
+      .unique();
+    if (!step) fail("NOT_FOUND");
+    const old = await episode(ctx, step.episode);
+    if (
+      !old ||
+      (old.lifecycle !== "withdrawn" && old.withdrawnAt === undefined)
+    )
+      fail("WITHDRAWN_STEP_REQUIRED");
+    const ref = await parent(ctx, body.episode);
+    const replacement = await episode(ctx, ref);
+    if (replacement?.lineageId !== main.lineageId) fail("LINEAGE_MISMATCH");
+    if (
+      !replacement ||
+      (old.parent
+        ? !same(replacement.parent, old.parent)
+        : !!replacement.parent)
+    )
+      fail("MAIN_CONTINUITY_REQUIRED");
+    const duplicate = await ctx.db
+      .query("mainSteps")
+      .withIndex("episode", (q) =>
+        q
+          .eq("episode.branchId", ref.branchId)
+          .eq("episode.episodeId", ref.episodeId)
+          .eq("episode.revision", ref.revision),
+      )
+      .filter((q) => q.eq(q.field("mainId"), mainId))
+      .first();
+    if (duplicate) fail("MAIN_DUPLICATE_EPISODE");
+    await ctx.db.patch(step._id, {
+      episode: ref,
+      replaces: step.replaces ?? step.episode,
+      selectedAt: Date.now(),
+    });
+    await ctx.db.patch(main._id, {
+      version: main.version + 1,
+      ...(step.position === main.count - 1 ? { head: ref } : {}),
+    });
+    await audit(ctx, agent._id, operation, mainId, main.version + 1);
+    return {
+      mainId,
+      version: main.version + 1,
+      position: step.position,
+      episode: ref,
+    };
+  }
   if (operation === "main.rename") {
     const title = text(body.title, 200, "TITLE");
     await ctx.db.patch(main._id, { title, version: main.version + 1 });
@@ -241,11 +343,27 @@ export async function forestCommand(
   }
   // A suspended head must not be used to extend a public stream either.
   if (main.count >= 1000) fail("MAIN_PATH_LIMIT");
-  await parent(ctx, main.head);
+  const headEpisode = await episode(ctx, main.head);
+  if (
+    headEpisode?.lifecycle !== "withdrawn" &&
+    headEpisode?.withdrawnAt === undefined
+  )
+    await parent(ctx, main.head);
+  const last = await ctx.db
+    .query("mainSteps")
+    .withIndex("path", (q) =>
+      q.eq("mainId", mainId).eq("position", main.count - 1),
+    )
+    .unique();
   const next = await parent(ctx, body.episode);
   const ep = await episode(ctx, next);
   if (ep?.lineageId !== main.lineageId) fail("LINEAGE_MISMATCH");
-  if (!ep || !same(ep.parent, main.head)) fail("MAIN_CONTINUITY_REQUIRED");
+  if (
+    !ep ||
+    (!same(ep.parent, main.head) &&
+      !(last?.replaces && same(ep.parent, last.replaces)))
+  )
+    fail("MAIN_CONTINUITY_REQUIRED");
   await ctx.db.insert("mainSteps", {
     mainId,
     position: main.count,
@@ -310,6 +428,7 @@ export async function applyDeclaredMain(
     .withIndex("mainId", (q) => q.eq("mainId", mainId))
     .unique();
   if (main && main.owner !== branch.owner) fail("FORBIDDEN");
+  if (main?.hiddenAt !== undefined) fail("MAIN_HIDDEN");
   await requireLineage(ctx, branch.lineageId);
   if (main && main.lineageId !== branch.lineageId) fail("LINEAGE_MISMATCH");
   if (main && main.title !== title) fail("MAIN_TITLE_MISMATCH");
@@ -323,7 +442,12 @@ export async function applyDeclaredMain(
     if (selected.some((s) => same(s.episode, target)))
       return { mainId, version: main.version, outcome: "already_applied" };
   }
-  const { path, connected } = await ancestry(ctx, target, main?.head);
+  const { path, connected } = main
+    ? await ancestry(ctx, target, main.head)
+    : {
+        path: await selectedPath(ctx, declaration.start ?? target, target),
+        connected: true,
+      };
   const expected = declaration.expectedVersion ?? 0;
   if (
     !Number.isSafeInteger(expected) ||
@@ -350,6 +474,7 @@ export async function applyDeclaredMain(
       owner: branch.owner,
       lineageId: branch.lineageId,
       head: target,
+      explicitStart: true,
       count,
       version,
     });
@@ -388,6 +513,8 @@ export const repairMainAncestry = internalMutation({
       fail("MAIN_NOT_FOUND");
     await requireLineage(ctx, main.lineageId);
     if (main.version !== expectedVersion) fail("VERSION_CONFLICT");
+    if (main.explicitStart || main.hiddenAt !== undefined)
+      fail("EXPLICIT_MAIN_START");
     const steps = await ctx.db
       .query("mainSteps")
       .withIndex("path", (q) => q.eq("mainId", mainId))
@@ -469,6 +596,7 @@ export const publicMains = internalQuery({
       result.page.map(async (m) => {
         const owner = await ctx.db.get(m.owner);
         if (
+          m.hiddenAt !== undefined ||
           owner?.status !== "active" ||
           (await getLineage(ctx, m.lineageId))?.status !== "active"
         )
@@ -511,6 +639,16 @@ export const publicMain = internalQuery({
       .unique();
     if (!main || (await ctx.db.get(main.owner))?.status !== "active")
       fail("NOT_FOUND");
+    if (main.hiddenAt !== undefined)
+      return {
+        mainId: id,
+        hidden: true,
+        count: 0,
+        version: main.version,
+        page: [],
+        isDone: true,
+        continueCursor: "",
+      };
     if ((await getLineage(ctx, main.lineageId))?.status !== "active")
       fail("NOT_FOUND");
     const steps = await ctx.db
@@ -521,7 +659,12 @@ export const publicMain = internalQuery({
       steps.page.map(async (step) => {
         const ref = await visible(ctx, step.episode);
         if (ref) {
-          return { position: step.position, available: true, episode: ref };
+          return {
+            position: step.position,
+            available: true,
+            episode: ref,
+            ...(step.replaces ? { replaces: step.replaces } : {}),
+          };
         }
         const ep = await episode(ctx, step.episode);
         const isWithdrawn =
@@ -551,45 +694,143 @@ export const publicMain = internalQuery({
   },
 });
 
-// Candidates are eligible direct continuations, not ratings or recommendations.
+// Locate a reading context without making a hidden tree or withdrawn prose public.
+async function routeFor(
+  ctx: QueryCtx,
+  ref: Ref,
+  exclude?: string,
+  adjacent?: Ref,
+) {
+  const entries = await ctx.db
+    .query("mainSteps")
+    .withIndex("episode", (q) =>
+      q
+        .eq("episode.branchId", ref.branchId)
+        .eq("episode.episodeId", ref.episodeId)
+        .eq("episode.revision", ref.revision),
+    )
+    .take(101);
+  let fallback = null;
+  for (const step of entries.slice(0, 100)) {
+    if (step.mainId === exclude) continue;
+    const tree = await ctx.db
+      .query("mains")
+      .withIndex("mainId", (q) => q.eq("mainId", step.mainId))
+      .unique();
+    if (!tree || !(await mainVisible(ctx, tree))) continue;
+    const route = {
+      mainId: tree.mainId,
+      title: tree.title,
+      version: tree.version,
+      position: step.position,
+    };
+    if (adjacent) {
+      const next = await ctx.db
+        .query("mainSteps")
+        .withIndex("path", (q) =>
+          q.eq("mainId", tree.mainId).eq("position", step.position + 1),
+        )
+        .unique();
+      if (
+        next &&
+        (same(next.episode, adjacent) ||
+          (next.replaces && same(next.replaces, adjacent)))
+      )
+        return route;
+    }
+    fallback ??= route;
+  }
+  return fallback;
+}
+
+// With a position, this is navigation for that episode, even when it is a stump.
+// Without a position, preserve the legacy head-candidate API contract.
 export const publicCandidates = internalQuery({
-  args: { id: v.string(), cursor: v.optional(v.string()) },
-  handler: async (ctx, { id, cursor }) => {
+  args: {
+    id: v.string(),
+    cursor: v.optional(v.string()),
+    position: v.optional(v.number()),
+    version: v.optional(v.number()),
+  },
+  handler: async (ctx, { id, cursor, position, version }) => {
     const main = await ctx.db
       .query("mains")
       .withIndex("mainId", (q) => q.eq("mainId", id))
       .unique();
-    if (
-      !main ||
-      (await getLineage(ctx, main.lineageId))?.status !== "active" ||
-      (await ctx.db.get(main.owner))?.status !== "active" ||
-      !(await visible(ctx, main.head))
-    )
-      fail("NOT_FOUND");
-    const head = main.head;
+    if (!main || !(await mainVisible(ctx, main))) fail("NOT_FOUND");
+    if (version !== undefined && version !== main.version)
+      fail("VERSION_CONFLICT");
+    const at = position ?? main.count - 1;
+    if (!Number.isSafeInteger(at) || at < 0 || at >= main.count)
+      fail("INVALID_MAIN_POSITION");
+    const step = await ctx.db
+      .query("mainSteps")
+      .withIndex("path", (q) => q.eq("mainId", id).eq("position", at))
+      .unique();
+    if (!step) fail("NOT_FOUND");
+    const ep = await episode(ctx, step.episode);
+    const available = await visible(ctx, step.episode);
+    const withdrawn =
+      ep?.lifecycle === "withdrawn" || ep?.withdrawnAt !== undefined;
+    if (!available && !(position !== undefined && withdrawn)) fail("NOT_FOUND");
+    let previous = null;
+    if (position === 0 && ep?.parent) {
+      if (await visible(ctx, ep.parent))
+        previous = await routeFor(ctx, ep.parent, id, step.episode);
+    }
+    const inherited =
+      position !== undefined &&
+      !!step.replaces &&
+      cursor?.startsWith("replacement:");
+    const anchor = inherited ? step.replaces! : step.episode;
+    const pageCursor = inherited
+      ? cursor!.slice("replacement:".length) || null
+      : cursor || null;
     const result = await ctx.db
       .query("episodes")
       .withIndex("parent", (q) =>
         q
-          .eq("parent.branchId", head.branchId)
-          .eq("parent.episodeId", head.episodeId)
-          .eq("parent.revision", head.revision),
+          .eq("parent.branchId", anchor.branchId)
+          .eq("parent.episodeId", anchor.episodeId)
+          .eq("parent.revision", anchor.revision),
       )
-      .paginate({ numItems: 50, cursor: cursor || null });
+      .paginate({ numItems: 50, cursor: pageCursor });
     const rows = await Promise.all(
-      result.page.map((e) =>
-        visible(ctx, {
+      result.page.map(async (e) => {
+        const ref = {
           branchId: e.branchId,
           episodeId: e.episodeId,
           revision: e.revision,
-        }),
-      ),
+        };
+        const published = await visible(ctx, ref);
+        if (!published) return null;
+        return position === undefined
+          ? published
+          : { ...published, route: await routeFor(ctx, ref) };
+      }),
     );
+    const pageState =
+      position !== undefined && step.replaces
+        ? inherited
+          ? {
+              isDone: result.isDone,
+              continueCursor: result.isDone
+                ? result.continueCursor
+                : "replacement:" + result.continueCursor,
+            }
+          : result.isDone
+            ? { isDone: false, continueCursor: "replacement:" }
+            : {}
+        : {};
     return {
       ...result,
+      ...pageState,
       mainId: id,
       version: main.version,
       page: rows.filter((r) => r !== null),
+      ...(position === undefined
+        ? {}
+        : { previous, hasPrevious: !!ep?.parent, position: at }),
     };
   },
 });

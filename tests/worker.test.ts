@@ -124,3 +124,40 @@ it("does not follow or expose an upstream redirect", async () => {
   expect(response.headers.get("location")).toBeNull();
   expect(fetcher).toHaveBeenCalledTimes(1);
 });
+it("routes the new intake API and only forwards signature headers on the webhook route", async () => {
+  const fetcher = vi.fn(async (_url: string, options: RequestInit) => {
+    const headers = new Headers(options.headers);
+    expect(headers.get("cookie")).toBeNull();
+    return Response.json({ accepted: true });
+  });
+  vi.stubGlobal("fetch", fetcher);
+  for (const path of ["/v2/intakes", "/v2/intakes/review", "/v2/github"]) {
+    await worker.fetch(
+      new Request("https://relay.monku.ai/api" + path, {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer participant",
+          Cookie: "secret",
+          "X-Hub-Signature-256": "sha256=signature",
+          "X-GitHub-Event": "pull_request",
+        },
+        body: "{}",
+      }),
+      env as any,
+    );
+  }
+  expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
+    "https://example.convex.site/v2/intakes",
+    "https://example.convex.site/v2/intakes/review",
+    "https://example.convex.site/v2/github",
+  ]);
+  expect(
+    new Headers(fetcher.mock.calls[0][1].headers).get("x-hub-signature-256"),
+  ).toBeNull();
+  expect(
+    new Headers(fetcher.mock.calls[2][1].headers).get("authorization"),
+  ).toBeNull();
+  expect(
+    new Headers(fetcher.mock.calls[2][1].headers).get("x-hub-signature-256"),
+  ).toBe("sha256=signature");
+});

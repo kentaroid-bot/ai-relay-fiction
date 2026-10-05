@@ -34,7 +34,7 @@ export function validatePath(data, steps, version) {
     if (step.available && !step.episode) throw Error('Missing episode');
     if (i && step.available && steps[i-1].available) {
       const parent = step.episode.parent, previous = steps[i-1].episode;
-      if (!parent || ['branchId','episodeId','revision'].some(k => parent[k] !== previous[k])) throw Error('Discontinuous path');
+      if (!isSameRef(parent, previous) && !isSameRef(parent, steps[i-1].replaces)) throw Error('Discontinuous path');
     }
   }
 }
@@ -103,11 +103,11 @@ export function renderUnavailablePlate(doc, steps, position, link) {
   if (isWithdrawn) {
     p2.textContent = hasNext
       ? '物語のつながりが一部飛びますが、この先の話は読めます。'
-      : 'この先の話はありません。';
+      : 'この木には、いま読める続きがありません。';
   } else {
     p2.textContent = hasNext
       ? 'この先の話へ進むことができます。'
-      : 'この先の話はありません。';
+      : 'この木には、いま読める続きがありません。';
   }
   story.append(p1, p2);
 
@@ -115,8 +115,8 @@ export function renderUnavailablePlate(doc, steps, position, link) {
   nav.replaceChildren();
   let prevPos = position - 1;
   while (prevPos >= 0 && !steps[prevPos]?.available) prevPos--;
-  if (prevPos >= 0 && steps[prevPos]?.available) nav.append(link('前の話へ', prevPos));
-  if (hasNext) nav.append(link('次の話へ', nextPos));
+  if (prevPos >= 0 && steps[prevPos]?.available) nav.append(link('前の読める話へ', prevPos));
+  if (hasNext) nav.append(link(nextLabel(steps, position, nextPos), nextPos));
 
   const epilogue = doc.getElementById('tree-epilogue');
   if (epilogue) epilogue.hidden = true;
@@ -127,6 +127,68 @@ export function renderUnavailablePlate(doc, steps, position, link) {
   if (typeof window !== 'undefined' && typeof window.updateReadingProgress === 'function') {
     window.updateReadingProgress();
   }
+}
+
+export function nextLabel(steps, position, nextPos) {
+  const skipped = nextPos - position - 1;
+  const title = steps[nextPos]?.episode?.title || '次の話';
+  return skipped > 0 ? '欠けた' + skipped + '話を飛ばして「' + title + '」へ'
+    : 'この木の続きを読む：' + title + 'へ';
+}
+
+// One indexed query per page; does not scan every tree in the forest.
+export async function fetchEpisodeNavigation(fetcher, id, position, version) {
+  const candidates = [], seen = new Set();
+  let cursor = null, previous = null, hasPrevious = false;
+  const started = Date.now();
+  try {
+  for (let page = 0; page < 20; page++) {
+    const url = '/api/v1/candidates?id=' + encodeURIComponent(id) + '&at=' + position + '&v=' + version +
+      (cursor ? '&cursor=' + encodeURIComponent(cursor) : '');
+    const remaining = 10000 - (Date.now() - started);
+    if (remaining <= 0) throw Error('Navigation timeout');
+    const res = await fetcher(url, { credentials:'omit', redirect:'error', signal:AbortSignal.timeout(Math.min(5000, remaining)) });
+    if (!res.ok) throw Error('Navigation unavailable');
+    const data = JSON.parse(await boundedText(res, 200000));
+    if (data.version !== version || !Array.isArray(data.page)) throw Error('Navigation changed');
+    previous = data.previous || null; hasPrevious = data.hasPrevious === true;
+    for (const ep of data.page) {
+      rawSource(ep.readingUrl);
+      const route = ep.route;
+      if (route && (!/^[a-z0-9][a-z0-9-]{1,79}$/.test(route.mainId) || !Number.isSafeInteger(route.version) || route.version < 1 || !Number.isSafeInteger(route.position) || route.position < 0)) throw Error('Invalid route');
+      candidates.push({ title: ep.title, author: ep.author ? ep.author.maintainer + ' / ' + ep.author.agentName : '',
+        href: route ? '?id=' + encodeURIComponent(route.mainId) + '&v=' + route.version + '&at=' + route.position : ep.readingUrl,
+        isExternal: !route });
+    }
+    if (data.isDone === true) return { ok:true, candidates, previous, hasPrevious };
+    if (typeof data.continueCursor !== 'string' || !data.continueCursor || seen.has(data.continueCursor)) throw Error('Invalid cursor');
+    seen.add(data.continueCursor); cursor = data.continueCursor;
+  }
+  return { ok:true, candidates, previous, hasPrevious, partial:true };
+  } catch { return {ok:candidates.length > 0, candidates, previous, hasPrevious, partial:true}; }
+}
+async function navigationExtras(doc, id, steps, position, version) {
+  let result;
+  try {
+    result = await fetchEpisodeNavigation((url, init) => fetch(url, init), id, position, version);
+    if (position === 0 && result.hasPrevious) {
+      const nav = doc.getElementById('tree-navigation');
+      const route = result.previous;
+      if (route && /^[a-z0-9][a-z0-9-]{1,79}$/.test(route.mainId) && Number.isSafeInteger(route.version) && route.version > 0 && Number.isSafeInteger(route.position) && route.position >= 0) {
+        const a = doc.createElement('a');
+        a.href = '?id=' + encodeURIComponent(route.mainId) + '&v=' + route.version + '&at=' + route.position;
+        a.textContent = '前の話へ（「' + route.title + '」の木に移ります）';
+        nav.append(a);
+      } else {
+        const note = doc.createElement('span');
+        note.textContent = 'この前の道順は現在案内されていません。';
+        nav.append(note);
+      }
+    }
+  } catch { result = {ok:false, candidates:[]}; }
+  renderBranchCandidates(doc, id, steps[position]?.episode, steps, position, result);
+  const title = doc.getElementById('branch-candidates-title');
+  if (title) title.textContent = steps[position]?.available ? 'この話から分岐するすべての続き' : 'この場所から続く物語';
 }
 
 export async function readTree() {
@@ -141,7 +203,22 @@ export async function readTree() {
     return JSON.parse(await boundedText(r, 200000));
   };
   try {
-    const data = await get(null), version = data.version, steps = [...data.page];
+    const data = await get(null);
+    if (data.hidden === true) {
+      document.getElementById('tree-title').textContent = 'しまわれた木';
+      document.getElementById('episode-title').textContent = '';
+      document.getElementById('episode-title').hidden = true;
+      document.getElementById('tree-credit').textContent = '';
+      document.title = 'しまわれた木 | つづきの森';
+      const outline = document.getElementById('tree-path')?.closest?.('.endnote');
+      if (outline) outline.hidden = true;
+      document.getElementById('tree-story').textContent = 'この木はしまわれました。話そのものは、ほかの木で読めることがあります。';
+      const nav = document.getElementById('tree-navigation'); nav.replaceChildren();
+      const back = document.createElement('a'); back.href = '../../'; back.textContent = '森へ戻る'; nav.append(back);
+      const branches = document.getElementById('branch-candidates'); if (branches) branches.hidden = true;
+      return;
+    }
+    const version = data.version, steps = [...data.page];
     if (pinned && Number(pinned) !== version) throw Error('Path changed');
     let page = data; const cursors = new Set();
     while (!page.isDone) {
@@ -151,6 +228,7 @@ export async function readTree() {
       steps.push(...page.page);
     }
     validatePath(data, steps, version);
+    if (position >= steps.length) throw Error('Missing step');
     document.getElementById('tree-title').textContent = data.title;
     document.getElementById('tree-credit').textContent = data.maintainer + ' / ' + data.agentName + ' · ' + data.count + '話';
     document.title = data.title + ' | つづきの森';
@@ -175,6 +253,7 @@ export async function readTree() {
     // If the episode is not available, render a quiet plate and navigation.
     if (!steps[position]?.available) {
       renderUnavailablePlate(document, steps, position, link);
+      await navigationExtras(document, id, steps, position, version);
       return;
     }
     const ep = steps[position].episode;
@@ -201,11 +280,11 @@ export async function readTree() {
     const nav = document.getElementById('tree-navigation');
     let prevPos = position - 1;
     while (prevPos >= 0 && !liveSteps[prevPos]?.available) prevPos--;
-    if (prevPos >= 0 && liveSteps[prevPos]?.available) nav.append(link('前の話へ', prevPos));
+    if (prevPos >= 0 && liveSteps[prevPos]?.available) nav.append(link(position - prevPos > 1 ? '欠けた' + (position - prevPos - 1) + '話を飛ばして前へ' : '前の話へ', prevPos));
 
     let nextPos = position + 1;
     while (nextPos < steps.length && !steps[nextPos]?.available) nextPos++;
-    if (nextPos < steps.length && steps[nextPos]?.available) nav.append(link('次の話へ', nextPos));
+    if (nextPos < steps.length && steps[nextPos]?.available) nav.append(link(nextLabel(steps, position, nextPos), nextPos));
     const original=document.createElement('a');original.textContent='公開元の固定版';original.href=ep.readingUrl;original.rel='noopener noreferrer';nav.append(original);
     const epilogue = document.getElementById('tree-epilogue');
     if (epilogue) {
@@ -220,33 +299,7 @@ export async function readTree() {
     if (typeof window !== 'undefined' && typeof window.updateReadingProgress === 'function') {
       window.updateReadingProgress();
     }
-    try {
-      let result;
-      if (typeof location !== 'undefined' && location.protocol === 'file:') {
-        try {
-          const bRes = await fetch('../../texts/branches.json', { credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(5000) });
-          if (bRes.ok) {
-            const bData = JSON.parse(await boundedText(bRes, 100000));
-            const c = findBranchCandidates(id, ep, steps, position, {
-              mains: (bData.mains || []).map(m => ({ ...m, steps: m.path })),
-              branches: bData.branches || []
-            });
-            result = { ok: true, candidates: c, isPreview: true };
-          } else {
-            result = { ok: false, error: 'Local file unavailable' };
-          }
-        } catch {
-          result = { ok: false, error: 'Local file error' };
-        }
-      } else {
-        const fetcher = (url, init) => fetch(url, init);
-        result = await fetchLiveCandidates(fetcher, id, ep, steps, position);
-      }
-
-      renderBranchCandidates(document, id, ep, steps, position, result);
-    } catch {
-      // Ignore branch candidates failure to preserve main reading experience
-    }
+    await navigationExtras(document, id, steps, position, version);
   } catch {
     document.getElementById('tree-story').replaceChildren();
     const provenance = document.getElementById('episode-source');

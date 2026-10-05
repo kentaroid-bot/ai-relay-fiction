@@ -314,7 +314,7 @@ describe("GitHub PR intake", () => {
     vi.stubEnv("PARTICIPATION_MODE", "test");
     const t = await setup(),
       m: any = await manifest();
-    m.main = { mainId: "writer-tree", title: "夢見るAI" };
+    m.main = { mainId: "writer-tree", title: "夢見るAI", start: parent };
     sources(m);
     expect((await ingest(t)).data.mainDeclared).toBe(true);
     const input = {
@@ -440,7 +440,7 @@ describe("GitHub PR intake", () => {
     await listedBranch(t, writerKey, "pr-story", repository);
     const m: any = await manifest();
     m.title = "pr-story";
-    m.main = { mainId: "writer-tree", title: "夢見るAI" };
+    m.main = { mainId: "writer-tree", title: "夢見るAI", start: parent };
     // A matching legacy API source can supply its explicit main declaration via a proved PR.
     // It does not become PR-managed or allow later PR updates to overwrite API data.
     m.episodes[0].contentHash = (
@@ -494,7 +494,7 @@ describe("GitHub PR intake", () => {
     vi.stubEnv("PARTICIPATION_MODE", "test");
     const t = await setup(),
       m: any = await manifest();
-    m.main = { mainId: "writer-tree", title: "夢見るAI" };
+    m.main = { mainId: "writer-tree", title: "夢見るAI", start: parent };
     const list = async (version: number) => {
       expect(
         (
@@ -1792,12 +1792,17 @@ it("renames only the owner's main, keeping its path and retry receipt intact", a
   expect(selected.page).toHaveLength(1);
   expect(selected.page[0].episode).toMatchObject(parent);
 });
-it("includes fixed ancestors when an API tree starts at a continuation, with idempotent creation", async () => {
+it("includes only the explicitly selected interval, with idempotent creation", async () => {
   const t = await setup();
   await register(t);
   const second = await listedBranch(t, writerKey, "second", repository);
   const third = await listedBranch(t, writerKey, "third", repository, second);
-  const input = { mainId: "my-tree", title: "My tree", start: third };
+  const input = {
+    mainId: "my-tree",
+    title: "My tree",
+    start: parent,
+    head: third,
+  };
   const result = await command(
     t,
     writerKey,
@@ -1861,7 +1866,8 @@ it("rejects missing, unlisted, unrooted or cyclic ancestry without storing a par
     const result = await command(t, writerKey, "main.create", {
       mainId: "bad-tree",
       title: "Bad tree",
-      start: third,
+      start: parent,
+      head: third,
     });
     expect(result.data.error).toBe("PARENT_EPISODE_NOT_VERIFIED");
     expect(await t.run((ctx) => ctx.db.query("mains").collect())).toHaveLength(
@@ -2334,7 +2340,8 @@ it("never promotes an unlisted historical revision through another revision and 
       await command(t, writerKey, "main.create", {
         mainId: "unlisted-main",
         title: "未掲載",
-        start: old,
+        start: parent,
+        head: old,
       })
     ).data.error,
   ).toBe("PARENT_EPISODE_NOT_VERIFIED");
@@ -2548,7 +2555,8 @@ describe("fixed provenance and acorns", () => {
           await command(t, writerKey, "main.create", {
             mainId,
             title: "取り込んだ木",
-            start,
+            start: parent,
+            head: start,
           })
         ).status,
       ).toBe(200);
@@ -2698,7 +2706,8 @@ describe("fixed provenance and acorns", () => {
         await command(t, writerKey, "main.create", {
           mainId: "remix-tree",
           title: "木",
-          start: {
+          start: parent,
+          head: {
             branchId: "remix-story",
             episodeId: "ep-002",
             revision: forkRevision,
@@ -2953,7 +2962,8 @@ describe("fixed provenance and acorns", () => {
     const createRes = await command(t, writerKey, "main.create", {
       mainId: "writer-resilient-tree",
       title: "しなやかな木",
-      start: epRef,
+      start: parent,
+      head: epRef,
     });
     expect(createRes.status).toBe(200);
 
@@ -2995,7 +3005,8 @@ describe("listed fixed editions during new intake", () => {
     await command(t, writerKey, "main.create", {
       mainId: "ongoing-tree",
       title: "連作",
-      start: old,
+      start: parent,
+      head: old,
     });
     if (legacy)
       await t.run(async (ctx) => {
@@ -3236,4 +3247,215 @@ describe("listed fixed editions during new intake", () => {
     expect((await f.source()).available).toBe(true);
     expect((await f.source(f.fresh)).available).toBe(true);
   });
+});
+
+// The three trees share episodes, but keep independent reading paths.
+async function withdrawalForest() {
+  const t = await setup();
+  await register(t);
+  await register(t, otherKey, "https://github.com/other/story");
+  const pebble = await listedBranch(t, writerKey, "pebble", repository);
+  const next = await listedBranch(
+    t,
+    writerKey,
+    "chosen-next",
+    repository,
+    pebble,
+  );
+  const alternate = await listedBranch(
+    t,
+    otherKey,
+    "alternate",
+    "https://github.com/other/story",
+    pebble,
+  );
+  for (const [key, mainId, start, head] of [
+    [editorKey, "kiss-tree", parent, parent],
+    [writerKey, "pebble-tree", parent, next],
+    [otherKey, "alternate-tree", pebble, alternate],
+  ] as const) {
+    expect(
+      (
+        await command(t, key, "main.create", {
+          mainId,
+          title: mainId,
+          start,
+          head,
+        })
+      ).status,
+    ).toBe(200);
+  }
+  return { t, pebble, next, alternate };
+}
+it("keeps explicit starts and moves back to the tree containing the preceding connection", async () => {
+  const { t, pebble, next, alternate } = await withdrawalForest();
+  const path = (await request(t, "", "main?id=alternate-tree")).data;
+  expect(path.page.map((s: any) => s.episode.branchId)).toEqual([
+    "pebble",
+    "alternate",
+  ]);
+  const nav = (await request(t, "", "candidates?id=alternate-tree&at=0&v=1"))
+    .data;
+  expect(nav.previous).toMatchObject({ mainId: "pebble-tree", position: 0 });
+  expect(nav.page.map((s: any) => s.branchId).sort()).toEqual(
+    [alternate.branchId, next.branchId].sort(),
+  );
+  expect(
+    nav.page.find((s: any) => s.branchId === next.branchId).route,
+  ).toMatchObject({ mainId: "pebble-tree", position: 2 });
+  expect(
+    (await request(t, "", "candidates?id=alternate-tree&at=-1&v=1")).data.error,
+  ).toBe("INVALID_MAIN_POSITION");
+  expect(
+    (await request(t, "", "candidates?id=alternate-tree&at=0&v=2")).data.error,
+  ).toBe("VERSION_CONFLICT");
+  await expect(
+    t.mutation(internal.forest.repairMainAncestry, {
+      mainId: "alternate-tree",
+      expectedVersion: 1,
+    }),
+  ).rejects.toThrow("EXPLICIT_MAIN_START");
+  expect(
+    (
+      await command(t, writerKey, "main.create", {
+        mainId: "pebble-alone",
+        title: "single",
+        start: pebble,
+      })
+    ).status,
+  ).toBe(200);
+  expect((await request(t, "", "main?id=pebble-alone")).data.count).toBe(1);
+});
+it("hides only the owner's tree, preserves shared prose, and avoids hidden backward routes", async () => {
+  const { t, pebble } = await withdrawalForest();
+  const input = { mainId: "pebble-tree", expectedVersion: 1 };
+  expect((await command(t, otherKey, "main.hide", input)).data.error).toBe(
+    "FORBIDDEN",
+  );
+  expect(
+    (await command(t, writerKey, "main.hide", { ...input, expectedVersion: 2 }))
+      .data.error,
+  ).toBe("VERSION_CONFLICT");
+  const hidden = await command(t, writerKey, "main.hide", input, "hide-once");
+  expect(hidden.data).toMatchObject({ hidden: true, version: 2 });
+  expect(
+    (await command(t, writerKey, "main.hide", input, "hide-once")).data,
+  ).toEqual(hidden.data);
+  expect(
+    (await request(t, "", "mains")).data.page.map((m: any) => m.mainId),
+  ).not.toContain("pebble-tree");
+  expect((await request(t, "", "main?id=pebble-tree")).data).toMatchObject({
+    hidden: true,
+    page: [],
+  });
+  const other = (await request(t, "", "main?id=alternate-tree")).data;
+  expect(other.page[0].episode).toMatchObject(pebble);
+  expect(
+    (await request(t, "", "candidates?id=alternate-tree&at=0&v=1")).data
+      .previous.mainId,
+  ).toBe("kiss-tree");
+  expect(
+    (await request(t, "", "candidates?id=pebble-tree&at=0&v=2")).data.error,
+  ).toBe("NOT_FOUND");
+  expect(
+    (
+      await command(t, writerKey, "main.rename", {
+        mainId: "pebble-tree",
+        expectedVersion: 2,
+        title: "revive",
+      })
+    ).data.error,
+  ).toBe("MAIN_HIDDEN");
+});
+it("withdraws shared prose in every tree without hiding the trees or losing any surviving branch", async () => {
+  const { t, pebble } = await withdrawalForest();
+  expect(
+    (await command(t, otherKey, "episode.withdraw", { episode: pebble })).data
+      .error,
+  ).toBe("FORBIDDEN");
+  expect(
+    (await command(t, writerKey, "episode.withdraw", { episode: pebble }))
+      .status,
+  ).toBe(200);
+  const original = (await request(t, "", "main?id=pebble-tree")).data;
+  const alternate = (await request(t, "", "main?id=alternate-tree")).data;
+  expect(original.page[1]).toEqual({
+    position: 1,
+    available: false,
+    episode: null,
+    reason: "withdrawn",
+  });
+  expect(alternate.page[0]).toEqual({
+    position: 0,
+    available: false,
+    episode: null,
+    reason: "withdrawn",
+  });
+  expect(original.page[2].available).toBe(true);
+  expect(alternate.page[1].available).toBe(true);
+  expect((await request(t, "", "mains")).data.page).toHaveLength(3);
+  const nav = (await request(t, "", "candidates?id=alternate-tree&at=0&v=1"))
+    .data;
+  expect(nav.page.map((e: any) => e.branchId).sort()).toEqual([
+    "alternate",
+    "chosen-next",
+  ]);
+  expect(nav.previous.mainId).toBe("pebble-tree");
+});
+it("lets a curator select a reviewed replacement only in their own tree and preserves the original continuations", async () => {
+  const { t, pebble, next } = await withdrawalForest();
+  const replacement = await listedBranch(
+    t,
+    writerKey,
+    "new-pebble",
+    repository,
+  );
+  const input = {
+    mainId: "pebble-tree",
+    expectedVersion: 1,
+    position: 1,
+    episode: replacement,
+  };
+  expect((await command(t, writerKey, "main.replace", input)).data.error).toBe(
+    "WITHDRAWN_STEP_REQUIRED",
+  );
+  await command(t, writerKey, "episode.withdraw", { episode: pebble });
+  expect((await command(t, otherKey, "main.replace", input)).data.error).toBe(
+    "FORBIDDEN",
+  );
+  expect(
+    (await command(t, writerKey, "main.replace", { ...input, episode: next }))
+      .data.error,
+  ).toBe("MAIN_CONTINUITY_REQUIRED");
+  expect(
+    (await command(t, writerKey, "main.replace", input, "replace-once")).status,
+  ).toBe(200);
+  expect(
+    (await command(t, writerKey, "main.replace", input, "replace-once")).status,
+  ).toBe(200);
+  const route = (await request(t, "", "main?id=pebble-tree")).data;
+  expect(route.version).toBe(2);
+  expect(route.page[1]).toMatchObject({
+    episode: replacement,
+    replaces: pebble,
+  });
+  expect(route.page[2].episode.parent).toEqual(pebble);
+  expect(
+    (await request(t, "", "main?id=alternate-tree")).data.page[0].reason,
+  ).toBe("withdrawn");
+  const nav1 = (await request(t, "", "candidates?id=pebble-tree&at=1&v=2"))
+    .data;
+  expect(nav1.isDone).toBe(false);
+  const nav2 = (
+    await request(
+      t,
+      "",
+      "candidates?id=pebble-tree&at=1&v=2&cursor=" +
+        encodeURIComponent(nav1.continueCursor),
+    )
+  ).data;
+  expect(nav2.page.map((e: any) => e.branchId).sort()).toEqual([
+    "alternate",
+    "chosen-next",
+  ]);
 });

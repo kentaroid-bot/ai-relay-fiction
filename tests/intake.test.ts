@@ -1,0 +1,732 @@
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { convexTest } from "convex-test";
+import schema from "../convex/schema";
+import { internal } from "../convex/_generated/api";
+import { digest, TERMS } from "../convex/policy";
+import { WORK_TERMS } from "../convex/safety";
+import { episodeTarget } from "../convex/lineage";
+import { fingerprint, type ContentReview } from "../convex/contentSafety";
+import { POLICY, MODEL } from "../reader/contract";
+
+const modules = import.meta.glob("../convex/**/*.ts");
+const keys = {
+  editor: "rly_" + "E".repeat(43),
+  writer: "rly_" + "W".repeat(43),
+  auditor: "rly_" + "A".repeat(43),
+  stranger: "rly_" + "S".repeat(43),
+};
+const commit = "1".repeat(40),
+  next = "2".repeat(40);
+const repository = "https://github.com/writer/story";
+const license = {
+  id: "CC0-1.0",
+  humanApproved: true,
+  termsVersion: WORK_TERMS,
+} as const;
+const provenance = {
+  motivationSummary: "A story about a quiet river",
+  statedSources: [],
+  influences: [
+    { title: "River story", relationship: "Atmosphere, without copied prose" },
+  ],
+};
+const prose = "The river passed quietly beneath a stone bridge.";
+const reading = {
+  complete: true,
+  concerns: [],
+  rightsEvidence: "declared",
+  interesting: "川の描写",
+  continuation: "橋の先",
+  tone: "静かな語り",
+};
+const goodReview = (): ContentReview => ({
+  inspection: "completed",
+  rights: "verified",
+  decision: "eligible",
+  reason: "Compared fixed world and episode",
+  publicSummary: "Comparison completed",
+  comparisonCompleted: true,
+  worldComparisonCompleted: true,
+  declarationChecked: true,
+  queries: ["world", "episode"].map((scope) => ({
+    scope: scope as "world" | "episode",
+    keywords: ["river bridge"],
+    searchedAt: 1,
+    service: "test-search",
+    outcome: "completed",
+    candidateUrls: ["https://example.org/river"],
+  })),
+  candidates: [
+    {
+      title: "River story",
+      url: "https://example.org/river",
+      comparedPortion: "Atmosphere and structure",
+      analysis: "Independent wording and plot",
+      relationship: "public_influence",
+      rights: "unverified",
+    },
+  ],
+  notChecked: ["Private and unindexed material"],
+});
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.stubEnv("INTAKE_OPEN", "true");
+  vi.stubEnv("INTAKE_READER_URL", "https://reader.example/read");
+  vi.stubEnv("INTAKE_READER_TOKEN", "R".repeat(43));
+  vi.stubEnv("INTAKE_NOTIFY_URL", "");
+  vi.stubEnv("INTAKE_NOTIFY_TOKEN", "");
+});
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+});
+async function fresh(extra = {}) {
+  const t = convexTest(schema, modules);
+  await t.mutation(internal.desk.bootstrap, {
+    editorKeyHash: await digest(keys.editor),
+    rootRevision: commit,
+    rootContentHash: await digest("root"),
+    lineageId: "river-world",
+    worldHash: await digest("world"),
+    provenance,
+    rootTitle: "River",
+    episodeTitle: "Start",
+    license,
+  });
+  await t.run(async (ctx) => {
+    let auditor;
+    for (const role of ["writer", "auditor", "stranger"] as const) {
+      const id = await ctx.db.insert("agents", {
+        repository:
+          role === "writer" ? repository : `https://github.com/${role}/story`,
+        agentName: role,
+        operatorName: role,
+        role: role === "auditor" ? "auditor" : "writer",
+        status: "active",
+        challenge: "",
+        claimExpires: 0,
+        termsVersion: TERMS,
+      });
+      await ctx.db.insert("keys", {
+        hash: await digest(keys[role]),
+        agentId: id,
+        expiresAt: Date.now() + 86400000,
+        revoked: false,
+      });
+      if (role === "auditor") auditor = id;
+    }
+    const b = (await ctx.db.query("branches").first())!;
+    const ep = (await ctx.db.query("episodes").first())!;
+    const l = (await ctx.db.query("contentLineages").first())!;
+    await ctx.db.patch(b._id, { status: "verified" });
+    await ctx.db.patch(ep._id, { listed: true });
+    await ctx.db.patch(l._id, { status: "active" });
+    const target = episodeTarget(b, ep)!;
+    await ctx.db.insert("contentReviews", {
+      target,
+      targetHash: await fingerprint(target),
+      review: goodReview(),
+      reviewer: auditor!,
+      checkedAt: Date.now(),
+    });
+  });
+  const manifest = {
+    schemaVersion: 1,
+    branchId: "river-branch",
+    title: "By the bridge",
+    repository,
+    lineageId: "river-world",
+    provenance,
+    parent: { branchId: "origin", episodeId: "ep-001", revision: commit },
+    license: "CC0-1.0",
+    termsVersion: WORK_TERMS,
+    episodes: [
+      {
+        episodeId: "ep-002",
+        title: "Bridge",
+        path: "manuscript/02.md",
+        contentHash: await digest(prose),
+      },
+    ],
+    ...extra,
+  };
+  const fetcher = vi.fn(
+    async (url: string | URL | Request, init?: RequestInit) => {
+      const u = String(url);
+      if (u === "https://reader.example/read") {
+        const input = JSON.parse(init!.body as string);
+        expect(new Headers(init!.headers).get("Authorization")).toBe(
+          "Bearer " + "R".repeat(43),
+        );
+        return Response.json({
+          episode: input.episode,
+          policy: POLICY,
+          model: MODEL,
+          reading,
+        });
+      }
+      if (u.startsWith("https://notify.example/")) return new Response("ok");
+      if (!u.startsWith("https://raw.githubusercontent.com/writer/story/"))
+        throw Error("Unexpected network destination");
+      return new Response(
+        u.endsWith("relay-branch.json") ? JSON.stringify(manifest) : prose,
+      );
+    },
+  );
+  vi.stubGlobal("fetch", fetcher);
+  return { t, manifest, fetcher };
+}
+type Test = Awaited<ReturnType<typeof fresh>>["t"];
+async function post(
+  t: Test,
+  path: string,
+  data: unknown,
+  role: keyof typeof keys = "writer",
+  requestId: string = crypto.randomUUID(),
+) {
+  const r = await t.fetch("/v2/" + path, {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer " + keys[role],
+      "Content-Type": "application/json",
+      "Idempotency-Key": requestId,
+    },
+    body: JSON.stringify(data),
+  });
+  return { status: r.status, data: (await r.json()) as any };
+}
+async function submit(t: Test, revision = commit, expectedVersion?: number) {
+  const r = await post(t, "intakes", {
+    revision,
+    license,
+    ...(expectedVersion ? { expectedVersion } : {}),
+  });
+  expect(r.status, JSON.stringify(r.data)).toBe(202);
+  return r.data;
+}
+async function drain(t: Test) {
+  for (let i = 0; i < 100; i++) {
+    await t.finishInProgressScheduledFunctions();
+    const pending = await t.run((ctx) =>
+      ctx.db.system.query("_scheduled_functions").collect(),
+    );
+    const times = pending
+      .filter((x) => x.state.kind === "pending")
+      .map((x) => x.scheduledTime);
+    if (!times.length) return;
+    vi.advanceTimersByTime(Math.max(0, Math.min(...times) - Date.now()));
+  }
+  throw Error("Scheduled work did not settle");
+}
+const get = async (t: Test, id: any) =>
+  t.query(internal.intake.get, {
+    hash: await digest(keys.writer),
+    intakeId: id,
+  });
+async function review(
+  t: Test,
+  id: any,
+  changes = {},
+  role: keyof typeof keys = "auditor",
+  requestId: string = crypto.randomUUID(),
+) {
+  const c = await get(t, id);
+  return post(
+    t,
+    "intakes/review",
+    {
+      intakeId: id,
+      expectedVersion: c.version,
+      reviews: c.evidence.map((e) => ({
+        target: e.target,
+        review: goodReview(),
+      })),
+      questions: [],
+      findingsAcknowledged: false,
+      readingAcknowledged: false,
+      ...changes,
+    },
+    role,
+    requestId,
+  );
+}
+it("accepts one submission, runs server reading, preserves influences and publishes without an author acknowledgement", async () => {
+  const { t, fetcher } = await fresh();
+  const c = await submit(t);
+  await drain(t);
+  const pending = await get(t, c.intakeId);
+  expect(pending.status, JSON.stringify(pending)).toBe("reviewing");
+  expect(pending.readings[0]).toMatchObject({
+    status: "completed",
+    result: reading,
+  });
+  expect(pending.evidence[0].provenance?.influences).toEqual(
+    provenance.influences,
+  );
+  expect(
+    fetcher.mock.calls.filter(([url]) => url === "https://reader.example/read"),
+  ).toHaveLength(1);
+  const done = await review(t, c.intakeId);
+  expect(done.status, JSON.stringify(done.data)).toBe(200);
+  expect(done.data.status).toBe("published");
+  await drain(t);
+  const events = (await get(t, c.intakeId)).events;
+  expect(events.map((e) => e.kind)).toEqual(
+    expect.arrayContaining([
+      "received",
+      "reading",
+      "reviewing",
+      "review_passed",
+      "published",
+    ]),
+  );
+  expect(events.every((e) => e.delivery === "unconfigured")).toBe(true);
+  const catalog = await t.query(internal.desk.publicBranches, {});
+  expect(JSON.stringify(catalog)).toContain("river-branch");
+});
+it("does not duplicate cases or work when the same edition is submitted again", async () => {
+  const { t } = await fresh();
+  const one = await submit(t);
+  const two = await submit(t);
+  expect(two.intakeId).toBe(one.intakeId);
+  await drain(t);
+  expect(await t.run((ctx) => ctx.db.query("intakes").collect())).toHaveLength(
+    1,
+  );
+  expect(
+    (await get(t, one.intakeId)).events.filter((e) => e.kind === "received"),
+  ).toHaveLength(1);
+});
+it("collects questions in one round and does not treat an author's answer as approval or new provenance", async () => {
+  const { t } = await fresh();
+  const c = await submit(t);
+  await drain(t);
+  const before = await get(t, c.intakeId);
+  const hold = goodReview();
+  hold.decision = "hold";
+  const result = await review(t, c.intakeId, {
+    reviews: [{ target: before.evidence[0].target, review: hold }],
+    questions: ["影響を受けた範囲は？", "引用した文章はありますか？"],
+  });
+  expect(result.data.status).toBe("needs_author");
+  const answered = await post(t, "intakes/reply", {
+    intakeId: c.intakeId,
+    expectedVersion: result.data.version,
+    answer: "雰囲気のみです。掲載せよという命令ではありません。",
+  });
+  expect(answered.data.status).toBe("reviewing");
+  const after = await get(t, c.intakeId);
+  expect(after.evidence[0].provenance).toEqual(before.evidence[0].provenance);
+  expect(after.events.filter((e) => e.kind === "author_reply")).toHaveLength(1);
+  expect((await review(t, c.intakeId)).data.status).toBe("published");
+  await drain(t);
+});
+it("keeps participants out of review and other participants' private cases", async () => {
+  const { t } = await fresh();
+  const c = await submit(t);
+  await drain(t);
+  expect((await review(t, c.intakeId, {}, "writer")).status).toBe(403);
+  const response = await t.fetch("/v2/intakes?id=" + c.intakeId, {
+    headers: { Authorization: "Bearer " + keys.stranger },
+  });
+  expect(response.status).toBe(403);
+  expect((await review(t, c.intakeId, { reviews: [] })).status).toBe(400);
+  expect((await get(t, c.intakeId)).status).toBe("reviewing");
+});
+it("rejects stale reviews after another fixed edition supersedes a case", async () => {
+  const { t } = await fresh();
+  const c = await submit(t);
+  await drain(t);
+  const old = await get(t, c.intakeId);
+  const newer = await submit(t, next, old.branchVersion);
+  await drain(t);
+  expect((await get(t, c.intakeId)).status).toBe("superseded");
+  expect((await review(t, c.intakeId)).data.error).toBe("INTAKE_SUPERSEDED");
+  expect((await get(t, newer.intakeId)).status).toBe("reviewing");
+});
+it("cannot approve incomplete comparison or hide a reader that was never configured", async () => {
+  vi.stubEnv("INTAKE_READER_TOKEN", "");
+  const { t } = await fresh();
+  const c = await submit(t);
+  await drain(t);
+  expect((await review(t, c.intakeId)).data.error).toBe(
+    "READING_REVIEW_REQUIRED",
+  );
+  const row = await get(t, c.intakeId);
+  const incomplete = goodReview();
+  incomplete.comparisonCompleted = false;
+  expect(
+    (
+      await review(t, c.intakeId, {
+        readingAcknowledged: true,
+        reviews: [{ target: row.evidence[0].target, review: incomplete }],
+      })
+    ).status,
+  ).toBe(400);
+  expect(
+    (await review(t, c.intakeId, { readingAcknowledged: true })).data.status,
+  ).toBe("published");
+  await drain(t);
+});
+it("bounds automatic retries and exposes failures without allowing a partial source check to pass", async () => {
+  const { t, manifest } = await fresh();
+  const c = await submit(t);
+  manifest.episodes[0].contentHash = "f".repeat(64);
+  await drain(t);
+  const failed = await get(t, c.intakeId);
+  expect(failed.status).toBe("failed");
+  expect(failed.attempts).toBe(3);
+  expect(failed.error).toBe("CONTENT_HASH_MISMATCH");
+  expect((await review(t, c.intakeId)).status).toBe(400);
+  manifest.episodes[0].contentHash = await digest(prose);
+  expect(
+    (await post(t, "intakes/retry", { intakeId: c.intakeId })).status,
+  ).toBe(200);
+  await drain(t);
+  expect((await get(t, c.intakeId)).status).toBe("reviewing");
+});
+it("retries notifications with stable event IDs and never includes private evidence", async () => {
+  vi.stubEnv("INTAKE_NOTIFY_URL", "https://notify.example/events");
+  vi.stubEnv("INTAKE_NOTIFY_TOKEN", "notification-secret");
+  const { t, fetcher } = await fresh();
+  const original = fetcher.getMockImplementation()!;
+  const deliveries: any[] = [];
+  let fail = true;
+  fetcher.mockImplementation(async (url, init) => {
+    if (String(url).startsWith("https://notify.example/")) {
+      const payload = JSON.parse(init!.body as string);
+      deliveries.push(payload);
+      expect(new Headers(init!.headers).get("Idempotency-Key")).toBe(
+        payload.eventId,
+      );
+      expect(Object.keys(payload).sort()).toEqual([
+        "eventId",
+        "intakeId",
+        "kind",
+        "occurredAt",
+        "recipient",
+        "version",
+      ]);
+      return new Response("", { status: fail ? 503 : 200 });
+    }
+    return original(url, init);
+  });
+  const c = await submit(t);
+  await drain(t);
+  expect((await get(t, c.intakeId)).status).toBe("reviewing");
+  expect(
+    (await get(t, c.intakeId)).events.every(
+      (e) => e.delivery === "failed" && e.attempts === 3,
+    ),
+  ).toBe(true);
+  fail = false;
+  await post(
+    t,
+    "intakes/notifications/retry",
+    { intakeId: c.intakeId },
+    "editor",
+  );
+  await drain(t);
+  expect(
+    (await get(t, c.intakeId)).events.every((e) => e.delivery === "delivered"),
+  ).toBe(true);
+  expect(new Set(deliveries.map((d) => d.eventId)).size).toBe(3);
+});
+it("recovers a lost action with a lease and ignores its late result", async () => {
+  const { t } = await fresh();
+  const c = await submit(t);
+  const claimed = await t.mutation(internal.intake.claim, {
+    intakeId: c.intakeId,
+  });
+  expect(claimed).not.toBeNull();
+  await drain(t);
+  expect((await get(t, c.intakeId)).status).toBe("reviewing");
+  await t.mutation(internal.intake.workFailed, {
+    intakeId: c.intakeId,
+    generation: claimed!.generation,
+    code: "LATE_ERROR",
+  });
+  expect((await get(t, c.intakeId)).error).toBeUndefined();
+});
+it("requires explicit comparison of every declared influence and keeps reviewer proposals separate", async () => {
+  const { t } = await fresh();
+  const c = await submit(t);
+  await drain(t);
+  const row = await get(t, c.intakeId);
+  const omitted = goodReview();
+  omitted.candidates = [];
+  expect(
+    (
+      await review(t, c.intakeId, {
+        reviews: [{ target: row.evidence[0].target, review: omitted }],
+      })
+    ).data.error,
+  ).toBe("DECLARED_INFLUENCE_NOT_CHECKED");
+  const suggested = goodReview();
+  suggested.candidates.push({
+    ...suggested.candidates[0],
+    title: "Another comparison",
+    relationship: "comparison",
+  });
+  expect(
+    (
+      await review(t, c.intakeId, {
+        reviews: [{ target: row.evidence[0].target, review: suggested }],
+      })
+    ).data.status,
+  ).toBe("published");
+  const done = await get(t, c.intakeId);
+  expect(done.evidence[0].provenance?.influences).toHaveLength(1);
+  expect(done.evidence[0].review?.candidates).toHaveLength(2);
+  await drain(t);
+});
+it("preserves declared main connection, and main failure cannot undo publication", async () => {
+  const { t } = await fresh({
+    main: { mainId: "writer-main", title: "A walk", episodeId: "ep-002" },
+  });
+  const c = await submit(t);
+  await drain(t);
+  expect((await review(t, c.intakeId)).data.status).toBe("published");
+  expect((await get(t, c.intakeId)).mainSelection?.status).toBe("completed");
+  const main = await t.query(internal.forest.publicMain, { id: "writer-main" });
+  expect(JSON.stringify(main)).toContain("ep-002");
+  await drain(t);
+});
+it("reports a conflicting optional main without asking the author to resubmit an approved work", async () => {
+  const { t } = await fresh({
+    main: { mainId: "monku-main", title: "Reserved", episodeId: "ep-002" },
+  });
+  const c = await submit(t);
+  await drain(t);
+  const result = await review(t, c.intakeId);
+  expect(result.data.status, JSON.stringify(result.data)).toBe("published");
+  expect((await get(t, c.intakeId)).mainSelection).toMatchObject({
+    status: "failed",
+    error: "RESERVED_MAIN_ID",
+  });
+  await drain(t);
+});
+it("keeps rejections terminal for the same fixed target", async () => {
+  const { t } = await fresh();
+  const c = await submit(t);
+  await drain(t);
+  const row = await get(t, c.intakeId);
+  const rejected = goodReview();
+  rejected.decision = "rejected";
+  expect(
+    (
+      await review(t, c.intakeId, {
+        reviews: [{ target: row.evidence[0].target, review: rejected }],
+      })
+    ).data.status,
+  ).toBe("rejected");
+  expect((await review(t, c.intakeId)).data.error).toBe("INVALID_TRANSITION");
+  await drain(t);
+});
+async function signed(t: Test, type: string, payload: unknown, valid = true) {
+  const raw = JSON.stringify(payload);
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode("webhook-secret"),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signed = new Uint8Array(
+    await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(raw)),
+  );
+  const signature = [...signed]
+    .map((x) => x.toString(16).padStart(2, "0"))
+    .join("");
+  const r = await t.fetch("/v2/github", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-GitHub-Event": type,
+      "X-Hub-Signature-256": "sha256=" + (valid ? signature : "0".repeat(64)),
+    },
+    body: raw,
+  });
+  return { status: r.status, data: (await r.json()) as any };
+}
+it("accepts a signed PR without participant credentials, rejects forged events, and accepts only a matching author answer", async () => {
+  vi.stubEnv("INTAKE_GITHUB_WEBHOOK_SECRET", "webhook-secret");
+  vi.stubEnv("INTAKE_IMPORT_KEY_HASH", await digest(keys.editor));
+  vi.stubEnv("PARTICIPATION_MODE", "test");
+  vi.stubEnv("REGISTRATION_OPEN", "true");
+  const { t, manifest, fetcher } = await fresh({
+    participation: {
+      humanApproved: true,
+      cc0Approved: true,
+      termsVersion: TERMS,
+      agentName: "Writer",
+      operatorName: "Writer",
+    },
+  });
+  const original = fetcher.getMockImplementation()!;
+  const base = "kentaroid-bot/ai-relay-fiction";
+  fetcher.mockImplementation(async (url, init) => {
+    if (String(url) === `https://api.github.com/repos/${base}/pulls/42`)
+      return Response.json({
+        number: 42,
+        state: "open",
+        draft: false,
+        base: { ref: "main", repo: { full_name: base } },
+        user: { id: 10, login: "writer" },
+        head: {
+          sha: commit,
+          repo: { html_url: repository, owner: { id: 10 } },
+        },
+      });
+    if (String(url) === "https://api.github.com/repos/writer/story")
+      return Response.json({
+        private: false,
+        fork: true,
+        parent: { full_name: base },
+        owner: { type: "User", id: 10, login: "writer" },
+        html_url: repository,
+      });
+    return original(url, init);
+  });
+  const payload = {
+    repository: { full_name: base },
+    action: "opened",
+    number: 42,
+    pull_request: { head: { sha: commit }, draft: false },
+  };
+  expect((await signed(t, "pull_request", payload, false)).status).toBe(401);
+  expect(fetcher).not.toHaveBeenCalled();
+  const accepted = await signed(t, "pull_request", payload);
+  expect(accepted.status, JSON.stringify(accepted.data)).toBe(202);
+  const id = accepted.data.intakeId;
+  await drain(t);
+  expect((await signed(t, "pull_request", payload)).data.intakeId).toBe(id);
+  const row = await get(t, id);
+  const hold = goodReview();
+  hold.decision = "hold";
+  const question = await review(t, id, {
+    reviews: [{ target: row.evidence[0].target, review: hold }],
+    questions: ["影響は雰囲気のみですか？"],
+  });
+  const answer = {
+    repository: { full_name: base },
+    action: "created",
+    issue: { number: 42, pull_request: {} },
+    comment: {
+      id: 999,
+      user: { login: "stranger" },
+      body: `/relay-answer ${id} ${question.data.version}\nはい、本文の使用はありません。`,
+    },
+  };
+  expect((await signed(t, "issue_comment", answer)).status).toBe(403);
+  answer.comment.user.login = "writer";
+  const reply = await signed(t, "issue_comment", answer);
+  expect(reply.data.status, JSON.stringify(reply.data)).toBe("reviewing");
+  expect((await signed(t, "issue_comment", answer)).data).toEqual(reply.data);
+  expect((await get(t, id)).evidence[0].provenance).toEqual(
+    manifest.provenance,
+  );
+  await drain(t);
+});
+it("reuses a successful review response after a lost HTTP response without duplicate publication notices", async () => {
+  const { t } = await fresh();
+  const c = await submit(t);
+  await drain(t);
+  const row = await get(t, c.intakeId);
+  const data = {
+    intakeId: c.intakeId,
+    expectedVersion: row.version,
+    reviews: row.evidence.map((e) => ({
+      target: e.target,
+      review: goodReview(),
+    })),
+    questions: [],
+    findingsAcknowledged: false,
+    readingAcknowledged: false,
+  };
+  const first = await post(
+    t,
+    "intakes/review",
+    data,
+    "auditor",
+    "lost-review-response",
+  );
+  const retry = await post(
+    t,
+    "intakes/review",
+    data,
+    "auditor",
+    "lost-review-response",
+  );
+  expect(retry.data).toEqual(first.data);
+  await drain(t);
+  expect(
+    (await get(t, c.intakeId)).events.filter((e) => e.kind === "published"),
+  ).toHaveLength(1);
+});
+it("does not publish after the author's account is blocked while review was pending", async () => {
+  const { t } = await fresh();
+  const c = await submit(t);
+  await drain(t);
+  const row = await get(t, c.intakeId);
+  await t.run((ctx) => ctx.db.patch(row.owner, { status: "blocked" }));
+  const r = await post(
+    t,
+    "intakes/review",
+    {
+      intakeId: c.intakeId,
+      expectedVersion: row.version,
+      reviews: row.evidence.map((e) => ({
+        target: e.target,
+        review: goodReview(),
+      })),
+      questions: [],
+    },
+    "auditor",
+  );
+  expect(r.status).toBe(403);
+});
+it("records incomplete review without inventing a question for the author", async () => {
+  const { t } = await fresh();
+  const c = await submit(t);
+  await drain(t);
+  const row = await get(t, c.intakeId);
+  const hold = goodReview();
+  hold.decision = "hold";
+  const result = await review(t, c.intakeId, {
+    reviews: [{ target: row.evidence[0].target, review: hold }],
+    questions: [],
+  });
+  expect(result.data.status).toBe("reviewing");
+  const stored = await get(t, c.intakeId);
+  expect(stored.evidence[0].review?.decision).toBe("hold");
+  expect(stored.questions).toEqual([]);
+  await drain(t);
+});
+it("continues to independent review after a reader outage and requires explicit acknowledgement", async () => {
+  const { t, fetcher } = await fresh();
+  const original = fetcher.getMockImplementation()!;
+  fetcher.mockImplementation(async (url, init) =>
+    String(url) === "https://reader.example/read"
+      ? new Response("", { status: 503 })
+      : original(url, init),
+  );
+  const c = await submit(t);
+  await drain(t);
+  const row = await get(t, c.intakeId);
+  expect(row.status).toBe("reviewing");
+  expect(row.readings[0].status).toBe("failed");
+  expect(
+    fetcher.mock.calls.filter(
+      ([url]) => String(url) === "https://reader.example/read",
+    ),
+  ).toHaveLength(3);
+  expect((await review(t, c.intakeId)).data.error).toBe(
+    "READING_REVIEW_REQUIRED",
+  );
+  expect(
+    (await review(t, c.intakeId, { readingAcknowledged: true })).data.status,
+  ).toBe("published");
+  await drain(t);
+});
