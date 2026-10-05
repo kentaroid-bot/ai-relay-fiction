@@ -11,6 +11,7 @@ import {
   fingerprint,
   type ContentReview,
   type ReviewTarget,
+  type Provenance,
 } from "../convex/contentSafety";
 
 const modules = import.meta.glob("../convex/**/*.ts");
@@ -62,7 +63,7 @@ const goodReview = (): ContentReview => ({
   candidates: [],
   notChecked: ["Unindexed and private material"],
 });
-const fresh = async () => {
+const fresh = async (declaration: Provenance = provenance) => {
   const t = convexTest(schema, modules);
   await t.mutation(internal.desk.bootstrap, {
     editorKeyHash: await digest(editorKey),
@@ -70,7 +71,7 @@ const fresh = async () => {
     rootContentHash: await digest(prose),
     lineageId,
     worldHash: await digest(world),
-    provenance,
+    provenance: declaration,
     rootTitle: "Test root",
     episodeTitle: "Test first episode",
     license,
@@ -150,14 +151,19 @@ async function prepareTree(
     requestId,
   );
 }
-async function check(t: Test, branchId = "origin", fixedWorld = world) {
+async function check(
+  t: Test,
+  branchId = "origin",
+  fixedWorld = world,
+  declaration: Provenance = provenance,
+) {
   const manifest = {
     schemaVersion: 1,
     branchId,
     repository,
     title: "Test root",
     lineageId: branchId === "origin" ? lineageId : "pebble-world",
-    provenance,
+    provenance: declaration,
     parent: null,
     license: "CC0-1.0",
     termsVersion: WORK_TERMS,
@@ -193,8 +199,8 @@ async function check(t: Test, branchId = "origin", fixedWorld = world) {
   vi.unstubAllGlobals();
   expect(r.status, JSON.stringify(data)).toBe(200);
 }
-async function activate(t: Test) {
-  await check(t);
+async function activate(t: Test, declaration: Provenance = provenance) {
+  await check(t, "origin", world, declaration);
   expect(
     (
       await command(
@@ -716,6 +722,52 @@ it("invalidates approval when the stored declaration changes even if its old has
     });
   });
   expect((await t.query(internal.desk.publicBranches, {})).page).toEqual([]);
+});
+
+it("publishes only the reviewed edition's influences, without draft declarations or audit evidence", async () => {
+  const t = await fresh(influencedProvenance);
+  await activate(t, influencedProvenance);
+  expect(
+    (
+      await command(t, "main.create", {
+        mainId: "influence-tree",
+        title: "Test tree",
+        start: { branchId: "origin", episodeId: "ep-001", revision: commit },
+      })
+    ).status,
+  ).toBe(200);
+  const path = async (): Promise<any> => (await t.fetch("/v1/main?id=influence-tree")).json();
+  const first = await path();
+  expect(first.page[0].episode.influences).toEqual(
+    influencedProvenance.influences,
+  );
+  expect(JSON.stringify(first)).not.toMatch(
+    /Private test motivation|manual-test-search|statedSources|candidates|motivationSummary/,
+  );
+  await t.run(async (ctx) => {
+    const b = (await ctx.db.query("branches").collect())[0];
+    await ctx.db.patch(b._id, {
+      status: "pending",
+      revision: nextCommit,
+      provenance: {
+        ...influencedProvenance,
+        influences: [{ title: "Unreviewed draft", relationship: "Not public" }],
+      },
+    });
+  });
+  expect((await path()).page[0].episode.influences).toEqual(
+    influencedProvenance.influences,
+  );
+  await t.run(async (ctx) => {
+    const ep = (await ctx.db.query("episodes").collect())[0];
+    await ctx.db.patch(ep._id, {
+      lifecycle: "withdrawn",
+      withdrawnAt: Date.now(),
+    });
+  });
+  const withdrawn = await path();
+  expect(withdrawn.page[0].available).toBe(false);
+  expect(JSON.stringify(withdrawn)).not.toContain("Old public influence");
 });
 
 it("keeps public influences separate from licensed source-use declarations", async () => {

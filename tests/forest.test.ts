@@ -913,6 +913,92 @@ it("validates path version on every page and enforces overall timeout through fi
   expect(resTimeout.candidates[0].href).toBe("?id=tree-b&v=2&at=1");
 });
 
+it("shows declared influences as plain text, links only the available exact parent, and clears absent declarations", () => {
+  const elements: Record<string, any> = {};
+  const doc = {
+    getElementById: (id: string) => elements[id],
+    createElement: (tag: string) => {
+      const node: any = { tag, textContent: "", children: [] };
+      node.append = (...children: any[]) => node.children.push(...children);
+      node.replaceChildren = () => {
+        node.children = [];
+      };
+      return node;
+    },
+  };
+  const section = (elements["episode-influences"] =
+    doc.createElement("section"));
+  const jump = (elements["influences-jump"] = doc.createElement("p"));
+  const parent = {
+    branchId: "parent",
+    episodeId: "ep-001",
+    revision: sha,
+    title: "Parent",
+  };
+  const episode = {
+    parent,
+    readingUrl:
+      "https://github.com/writer/story/blob/" + sha + "/manuscript/01.md",
+    influences: [
+      { title: "Parent", relationship: "<img src=x onerror=run()>" },
+      {
+        title: "External",
+        author: "Author",
+        publishedYear: 1941,
+        relationship: "[run](javascript:run())",
+      },
+    ],
+  };
+  const steps = [{ position: 0, available: true, episode: parent }];
+  const link = vi.fn((label, position) => ({
+    tag: "a",
+    textContent: label,
+    href: "?id=tree&v=1&at=" + position,
+  }));
+  reader.renderInfluences(doc, episode, steps, link);
+  expect(section.hidden).toBe(false);
+  expect(jump.hidden).toBe(false);
+  expect(section.children[1].textContent).toBe("作者による影響関係の説明");
+  expect(section.children[2].children[1]).toMatchObject({
+    tag: "p",
+    textContent: "<img src=x onerror=run()>",
+  });
+  expect(section.children[3].children[1].textContent).toBe(
+    "[run](javascript:run())",
+  );
+  expect(section.children[4].href).toBe(
+    "https://github.com/writer/story/blob/" + sha + "/relay-branch.json",
+  );
+  expect(link).toHaveBeenCalledOnce();
+  link.mockClear();
+  reader.renderInfluences(
+    doc,
+    episode,
+    [{ ...steps[0], available: false }],
+    link,
+  );
+  expect(link).not.toHaveBeenCalled();
+  reader.renderInfluences(
+    doc,
+    episode,
+    [{ ...steps[0], episode: { ...parent, revision: "b".repeat(40) } }],
+    link,
+  );
+  expect(link).not.toHaveBeenCalled();
+  reader.renderInfluences(doc, {});
+  expect(section.hidden).toBe(true);
+  expect(jump.hidden).toBe(true);
+  expect(section.children).toEqual([]);
+  expect(() =>
+    reader.renderInfluences(doc, {
+      ...episode,
+      readingUrl: "javascript:run()",
+    }),
+  ).toThrow();
+  expect(section.hidden).toBe(true);
+  expect(jump.hidden).toBe(true);
+});
+
 it("shows literal provenance credits with fixed source links, and clears withdrawn references", () => {
   const nodes: any[] = [];
   const document = {

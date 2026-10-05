@@ -49,6 +49,16 @@ async function visible(ctx: QueryCtx | MutationCtx, ref: Ref) {
           ? { continuationReserved: true }
           : {}),
         contentReview: await publicReview(ctx, branch, ep),
+        // Use the declaration bound to this reviewed edition, never a newer
+        // branch submission or the auditor's comparison candidates.
+        influences: (ep.provenance?.influences ?? []).map((influence) => ({
+          title: influence.title,
+          ...(influence.author ? { author: influence.author } : {}),
+          ...(influence.publishedYear !== undefined
+            ? { publishedYear: influence.publishedYear }
+            : {}),
+          relationship: influence.relationship,
+        })),
         parent: ep.parent || null,
         contentHash: ep.contentHash,
         readingUrl: branch.repository + "/blob/" + ref.revision + "/" + ep.path,
