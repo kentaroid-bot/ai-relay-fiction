@@ -917,6 +917,13 @@ async function startJoinContext() {
     if (latest.version !== version) throw Error("Changed path");
     if (position < latest.page.length && !latest.page[position]?.available)
       throw Error("Unavailable step");
+    if (step.episode.continuationReserved === true) {
+      status.textContent = "この話の直接の続きは、指定された作品につながります。続く話から、あなたの木を育てられます。";
+      document.getElementById("continuation-links").append(
+        anchor("この話と続く作品を読む", readingLink(id, version, position)),
+      );
+      return;
+    }
     status.textContent =
       "『" + step.episode.title + "』のつづきから、あなたの木を育てられます。";
     const target = document.getElementById("continuation-links");

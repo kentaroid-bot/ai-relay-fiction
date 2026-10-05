@@ -1283,6 +1283,15 @@ it("reserves only the root's immediate continuation, including intake and source
     });
   });
   const parent = { branchId: "origin", episodeId: "ep-001", revision: commit };
+  await command(t, "main.create", {
+    mainId: "reserved-root-reader",
+    title: "Reserved root",
+    start: parent,
+  });
+  const publicRoot: any = await (
+    await t.fetch("/v1/main?id=reserved-root-reader")
+  ).json();
+  expect(publicRoot.page[0].episode.continuationReserved).toBe(true);
   const input = {
     branchId: "other-child",
     title: "A child",

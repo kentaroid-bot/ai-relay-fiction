@@ -39,11 +39,15 @@ async function visible(ctx: QueryCtx | MutationCtx, ref: Ref) {
   const owner = await ctx.db.get(branch.owner);
   if (owner?.status !== "active") return null;
   const ep = await episode(ctx, ref);
+  const lineage = await getLineage(ctx, branch.lineageId);
   return ep && (await isListedEpisode(ctx, branch, ep))
     ? {
         ...ref,
         title: ep.title,
         lineageId: ep.lineageId,
+        ...(lineage?.rootContinuation && lineage.rootBranchId === ref.branchId
+          ? { continuationReserved: true }
+          : {}),
         contentReview: await publicReview(ctx, branch, ep),
         parent: ep.parent || null,
         contentHash: ep.contentHash,

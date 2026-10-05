@@ -292,7 +292,12 @@ export async function readTree() {
       if (!epilogue.hidden) {
         const joinLink = document.getElementById('epilogue-join-link');
         if (joinLink) {
+          joinLink.hidden = liveSteps[position].episode.continuationReserved === true;
           joinLink.href = '../../join/?from=' + encodeURIComponent(id) + '&v=' + encodeURIComponent(version) + '&at=' + encodeURIComponent(position);
+        }
+        if (liveSteps[position].episode.continuationReserved === true) {
+          document.getElementById('epilogue-title').textContent = 'この木は、一話で完結です';
+          document.getElementById('epilogue-description').textContent = 'この話から続く作品は、上の分岐から読めます。';
         }
       }
     }
