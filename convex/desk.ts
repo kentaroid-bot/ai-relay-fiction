@@ -9,6 +9,9 @@ import {
   provenanceValidator,
   validateProvenance,
   REVIEW_POLICY,
+  influenceDeclaration,
+  episodeProvenance,
+  matchesEpisodeProvenance,
 } from "./contentSafety";
 import {
   requireContinuation,
@@ -1188,6 +1191,7 @@ const checkArgs = {
       title: v.string(),
       parent: v.union(parentRef, v.null()),
       sourceRef: v.optional(parentRef),
+      influences: v.optional(v.array(influenceDeclaration)),
     }),
   ),
   gate: gateValidator,
@@ -1268,6 +1272,8 @@ export async function storeCheckedSource(
     return ref;
   }
   for (const ep of episodes) {
+    const provenance = episodeProvenance(b.provenance!, ep.influences);
+    const provenanceHash = await contentFingerprint(provenance);
     await requireContinuation(ctx, ep.parent, b);
     if (ep.parent) await episodeSource(ep.parent);
     else if (!isRoot || ep !== episodes[0]) fail("INVALID_PARENT");
@@ -1295,7 +1301,7 @@ export async function storeCheckedSource(
         old.title !== ep.title ||
         old.lineageId !== b.lineageId ||
         old.worldHash !== b.worldHash ||
-        old.provenanceHash !== b.provenanceHash ||
+        !(await matchesEpisodeProvenance(old, provenance)) ||
         (["branchId", "episodeId", "revision"] as const).some(
           (k) =>
             old.parent?.[k] !== ep.parent?.[k] ||
@@ -1305,12 +1311,17 @@ export async function storeCheckedSource(
       fail("EPISODE_IMMUTABLE");
     if (!old)
       await ctx.db.insert("episodes", {
-        ...ep,
+        episodeId: ep.episodeId,
+        path: ep.path,
+        contentHash: ep.contentHash,
+        title: ep.title,
+        parent: ep.parent,
+        ...(ep.sourceRef ? { sourceRef: ep.sourceRef } : {}),
         author: b.owner,
         lineageId: b.lineageId,
         worldHash: b.worldHash,
-        provenance: b.provenance,
-        provenanceHash: b.provenanceHash,
+        provenance,
+        provenanceHash,
         ...(b.license ? { license: b.license } : {}),
         listed: false,
         branchId,

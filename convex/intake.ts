@@ -21,6 +21,9 @@ import {
   reviewValidator,
   targetValidator,
   validateProvenance,
+  influenceDeclaration,
+  episodeProvenance,
+  matchesEpisodeProvenance,
 } from "./contentSafety";
 import {
   currentReview,
@@ -254,7 +257,10 @@ async function requireManifestMatchesCheckedBranch(
       old.title !== ep.title ||
       old.lineageId !== branch.lineageId ||
       old.worldHash !== branch.worldHash ||
-      old.provenanceHash !== branch.provenanceHash ||
+      !(await matchesEpisodeProvenance(
+        old,
+        episodeProvenance(branch.provenance!, ep.influences),
+      )) ||
       old.author !== branch.owner ||
       old.license?.id !== license.id ||
       old.license?.termsVersion !== license.termsVersion ||
@@ -706,6 +712,9 @@ export const get = internalQuery({
           episodes.map(async (ep) => ({
             target: episodeTarget(b, ep),
             provenance: ep.provenance,
+            ...(ep.influenceCorrection
+              ? { influenceCorrection: ep.influenceCorrection }
+              : {}),
             readingUrl: b.repository + "/blob/" + ep.revision + "/" + ep.path,
             review: (await currentReview(ctx, b, ep))?.review ?? null,
           })),
@@ -814,16 +823,18 @@ export const review = internalMutation({
       seen.add(r.target.episodeId);
       if (
         r.review.decision === "eligible" &&
-        b.provenance?.influences?.some(
-          (influence) =>
-            !r.review.candidates.some(
-              (candidate) =>
-                candidate.title === influence.title &&
-                ["public_influence", "comparison"].includes(
-                  candidate.relationship ?? "",
-                ),
-            ),
-        )
+        episodes
+          .find((ep) => ep.episodeId === r.target.episodeId)
+          ?.provenance?.influences?.some(
+            (influence) =>
+              !r.review.candidates.some(
+                (candidate) =>
+                  candidate.title === influence.title &&
+                  ["public_influence", "comparison"].includes(
+                    candidate.relationship ?? "",
+                  ),
+              ),
+          )
       )
         fail("DECLARED_INFLUENCE_NOT_CHECKED");
       await contentCommand(ctx, agent, "review.record", r);
@@ -1053,6 +1064,7 @@ export const checked = internalMutation({
         title: v.string(),
         parent: v.union(parentRef, v.null()),
         sourceRef: v.optional(parentRef),
+        influences: v.optional(v.array(influenceDeclaration)),
       }),
     ),
     characters: v.array(

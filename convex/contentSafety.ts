@@ -195,6 +195,40 @@ export function canonical(value: unknown): string {
   );
 }
 export const fingerprint = (value: unknown) => digest(canonical(value));
+// An explicit episode declaration (including []) overrides the branch default.
+// Keep motivation and actual source-use declarations in the reviewed target.
+export function episodeProvenance(base: Provenance, influences?: unknown) {
+  return validateProvenance({
+    ...base,
+    ...(influences === undefined ? {} : { influences }),
+  });
+}
+// Old import corrections retain the originally reviewed target. Their fixed
+// source declaration must still match exactly when adopting that same edition.
+export async function matchesEpisodeProvenance(
+  stored: {
+    provenanceHash?: string;
+    provenance?: Provenance;
+    influenceCorrection?: {
+      influences: NonNullable<Provenance["influences"]>;
+      originalProvenanceHash: string;
+    };
+  },
+  expected: Provenance,
+) {
+  const expectedHash = await fingerprint(expected);
+  if (stored.provenanceHash === expectedHash) return true;
+  const correction = stored.influenceCorrection;
+  return !!(
+    stored.provenance &&
+    correction &&
+    correction.originalProvenanceHash === stored.provenanceHash &&
+    (await fingerprint(stored.provenance)) === stored.provenanceHash &&
+    (await fingerprint(
+      episodeProvenance(stored.provenance, correction.influences),
+    )) === expectedHash
+  );
+}
 export function validateTarget(t: ReviewTarget) {
   lineageId(t.lineageId);
   revision(t.revision);
