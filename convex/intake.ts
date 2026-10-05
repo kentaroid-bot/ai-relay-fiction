@@ -1,4 +1,4 @@
-import { v, ConvexError } from "convex/values";
+import { v, ConvexError, type Infer } from "convex/values";
 import {
   internalMutation,
   internalQuery,
@@ -9,6 +9,7 @@ import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
   identity,
+  audit,
   limit,
   executeCommand,
   storeCheckedSource,
@@ -31,9 +32,10 @@ import {
 } from "./lineage";
 import { applyDeclaredMain, applyLegacyDeclaredMain } from "./forest";
 import { canReadListedBranch } from "./visibility";
-import { fail, text, revision, repo } from "./policy";
-import { gateValidator, workLicense } from "./safety";
+import { digest, fail, text, revision, repo } from "./policy";
+import { gateValidator, licenseValidator, workLicense } from "./safety";
 import { parentRef } from "./schema";
+import { parseManifest } from "./sourceCheck";
 
 const ACTIVE_WORK = ["checking", "reading"];
 const MAX_ATTEMPTS = 3;
@@ -335,111 +337,211 @@ export const submitContext = internalMutation({
     return { repository: agent.repository };
   },
 });
+const submitArgs = {
+  hash: v.string(),
+  requestId: v.string(),
+  manifest: v.any(),
+  revision: v.string(),
+  license: v.any(),
+  expectedVersion: v.optional(v.number()),
+};
+const submitValidator = v.object(submitArgs);
+// Both entries share ownership, consent, lineage, versioning and scheduling.
+async function submitCase(
+  ctx: MutationCtx,
+  args: Infer<typeof submitValidator>,
+) {
+  const { agent } = await identity(ctx, args.hash);
+  if (agent.role === "auditor") fail("FORBIDDEN");
+  const m = args.manifest;
+  if (m.schemaVersion !== 1 || repo(m.repository) !== agent.repository)
+    fail("MANIFEST_MISMATCH");
+  revision(args.revision);
+  const branchId = text(m.branchId, 80, "BRANCH_ID");
+  const actor = "intake:" + agent._id;
+  const { old, fp } = await receipt(ctx, actor, args.requestId, {
+    ...args,
+    hash: undefined,
+  });
+  if (old) return old.result;
+  const b = await ctx.db
+    .query("branches")
+    .withIndex("branchId", (q) => q.eq("branchId", branchId))
+    .unique();
+  if (b && b.owner !== agent._id) fail("FORBIDDEN");
+  // An unchanged fixed edition already has a case; changing transport request IDs does not duplicate it.
+  const cases = await ctx.db
+    .query("intakes")
+    .withIndex("branch", (q) => q.eq("branchId", branchId))
+    .order("desc")
+    .take(50);
+  const existing = await ctx.db
+    .query("intakes")
+    .withIndex("edition", (q) =>
+      q.eq("branchId", branchId).eq("revision", args.revision),
+    )
+    .unique();
+  if (existing)
+    return saveReceipt(ctx, actor, args.requestId, fp, {
+      intakeId: existing._id,
+      status: existing.status,
+      version: existing.version,
+    });
+  if (b && args.expectedVersion !== b.version) fail("VERSION_CONFLICT");
+  if (
+    m.license !== args.license?.id ||
+    m.termsVersion !== args.license?.termsVersion
+  )
+    fail("WORK_LICENSE_MISMATCH");
+  const result = await executeCommand(ctx, {
+    hash: args.hash,
+    operation: b ? "branch.update" : "branch.create",
+    requestId: "intake:" + args.requestId,
+    fingerprint: fp,
+    body: {
+      ...m,
+      revision: args.revision,
+      license: args.license,
+      readingUrl: agent.repository,
+      expectedVersion: args.expectedVersion,
+    },
+  });
+  for (const oldCase of cases.filter(
+    (c) => !["published", "rejected", "superseded"].includes(c.status),
+  ))
+    await transition(
+      ctx,
+      oldCase,
+      "superseded",
+      "新しい版を受け付けました。この版の処理を終了します。",
+      { generation: oldCase.generation + 1 },
+    );
+  const id = await ctx.db.insert("intakes", {
+    owner: agent._id,
+    branchId,
+    revision: args.revision,
+    branchVersion: result.version,
+    version: 1,
+    status: "checking",
+    manifest: JSON.stringify(m),
+    questions: [],
+    readings: [],
+    attempts: 0,
+    generation: 0,
+    leaseUntil: 0,
+    updatedAt: Date.now(),
+  });
+  await event(
+    ctx,
+    (await ctx.db.get(id))!,
+    "received",
+    "原稿を受け付けました。固定版の確認と読書を進めます。返信は不要です。",
+  );
+  await ctx.scheduler.runAfter(0, internal.intakeWorker.process, {
+    intakeId: id,
+  });
+  return saveReceipt(ctx, actor, args.requestId, fp, {
+    intakeId: id,
+    status: "checking",
+    version: 1,
+  });
+}
 export const submit = internalMutation({
-  args: {
-    hash: v.string(),
-    requestId: v.string(),
-    manifest: v.any(),
-    revision: v.string(),
-    license: v.any(),
-    expectedVersion: v.optional(v.number()),
-  },
+  args: submitArgs,
   handler: async (ctx, args) => {
     if (process.env.INTAKE_OPEN !== "true") fail("INTAKE_CLOSED");
-    const { agent } = await identity(ctx, args.hash);
-    if (agent.role === "auditor") fail("FORBIDDEN");
-    const m = args.manifest;
-    if (m.schemaVersion !== 1 || repo(m.repository) !== agent.repository)
-      fail("MANIFEST_MISMATCH");
-    revision(args.revision);
-    const branchId = text(m.branchId, 80, "BRANCH_ID");
-    const actor = "intake:" + agent._id;
-    const { old, fp } = await receipt(ctx, actor, args.requestId, {
-      ...args,
-      hash: undefined,
-    });
-    if (old) return old.result;
-    const b = await ctx.db
-      .query("branches")
-      .withIndex("branchId", (q) => q.eq("branchId", branchId))
-      .unique();
-    if (b && b.owner !== agent._id) fail("FORBIDDEN");
-    // An unchanged fixed edition already has a case; changing transport request IDs does not duplicate it.
-    const cases = await ctx.db
-      .query("intakes")
-      .withIndex("branch", (q) => q.eq("branchId", branchId))
-      .order("desc")
-      .take(50);
-    const existing = await ctx.db
-      .query("intakes")
-      .withIndex("edition", (q) =>
-        q.eq("branchId", branchId).eq("revision", args.revision),
-      )
-      .unique();
-    if (existing)
-      return saveReceipt(ctx, actor, args.requestId, fp, {
-        intakeId: existing._id,
-        status: existing.status,
-        version: existing.version,
-      });
-    if (b && args.expectedVersion !== b.version) fail("VERSION_CONFLICT");
+    return submitCase(ctx, args);
+  },
+});
+
+// This contract is internal only; the public HTTP route never forwards it.
+export const operatorSubmissionArgs = {
+  hash: v.string(),
+  editorHash: v.string(),
+  requestId: v.string(),
+  approval: v.object({
+    repository: v.string(),
+    branchId: v.string(),
+    revision: v.string(),
+    manifestHash: v.string(),
+    license: licenseValidator,
+    expectedVersion: v.optional(v.number()),
+  }),
+};
+const operatorSubmissionValidator = v.object(operatorSubmissionArgs);
+type OperatorSubmission = Infer<typeof operatorSubmissionValidator>;
+async function operatorApproval(ctx: MutationCtx, args: OperatorSubmission) {
+  const { agent: editor } = await identity(ctx, args.editorHash);
+  const { agent: author } = await identity(ctx, args.hash);
+  if (editor.role !== "editor" || author.role !== "writer") fail("FORBIDDEN");
+  const a = args.approval;
+  if (repo(a.repository) !== author.repository) fail("MANIFEST_MISMATCH");
+  text(a.branchId, 80, "BRANCH_ID");
+  revision(a.revision);
+  if (!/^[a-f0-9]{64}$/.test(a.manifestHash)) fail("INVALID_MANIFEST_HASH");
+  workLicense(a.license);
+  if (
+    a.expectedVersion !== undefined &&
+    (!Number.isSafeInteger(a.expectedVersion) || a.expectedVersion < 1)
+  )
+    fail("INVALID_VERSION");
+  // Pin the original request before network access. Key rotation can retain the
+  // identities; changes to owner, operator or any approved field cannot replay it.
+  const actor = "operator-intake";
+  const value = { author: author._id, operator: editor._id, approval: a };
+  const { old, fp } = await receipt(ctx, actor, args.requestId, value);
+  if (old) return old;
+  await limit(ctx, "operator-intake:" + editor._id, 20);
+  const id = await ctx.db.insert("receipts", {
+    actor,
+    requestId: args.requestId,
+    fingerprint: fp,
+    result: value,
+  });
+  await audit(ctx, editor._id, "intake.operator.approved", id);
+  return (await ctx.db.get(id))!;
+}
+export const prepareOperatorSubmission = internalMutation({
+  args: operatorSubmissionArgs,
+  handler: operatorApproval,
+});
+export const commitOperatorSubmission = internalMutation({
+  args: { ...operatorSubmissionArgs, manifestSource: v.string() },
+  handler: async (ctx, args) => {
+    const approved = await operatorApproval(ctx, args);
+    if (approved.result.intake) return approved.result.intake;
+    const a = args.approval;
     if (
-      m.license !== args.license?.id ||
-      m.termsVersion !== args.license?.termsVersion
+      new TextEncoder().encode(args.manifestSource).length > 20000 ||
+      (await digest(args.manifestSource)) !== a.manifestHash
     )
-      fail("WORK_LICENSE_MISMATCH");
-    const result = await executeCommand(ctx, {
+      fail("APPROVED_MANIFEST_MISMATCH");
+    const manifest = parseManifest(args.manifestSource);
+    if (
+      manifest.branchId !== a.branchId ||
+      repo(manifest.repository) !== repo(a.repository)
+    )
+      fail("MANIFEST_MISMATCH");
+    const result = await submitCase(ctx, {
       hash: args.hash,
-      operation: b ? "branch.update" : "branch.create",
-      requestId: "intake:" + args.requestId,
-      fingerprint: fp,
-      body: {
-        ...m,
-        revision: args.revision,
-        license: args.license,
-        readingUrl: agent.repository,
-        expectedVersion: args.expectedVersion,
-      },
+      requestId: "operator-" + (await digest(approved._id)),
+      manifest,
+      revision: a.revision,
+      license: a.license,
+      ...(a.expectedVersion === undefined
+        ? {}
+        : { expectedVersion: a.expectedVersion }),
     });
-    for (const oldCase of cases.filter(
-      (c) => !["published", "rejected", "superseded"].includes(c.status),
-    ))
-      await transition(
-        ctx,
-        oldCase,
-        "superseded",
-        "新しい版を受け付けました。この版の処理を終了します。",
-        { generation: oldCase.generation + 1 },
-      );
-    const id = await ctx.db.insert("intakes", {
-      owner: agent._id,
-      branchId,
-      revision: args.revision,
-      branchVersion: result.version,
-      version: 1,
-      status: "checking",
-      manifest: JSON.stringify(m),
-      questions: [],
-      readings: [],
-      attempts: 0,
-      generation: 0,
-      leaseUntil: 0,
-      updatedAt: Date.now(),
+    await ctx.db.patch(approved._id, {
+      result: { ...approved.result, intake: result },
     });
-    await event(
+    await audit(
       ctx,
-      (await ctx.db.get(id))!,
-      "received",
-      "原稿を受け付けました。固定版の確認と読書を進めます。返信は不要です。",
+      approved.result.operator,
+      "intake.operator.received",
+      result.intakeId,
     );
-    await ctx.scheduler.runAfter(0, internal.intakeWorker.process, {
-      intakeId: id,
-    });
-    return saveReceipt(ctx, actor, args.requestId, fp, {
-      intakeId: id,
-      status: "checking",
-      version: 1,
-    });
+    return result;
   },
 });
 
