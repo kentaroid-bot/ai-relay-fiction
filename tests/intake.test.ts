@@ -1061,3 +1061,313 @@ it("continues to independent review after a reader outage and requires explicit 
   ).toBe("published");
   await drain(t);
 });
+
+async function operatorInput(manifest: Record<string, any>) {
+  return {
+    hash: await digest(keys.writer),
+    editorHash: await digest(keys.editor),
+    requestId: "approved-fixed-edition",
+    approval: {
+      repository,
+      branchId: manifest.branchId,
+      revision: commit,
+      manifestHash: await digest(JSON.stringify(manifest)),
+      license,
+    },
+  };
+}
+it("admits one operator-approved edition with all public gates closed and keeps normal review", async () => {
+  const { t, manifest } = await fresh();
+  vi.stubEnv("INTAKE_OPEN", "false");
+  vi.stubEnv("REGISTRATION_OPEN", "false");
+  vi.stubEnv("GITHUB_INTAKE_OPEN", "false");
+  const args = await operatorInput(manifest);
+  const c = await t.action(internal.intakeWorker.submitOperator, args);
+  expect(c.status).toBe("checking");
+  await drain(t);
+  const row = await get(t, c.intakeId);
+  expect(row.status).toBe("reviewing");
+  await t.run(async (ctx) => {
+    const stored = (await ctx.db.query("intakes").collect())[0];
+    expect(JSON.parse(stored.manifest)).toEqual(manifest);
+    const owner = await ctx.db.get(stored.owner);
+    expect(owner!.repository).toBe(repository);
+    expect(owner!.role).toBe("writer");
+    expect(
+      (await ctx.db.query("mains").collect()).some(
+        (m) => m.mainId === manifest.branchId,
+      ),
+    ).toBe(false);
+    const receipt = (await ctx.db.query("receipts").collect()).find(
+      (r) => r.actor === "operator-intake",
+    )!;
+    expect(receipt.result.author).toBe(stored.owner);
+    const editor = await ctx.db
+      .query("agents")
+      .filter((q) => q.eq(q.field("_id"), receipt.result.operator))
+      .first();
+    expect(editor!.role).toBe("editor");
+    const events = (await ctx.db.query("audits").collect()).filter((a) =>
+      a.event.startsWith("intake.operator."),
+    );
+    expect(events.map((a) => a.event)).toEqual([
+      "intake.operator.approved",
+      "intake.operator.received",
+    ]);
+    expect(events.every((a) => a.actor === receipt.result.operator)).toBe(true);
+    expect(JSON.stringify(receipt)).not.toContain(args.hash);
+    expect(JSON.stringify(receipt)).not.toContain(args.editorHash);
+  });
+  const r = await post(t, "intakes", {
+    ...args,
+    revision: commit,
+    license,
+    operatorProvisioning: true,
+  });
+  expect(r.data.error).toBe("INTAKE_CLOSED");
+  expect(process.env.INTAKE_OPEN).toBe("false");
+});
+it("retries an operator case without fetching or creating it again", async () => {
+  const { t, manifest, fetcher } = await fresh();
+  vi.stubEnv("INTAKE_OPEN", "false");
+  const args = await operatorInput(manifest);
+  const first = await t.action(internal.intakeWorker.submitOperator, args);
+  await drain(t);
+  fetcher.mockRejectedValue(new Error("offline"));
+  expect(await t.action(internal.intakeWorker.submitOperator, args)).toEqual(
+    first,
+  );
+  await t.run(async (ctx) => {
+    expect(await ctx.db.query("intakes").collect()).toHaveLength(1);
+  });
+});
+it("pins the original approval before network failure and resumes with the same request", async () => {
+  const { t, manifest, fetcher } = await fresh();
+  vi.stubEnv("INTAKE_OPEN", "false");
+  const args = await operatorInput(manifest);
+  fetcher.mockRejectedValueOnce(new Error("offline"));
+  await expect(
+    t.action(internal.intakeWorker.submitOperator, args),
+  ).rejects.toThrow();
+  await expect(
+    t.action(internal.intakeWorker.submitOperator, {
+      ...args,
+      approval: { ...args.approval, revision: next },
+    }),
+  ).rejects.toThrow("REQUEST_ID_REUSED");
+  const c = await t.action(internal.intakeWorker.submitOperator, args);
+  await drain(t);
+  expect((await get(t, c.intakeId)).status).toBe("reviewing");
+});
+it.each(["parent", "influences", "contentHash"])(
+  "rejects a changed manifest %s against the approved bytes",
+  async (field) => {
+    const { t, manifest, fetcher } = await fresh({
+      provenance: {
+        ...provenance,
+        influences: [
+          ...provenance.influences,
+          { title: "Second classic", relationship: "A separate motif" },
+        ],
+      },
+    });
+    const args = await operatorInput(manifest);
+    const altered = structuredClone(manifest);
+    if (field === "parent") altered.parent.revision = next;
+    if (field === "influences") altered.provenance.influences.reverse();
+    if (field === "contentHash")
+      altered.episodes[0].contentHash = "0".repeat(64);
+    fetcher.mockResolvedValue(new Response(JSON.stringify(altered)));
+    await expect(
+      t.action(internal.intakeWorker.submitOperator, args),
+    ).rejects.toThrow("APPROVED_MANIFEST_MISMATCH");
+    await t.run(async (ctx) => {
+      expect(await ctx.db.query("intakes").collect()).toHaveLength(0);
+    });
+  },
+);
+
+it.each(["writer", "auditor"] as const)(
+  "rejects %s as operator even through the internal action",
+  async (role) => {
+    const { t, manifest, fetcher } = await fresh();
+    const args = await operatorInput(manifest);
+    await expect(
+      t.action(internal.intakeWorker.submitOperator, {
+        ...args,
+        editorHash: await digest(keys[role]),
+      }),
+    ).rejects.toThrow("FORBIDDEN");
+    expect(fetcher).not.toHaveBeenCalled();
+  },
+);
+it.each(["pending", "blocked", "revoked", "expired", "pendingClaim"])(
+  "rejects an author who is %s",
+  async (condition) => {
+    const { t, manifest, fetcher } = await fresh();
+    const args = await operatorInput(manifest);
+    await t.run(async (ctx) => {
+      const key = (await ctx.db
+        .query("keys")
+        .withIndex("hash", (q) => q.eq("hash", args.hash))
+        .unique())!;
+      if (["pending", "blocked"].includes(condition))
+        await ctx.db.patch(key.agentId, { status: condition });
+      else if (condition === "revoked")
+        await ctx.db.patch(key._id, { revoked: true });
+      else if (condition === "expired")
+        await ctx.db.patch(key._id, { expiresAt: Date.now() - 1 });
+      else
+        await ctx.db.patch(key._id, {
+          pendingClaim: {
+            challenge: "proof",
+            expiresAt: Date.now() + 10000,
+            agentName: "writer",
+            operatorName: "writer",
+          },
+        });
+    });
+    await expect(
+      t.action(internal.intakeWorker.submitOperator, args),
+    ).rejects.toThrow("UNAUTHORIZED");
+    expect(fetcher).not.toHaveBeenCalled();
+  },
+);
+it("rechecks authorization after fetching and before creating the case", async () => {
+  const { t, manifest, fetcher } = await fresh();
+  const args = await operatorInput(manifest);
+  fetcher.mockImplementationOnce(async () => {
+    await t.run(async (ctx) => {
+      const key = (await ctx.db
+        .query("keys")
+        .withIndex("hash", (q) => q.eq("hash", args.editorHash))
+        .unique())!;
+      await ctx.db.patch(key._id, { revoked: true });
+    });
+    return new Response(JSON.stringify(manifest));
+  });
+  await expect(
+    t.action(internal.intakeWorker.submitOperator, args),
+  ).rejects.toThrow("UNAUTHORIZED");
+  await t.run(async (ctx) => {
+    expect(await ctx.db.query("intakes").collect()).toHaveLength(0);
+  });
+});
+it("rejects another repository and missing consent before fetching", async () => {
+  const { t, manifest, fetcher } = await fresh();
+  const args = await operatorInput(manifest);
+  await expect(
+    t.action(internal.intakeWorker.submitOperator, {
+      ...args,
+      approval: {
+        ...args.approval,
+        repository: "https://github.com/stranger/story",
+      },
+    }),
+  ).rejects.toThrow("MANIFEST_MISMATCH");
+  await expect(
+    t.action(internal.intakeWorker.submitOperator, {
+      ...args,
+      approval: {
+        ...args.approval,
+        license: { ...license, humanApproved: false },
+      },
+    }),
+  ).rejects.toThrow("WORK_CONSENT_REQUIRED");
+  expect(fetcher).not.toHaveBeenCalled();
+});
+it("rejects a mismatching approved branch and preserves normal version conflicts", async () => {
+  const { t, manifest } = await fresh();
+  const args = await operatorInput(manifest);
+  await expect(
+    t.action(internal.intakeWorker.submitOperator, {
+      ...args,
+      approval: { ...args.approval, branchId: "different-branch" },
+    }),
+  ).rejects.toThrow("MANIFEST_MISMATCH");
+  await seedCheckedBranch(t, manifest, 5);
+  await expect(
+    t.action(internal.intakeWorker.submitOperator, {
+      ...args,
+      requestId: "stale-version",
+      approval: { ...args.approval, expectedVersion: 4 },
+    }),
+  ).rejects.toThrow("VERSION_CONFLICT");
+});
+it("preserves parent and lineage restrictions for operator admission", async () => {
+  const { t, manifest } = await fresh();
+  const args = await operatorInput(manifest);
+  await t.run(async (ctx) => {
+    const lineage = (await ctx.db.query("contentLineages").first())!;
+    await ctx.db.patch(lineage._id, { status: "draft" });
+  });
+  await expect(
+    t.action(internal.intakeWorker.submitOperator, args),
+  ).rejects.toThrow();
+  await t.run(async (ctx) => {
+    expect(await ctx.db.query("intakes").collect()).toHaveLength(0);
+  });
+});
+it("coalesces concurrent operator submissions and new request IDs for the same fixed edition", async () => {
+  const { t, manifest } = await fresh();
+  const args = await operatorInput(manifest);
+  const [a, b] = await Promise.all([
+    t.action(internal.intakeWorker.submitOperator, args),
+    t.action(internal.intakeWorker.submitOperator, {
+      ...args,
+      requestId: "duplicate-receipt",
+    }),
+  ]);
+  expect(a.intakeId).toBe(b.intakeId);
+  await drain(t);
+  await t.run(async (ctx) => {
+    expect(await ctx.db.query("intakes").collect()).toHaveLength(1);
+  });
+});
+it("does not publish an approved manifest whose fetched manuscript hash is wrong", async () => {
+  const { t, manifest, fetcher } = await fresh();
+  const args = await operatorInput(manifest);
+  const normal = fetcher.getMockImplementation()!;
+  fetcher.mockImplementation(async (url, init) =>
+    String(url).endsWith("manuscript/02.md")
+      ? new Response("changed text")
+      : normal(url, init),
+  );
+  const c = await t.action(internal.intakeWorker.submitOperator, args);
+  await drain(t);
+  const row = await get(t, c.intakeId);
+  expect(row.status).toBe("failed");
+  expect(row.error).toBe("CONTENT_HASH_MISMATCH");
+});
+it("keeps a fixed listed parent usable when its branch has advanced", async () => {
+  const { t, manifest } = await fresh();
+  await t.run(async (ctx) => {
+    const root = (await ctx.db.query("branches").first())!;
+    await ctx.db.patch(root._id, { revision: next, version: root.version + 1 });
+  });
+  const c = await t.action(
+    internal.intakeWorker.submitOperator,
+    await operatorInput(manifest),
+  );
+  await drain(t);
+  expect((await get(t, c.intakeId)).status).toBe("reviewing");
+});
+it("rejects a withdrawn fixed parent rather than replacing it with a newer edition", async () => {
+  const { t, manifest } = await fresh();
+  await t.run(async (ctx) => {
+    const parent = (await ctx.db.query("episodes").first())!;
+    await ctx.db.patch(parent._id, {
+      lifecycle: "withdrawn",
+      withdrawnAt: Date.now(),
+    });
+  });
+  await expect(
+    t.action(
+      internal.intakeWorker.submitOperator,
+      await operatorInput(manifest),
+    ),
+  ).rejects.toThrow();
+  await t.run(async (ctx) => {
+    expect(await ctx.db.query("intakes").collect()).toHaveLength(0);
+  });
+});

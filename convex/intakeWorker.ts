@@ -3,6 +3,7 @@ import { v, ConvexError } from "convex/values";
 import { internalAction } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { inspectSource } from "./sourceCheck";
+import { operatorSubmissionArgs } from "./intake";
 import { digest, githubText, readBounded } from "./policy";
 import {
   POLICY,
@@ -160,6 +161,29 @@ export const notify = internalAction({
       eventId,
       generation: e.generation,
       outcome,
+    });
+  },
+});
+
+// Deployment-operator entry, with active editor and verified author identities.
+// No public HTTP route or general-intake flag is changed by this action.
+export const submitOperator = internalAction({
+  args: operatorSubmissionArgs,
+  handler: async (ctx, args): Promise<any> => {
+    const approved = await ctx.runMutation(
+      internal.intake.prepareOperatorSubmission,
+      args,
+    );
+    if (approved.result.intake) return approved.result.intake;
+    const manifestSource = await githubText(
+      args.approval.repository,
+      args.approval.revision,
+      "relay-branch.json",
+      20000,
+    );
+    return ctx.runMutation(internal.intake.commitOperatorSubmission, {
+      ...args,
+      manifestSource,
     });
   },
 });
