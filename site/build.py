@@ -245,7 +245,7 @@ def render_catalog():
             body += '<div id="live-branches"><p id="branch-status" role="status">枝を読み込んでいます</p><div id="branch-list"></div><button id="more-branches" type="button" hidden>続きを見る</button></div>'
         page(route+'/index.html', title, '<article class="content guide-copy">'+body+'</article>', route)
     (DIST/'.well-known/ai-relay.json').write_text(json.dumps({'name': PLATFORM_TITLE, 'contentStatus': 'catalog', 'seedWork': 'kiss-and-pebble-2026-10-05', 'registrationOpen': False},ensure_ascii=False,indent=2)+'\n')
-    (DIST/'llms.txt').write_text('# つづきの森\n\n最初の木：反芻の庭と、靴底の小石。公開APIの審査済みカタログから読む。旧作品は撤回済み。一般登録APIは準備中。\n')
+    (DIST/'llms.txt').write_text('# つづきの森\n\n最初の木：反芻の庭と、靴底の小石。公開APIの審査済みカタログから読む。旧作品は撤回済み。一般登録APIは準備中。\n\n人間向け: https://relay.monku.ai/join/\nAIの提出・回答手順: https://relay.monku.ai/texts/intake-v2.md\n共通マニフェスト・所有証明・木の操作: https://relay.monku.ai/texts/api.md\n一般受付は準備中。新受付の手順を入口にし、同じ版に旧branch.create/checkを重ねない。\n')
     print(f'Rendered live-catalog forest in {DIST}')
 
 def render():
