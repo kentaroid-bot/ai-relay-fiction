@@ -458,6 +458,7 @@ it("renders all surviving branches on a stump and a labeled move to its earlier 
           },
           {
             ...next,
+            branchId: "alternate-branch",
             title: "仮題",
             readingUrl: url,
             route: { mainId: "alternate-tree", version: 1, position: 1 },
@@ -554,4 +555,122 @@ it("retains confirmed episode navigation if a later page fails and never synthes
   expect(result).toMatchObject({ ok: true, partial: true });
   expect(result.candidates).toHaveLength(1);
   expect(result.candidates[0].isExternal).toBe(true);
+});
+
+it.each([false, true])(
+  "collapses episode editions across pages and prefers its author's viewer (reversed=%s)",
+  async (reversed) => {
+    const candidate = (
+      revision: string,
+      route: any,
+      currentEdition = false,
+    ) => ({
+      ...next,
+      revision,
+      title: "カロリーゼロの夜に",
+      currentEdition,
+      readingUrl: `https://github.com/writer/story/blob/${revision}/manuscript/01.md`,
+      route,
+    });
+    const rows = [
+      candidate("1".repeat(40), null),
+      candidate("2".repeat(40), {
+        mainId: "another-tree",
+        version: 1,
+        position: 0,
+        authorTree: false,
+      }),
+      candidate(
+        "3".repeat(40),
+        { mainId: "pebble-tree", version: 3, position: 1, authorTree: true },
+        true,
+      ),
+    ];
+    if (reversed) rows.reverse();
+    let page = 0;
+    const result = await reader.fetchEpisodeNavigation(
+      async () =>
+        Response.json({
+          version: 1,
+          page: [rows[page++]],
+          isDone: page === rows.length,
+          continueCursor: String(page),
+        }),
+      "root-tree",
+      0,
+      1,
+    );
+    expect(result.ok).toBe(true);
+    expect(result.candidates).toHaveLength(1);
+    expect(result.candidates[0]).toMatchObject({
+      title: "カロリーゼロの夜に",
+      href: "?id=pebble-tree&v=3&at=1",
+      isExternal: false,
+    });
+  },
+);
+it("keeps distinct episodes with the same title and never invents a hidden author's route", async () => {
+  const shared = {
+    ...next,
+    title: "Same title",
+    readingUrl: `https://github.com/writer/story/blob/${sha}/manuscript/01.md`,
+    currentEdition: true,
+  };
+  const result = await reader.fetchEpisodeNavigation(
+    async () =>
+      Response.json({
+        version: 1,
+        isDone: true,
+        page: [
+          { ...shared, route: null },
+          {
+            ...shared,
+            currentEdition: false,
+            revision: "b".repeat(40),
+            route: {
+              mainId: "visible-other",
+              version: 2,
+              position: 0,
+              authorTree: false,
+            },
+          },
+          { ...shared, branchId: "different-author", route: null },
+          { ...shared, episodeId: "different-episode", route: null },
+        ],
+      }),
+    "root-tree",
+    0,
+    1,
+  );
+  expect(result.candidates).toHaveLength(3);
+  expect(result.candidates[0].href).toBe("?id=visible-other&v=2&at=0");
+  expect(result.candidates[1].isExternal).toBe(true);
+  expect(result.candidates[2].isExternal).toBe(true);
+});
+it("keeps a confirmed unique viewer candidate when a later page fails", async () => {
+  let calls = 0;
+  const row = {
+    ...next,
+    title: "Story",
+    readingUrl: `https://github.com/writer/story/blob/${sha}/manuscript/01.md`,
+    route: { mainId: "author-tree", version: 1, position: 0, authorTree: true },
+  };
+  const result = await reader.fetchEpisodeNavigation(
+    async () => {
+      calls++;
+      if (calls === 3) return new Response("", { status: 503 });
+      return Response.json({
+        version: 1,
+        page: [{ ...row, revision: calls === 1 ? sha : "b".repeat(40) }],
+        isDone: false,
+        continueCursor: String(calls),
+      });
+    },
+    "root-tree",
+    0,
+    1,
+  );
+  expect(result).toMatchObject({ ok: true, partial: true });
+  expect(result.candidates).toHaveLength(1);
+  expect(result.candidates[0].isExternal).toBe(false);
 });

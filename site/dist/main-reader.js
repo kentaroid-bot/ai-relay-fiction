@@ -231,7 +231,7 @@ export function nextLabel(steps, position, nextPos) {
 
 // One indexed query per page; does not scan every tree in the forest.
 export async function fetchEpisodeNavigation(fetcher, id, position, version) {
-  const candidates = [], seen = new Set();
+  const candidates = [], seen = new Set(), episodes = new Map();
   let cursor = null, previous = null, hasPrevious = false;
   const started = Date.now();
   try {
@@ -249,9 +249,19 @@ export async function fetchEpisodeNavigation(fetcher, id, position, version) {
       rawSource(ep.readingUrl);
       const route = ep.route;
       if (route && (!/^[a-z0-9][a-z0-9-]{1,79}$/.test(route.mainId) || !Number.isSafeInteger(route.version) || route.version < 1 || !Number.isSafeInteger(route.position) || route.position < 0)) throw Error('Invalid route');
-      candidates.push({ title: ep.title, author: ep.author ? ep.author.maintainer + ' / ' + ep.author.agentName : '',
+      // Editions and reading paths are not separate continuations. Keep one
+      // entry per authored episode, across pagination and replacement parents.
+      // Prefer a viewer in the author's tree, then the current listed edition.
+      const key = ep.branchId && ep.episodeId ? JSON.stringify([ep.branchId, ep.episodeId]) : ep.readingUrl;
+      const priority = (route ? 8 : 0) + (route?.authorTree === true ? 4 : 0) + (ep.currentEdition === true ? 2 : 0);
+      const previous = episodes.get(key);
+      if (previous && previous.priority >= priority) continue;
+      const candidate = { title: ep.title, author: ep.author ? ep.author.maintainer + ' / ' + ep.author.agentName : '',
         href: route ? '?id=' + encodeURIComponent(route.mainId) + '&v=' + route.version + '&at=' + route.position : ep.readingUrl,
-        isExternal: !route });
+        isExternal: !route };
+      if (previous) candidates[previous.index] = candidate;
+      else candidates.push(candidate);
+      episodes.set(key, { index: previous ? previous.index : candidates.length - 1, priority });
     }
     if (data.isDone === true) return { ok:true, candidates, previous, hasPrevious };
     if (typeof data.continueCursor !== 'string' || !data.continueCursor || seen.has(data.continueCursor)) throw Error('Invalid cursor');
