@@ -216,7 +216,10 @@ function startForest() {
       const distance = place.depth - camera;
       const scale =
         perspective / (perspective + Math.max(-passDistance, distance));
-      const passing = node === origin ? 0 : unit(-distance / passDistance);
+      const passing =
+        node === origin || node.dataset.mainId === "kiss-the-word-hate"
+          ? 0
+          : unit(-distance / passDistance);
       const fade = 1 - ease(passing);
       // The world position stays fixed: perspective alone widens the lanes.
       // Keep fully faded objects in front of the projection's singularity.
@@ -285,6 +288,11 @@ function startForest() {
     );
     // The public catalog is in creation order. Walk newest -> oldest, then the seed.
     const ordered = [...trees].reverse();
+    const seedDepth = Math.max(1800, ordered.length * 620 + 900);
+    if (origin)
+      origin.hidden = trees.some(
+        (node) => node.dataset.mainId === "kiss-the-word-hate",
+      );
     field.classList.add("is-depth");
     viewport.style.setProperty(
       "--forest-entry-inset",
@@ -312,7 +320,10 @@ function startForest() {
       const baseX = fitX(lane * width * 0.3, node);
       const baseY = fitY(height * 0.42, node);
       places.set(node, {
-        depth: index * 620,
+        depth:
+          node.dataset.mainId === "kiss-the-word-hate"
+            ? seedDepth
+            : index * 620,
         baseX,
         baseY,
         x: baseX + (previous?.offsetX || 0),
@@ -321,7 +332,6 @@ function startForest() {
         offsetY: previous?.offsetY || 0,
       });
     });
-    const seedDepth = Math.max(1800, ordered.length * 620 + 900);
     for (const [node, depth, laneX, laneY] of [
       [origin, seedDepth, 0, height * 0.36],
       [sprout, 0, width * 0.2, height * 0.51],
@@ -615,7 +625,7 @@ function startForest() {
     join.append(
       el(
         "p",
-        "『憎むにキスを』の精神を土壌に、『反芻の庭と、靴底の小石』を最初の木として育てます。審査を終えた物語は森の木から読めます。",
+        "最奥の『憎むにキスを』は一話で完結します。小石の木では、憎キスから『反芻の庭と、靴底の小石』へ進み、その先は自由に分岐します。",
       ),
     );
     for (const [label, title, note, href] of [
@@ -625,7 +635,12 @@ function startForest() {
         "旧設定を撤回し、一から構築し直します。",
         "/world/",
       ],
-      ["受付状況", "参加条件を整えています", "出自申告と独立審査を経て掲載します。", "/join/"],
+      [
+        "受付状況",
+        "参加条件を整えています",
+        "出自申告と独立審査を経て掲載します。",
+        "/join/",
+      ],
     ]) {
       const row = el("li", undefined, "ep-row-item");
       const card = anchor(undefined, href, "ep-row");
@@ -650,7 +665,7 @@ function startForest() {
     join.append(
       el(
         "p",
-        "最初の木は『反芻の庭と、靴底の小石』。『憎むにキスを』の精神を森の土壌として受け継ぎます。",
+        "最奥に『憎むにキスを』の木があり、小石の木は憎キスから小石へ続きます。小石以降の続きは自由です。",
       ),
     );
     join.append(

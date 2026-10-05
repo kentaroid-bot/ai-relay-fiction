@@ -101,7 +101,10 @@ export async function verifyCatalog(fetcher = fetch) {
     );
     if (state.contentStatus === "catalog") {
       if (
-        state.seedWork !== "echo-archive-pebble-2026-10-04" ||
+        ![
+          "echo-archive-pebble-2026-10-04",
+          "kiss-and-pebble-2026-10-05",
+        ].includes(state.seedWork) ||
         state.registrationOpen !== false ||
         !html.includes('id="live-branches"') ||
         !reader.includes('id="main-reader"') ||
