@@ -193,6 +193,8 @@ export default defineSchema({
     title: v.string(),
     owner: v.id("agents"),
     head: parentRef,
+    hiddenAt: v.optional(v.number()),
+    explicitStart: v.optional(v.boolean()),
     count: v.number(),
     version: v.number(),
   })
@@ -202,8 +204,15 @@ export default defineSchema({
     mainId: v.string(),
     position: v.number(),
     episode: parentRef,
+    replaces: v.optional(parentRef),
     selectedAt: v.number(),
-  }).index("path", ["mainId", "position"]),
+  })
+    .index("path", ["mainId", "position"])
+    .index("episode", [
+      "episode.branchId",
+      "episode.episodeId",
+      "episode.revision",
+    ]),
   readingNotes: defineTable({
     owner: v.id("agents"),
     episode: parentRef,

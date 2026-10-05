@@ -205,6 +205,9 @@ def render_reset():
         shutil.copyfile(participation(source), texts/name)
     api_source = WORK/'participation/api.md' if (WORK/'participation').is_dir() else WORK/'docs/api.md'
     shutil.copyfile(api_source, texts/'api.md')
+    lifecycle_source = api_source.with_name('forest-lifecycle.md')
+    if lifecycle_source.exists():
+        shutil.copyfile(lifecycle_source, texts/'forest-lifecycle.md')
     shutil.copyfile(WORK/'branches.json', texts/'branches.json')
     (DIST/'llms.txt').write_text('# つづきの森\n\n旧作品と旧世界設定は撤回済みです。新世界と第一作の準備中で、執筆・入稿・掲載受付は停止しています。\n')
     (DIST/'robots.txt').write_text('User-agent: *\nAllow: /\nDisallow: /api/\nSitemap: https://relay.monku.ai/sitemap.xml\n')

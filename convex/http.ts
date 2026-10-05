@@ -71,6 +71,8 @@ const writes = new Set([
   "main.create",
   "main.append",
   "main.rename",
+  "main.hide",
+  "main.replace",
   "reading.note",
   "submission.linkBranch",
   "episode.withdraw",
@@ -159,6 +161,12 @@ const endpoint = httpAction(async (ctx, request) => {
       return json(
         await ctx.runQuery(internal.forest.publicCandidates, {
           id: text(url.searchParams.get("id"), 80, "MAIN_ID"),
+          position: url.searchParams.has("at")
+            ? Number(url.searchParams.get("at"))
+            : undefined,
+          version: url.searchParams.has("v")
+            ? Number(url.searchParams.get("v"))
+            : undefined,
           cursor: url.searchParams.get("cursor") || undefined,
         }),
       );

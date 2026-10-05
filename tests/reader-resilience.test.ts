@@ -214,7 +214,10 @@ it("reads a public selected episode after an unavailable ancestor, while omittin
   await readTree();
   expect(
     elements["tree-story"].children.map((c: any) => c.textContent),
-  ).toEqual(["この話は森から取り下げられました。", "この先の話はありません。"]);
+  ).toEqual([
+    "この話は森から取り下げられました。",
+    "この木には、いま読める続きがありません。",
+  ]);
   expect(elements["episode-title"].textContent).toContain("切り株");
   expect(elements["reading-status"].textContent).toBe("");
 });
@@ -267,12 +270,15 @@ it("renders tombstone navigation to skip over gaps to the next available episode
   const navLinks = elements["tree-navigation"].children;
   expect(
     navLinks.some(
-      (c: any) => c.textContent === "前の話へ" && c.href.includes("&at=0"),
+      (c: any) =>
+        c.textContent === "前の読める話へ" && c.href.includes("&at=0"),
     ),
   ).toBe(true);
   expect(
     navLinks.some(
-      (c: any) => c.textContent === "次の話へ" && c.href.includes("&at=2"),
+      (c: any) =>
+        c.textContent.startsWith("この木の続きを読む：") &&
+        c.href.includes("&at=2"),
     ),
   ).toBe(true);
   // 目次（tree-path）で2話が切り株としてリンクされていること
@@ -320,7 +326,9 @@ it("distinguishes non-withdrawn unavailable reasons from author withdrawal", asy
   expect(navLinks.some((c: any) => c.textContent === "前の話へ")).toBe(false);
   expect(
     navLinks.some(
-      (c: any) => c.textContent === "次の話へ" && c.href.includes("&at=1"),
+      (c: any) =>
+        c.textContent.startsWith("この木の続きを読む：") &&
+        c.href.includes("&at=1"),
     ),
   ).toBe(true);
   expect(elements["tree-path"].children[0].children[0].textContent).toBe(
@@ -417,4 +425,133 @@ it("marks a partial candidate list without hiding its confirmed links or claimin
   expect(elements["candidate-pills"].children).toHaveLength(1);
   expect(elements["branch-candidates-empty"].hidden).toBe(false);
   expect(elements["branch-candidates-empty"].textContent).toContain("一部");
+});
+
+it("renders all surviving branches on a stump and a labeled move to its earlier tree without fetching withdrawn prose", async () => {
+  const { doc, elements } = documentFixture();
+  const url = `https://github.com/writer/story/blob/${sha}/next.md`;
+  const requests: string[] = [];
+  vi.stubGlobal("document", doc);
+  vi.stubGlobal("location", {
+    search: "?id=alternate-tree&v=1&at=0",
+    protocol: "https:",
+  });
+  vi.stubGlobal("fetch", async (u: string) => {
+    requests.push(u);
+    if (u.startsWith("/api/v1/candidates"))
+      return Response.json({
+        version: 1,
+        isDone: true,
+        hasPrevious: true,
+        previous: {
+          mainId: "pebble-tree",
+          version: 1,
+          position: 0,
+          title: "小石",
+        },
+        page: [
+          {
+            ...next,
+            title: "〇〇",
+            readingUrl: url,
+            route: { mainId: "pebble-tree", version: 1, position: 2 },
+          },
+          {
+            ...next,
+            title: "仮題",
+            readingUrl: url,
+            route: { mainId: "alternate-tree", version: 1, position: 1 },
+          },
+        ],
+      });
+    return Response.json({
+      version: 1,
+      count: 2,
+      isDone: true,
+      title: "仮題",
+      page: [
+        { position: 0, available: false, episode: null, reason: "withdrawn" },
+        { position: 1, available: true, episode: { ...next, title: "仮題" } },
+      ],
+    });
+  });
+  await readTree();
+  expect(requests.every((u) => u.startsWith("/api/"))).toBe(true);
+  expect(elements["candidate-pills"].children).toHaveLength(2);
+  expect(elements["branch-candidates"].hidden).toBe(false);
+  expect(
+    elements["tree-navigation"].children.map((c: any) => c.textContent),
+  ).toEqual([
+    "この木の続きを読む：仮題へ",
+    "前の話へ（「小石」の木に移ります）",
+  ]);
+});
+it("shows a closed tree without fetching any source or offering its hidden path", async () => {
+  const { doc, elements } = documentFixture();
+  vi.stubGlobal("document", doc);
+  vi.stubGlobal("location", {
+    search: "?id=pebble-tree&v=1&at=1",
+    protocol: "https:",
+  });
+  const fetcher = vi.fn(async () =>
+    Response.json({ mainId: "pebble-tree", hidden: true }),
+  );
+  vi.stubGlobal("fetch", fetcher);
+  await readTree();
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(elements["tree-title"].textContent).toBe("しまわれた木");
+  expect(elements["tree-navigation"].children[0].textContent).toBe("森へ戻る");
+  expect(elements["tree-path"].children).toHaveLength(0);
+});
+it("marks skipped gaps and validates a local replacement without rewriting the original parent", () => {
+  const replacement = { ...ep, branchId: "replacement" };
+  const steps = [
+    { position: 0, available: true, episode: replacement, replaces: ep },
+    { position: 1, available: true, episode: next },
+  ];
+  expect(() =>
+    reader.validatePath({ version: 1, count: 2 }, steps, 1),
+  ).not.toThrow();
+  expect(() =>
+    reader.validatePath(
+      { version: 1, count: 2 },
+      [{ ...steps[0], replaces: undefined }, steps[1]],
+      1,
+    ),
+  ).toThrow();
+  expect(
+    reader.nextLabel(
+      [steps[0], { available: false }, { episode: { title: "〇〇" } }],
+      0,
+      2,
+    ),
+  ).toBe("欠けた1話を飛ばして「〇〇」へ");
+});
+it("retains confirmed episode navigation if a later page fails and never synthesizes hidden routes", async () => {
+  let calls = 0;
+  const result = await reader.fetchEpisodeNavigation(
+    async () => {
+      calls++;
+      if (calls > 1) return new Response("", { status: 503 });
+      return Response.json({
+        version: 1,
+        isDone: false,
+        continueCursor: "next",
+        page: [
+          {
+            ...next,
+            title: "別の話",
+            readingUrl: `https://github.com/writer/story/blob/${sha}/next.md`,
+            route: null,
+          },
+        ],
+      });
+    },
+    "tree-one",
+    0,
+    1,
+  );
+  expect(result).toMatchObject({ ok: true, partial: true });
+  expect(result.candidates).toHaveLength(1);
+  expect(result.candidates[0].isExternal).toBe(true);
 });

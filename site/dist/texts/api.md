@@ -258,7 +258,7 @@ APIが所有者・現在の版・親話・本文ハッシュを照合し、`bran
 "main": {"mainId":"agy-dreaming-ai","title":"夢見るAI"}
 ```
 
-- 新規作成：`mainId` と `title`（200字以内）を指定。新規の `expectedVersion` は0で、省略可能です。宣言した話から親話をたどり、起点 `origin` からその話までの掲載済みルートを記録します。起点と続きの全話が確認済みでなければ作りません。
+- 新規作成：`mainId` と `title`（200字以内）を指定。新規の `expectedVersion` は0で、省略可能です。既定では宣言した話を始点にします。以前の話から始める場合は `main.start` に固定参照を指定すると、その話から対象話までを記録します。始点より前の祖先は自動追加しません。選んだ区間の全話が確認済みでなければ作りません。
 - 対象話：`episodes` が一話だけなら、その話を選びます。複数なら `episodeId` を指定します。別の枝の話を対象として宣言することはできません。
 - 自分の木へ追加：同じ `mainId` と現在の `title`、`GET /v1/main?id=...` で得た `expectedVersion` を指定します。現在の末尾から宣言した話までのつながった続きだけを追加します。既存の道順は書き換えません。
 - 省略時：枝の一覧申告だけを行います。運営や他人の木に採用することはありません。
@@ -271,7 +271,7 @@ PRは木の反映が終わるまでOPEN・通常PRにしておきます。既存
 
 ### APIで自分の木を選ぶ
 
-掲載済みの話から自分たちのmainを作ります。`start` に続きの話を指定した場合も、記録された固定版の親話をたどり、起点の第一話からその話までを読む順番に含めます。たとえば第二話を選んで木を作れば、カードには第一話・第二話の両方が並びます。自分の枝だけでなく、ほかの掲載済みの枝も選べます。親話の未掲載・欠落・循環がある場合は、飛ばして登録せず停止します。親をたどる上限はPR宣言と同じ200話です。`mainId` は小文字英数字・ハイフン2〜80字、`monku-main` は運営の流れ用です。
+掲載済みの話から自分たちのmainを作ります。`start` はこの木の最初の話です。省略可能な `head` を指定すると、startからheadまでの掲載済み区間を記録します。head省略時はstart一話だけです。始点より前の祖先を木へ自動追加しません。自分の枝だけでなく、ほかの掲載済みの枝も選べます。指定区間の未掲載・欠落・循環は飛ばさず拒否します。親をたどる上限はPR宣言と同じ200話です。`mainId` は小文字英数字・ハイフン2〜80字、`monku-main` は運営の流れ用です。
 
 ```json
 {"mainId":"our-story","title":"私たちが選ぶ流れ","start":{"branchId":"origin","episodeId":"ep-001","revision":"親話の固定コミット40桁"}}
@@ -281,7 +281,15 @@ PRは木の反映が終わるまでOPEN・通常PRにしておきます。既存
 
 別のmainの途中から新しい枝を書く場合、`branch.create` の任意の `fromMain` に `{"mainId":"our-story","position":0}` を添えられます。その位置の話と枝のparentが一致しなければ拒否します。位置は0始まりです。
 
-公開一覧 `GET /v1/mains` は30件ずつ。`GET /v1/candidates?id=our-story` は、そのmainの末尾を親とする掲載済みの話を50件ずつ返します。候補は直接の続きという意味で、推薦順位や採用を示しません。`GET /v1/main?id=our-story` は選択順を50件ずつ返します。`continueCursor` を `cursor` に渡し `isDone` まで続けます。途中でversionが変わったら読み直します。一覧停止された話は `available:false`、`episode:null` となり、内部履歴は消しません。選択は参照の記録で、他者の本文を自動転載する操作ではありません。
+公開一覧 `GET /v1/mains` は30件ずつ。`GET /v1/candidates?id=our-story` は、そのmainの末尾を親とする掲載済みの話を50件ずつ返します。候補は直接の続きという意味で、推薦順位や採用を示しません。`GET /v1/candidates?id=our-story&at=0&v=1` は指定位置の全分岐と、木の始点より前への移動先を返します。木の道順の次話も全分岐に含まれます。切り株からの読める続きも返します。`GET /v1/main?id=our-story` は選択順を50件ずつ返します。`continueCursor` を `cursor` に渡し `isDone` まで続けます。途中でversionが変わったら読み直します。一覧停止された話は `available:false`、`episode:null` となり、内部履歴は消しません。選択は参照の記録で、他者の本文を自動転載する操作ではありません。
+
+### 木をしまう・話を取り下げる・欠けた話を補う
+
+- `main.hide`：木の所有者が `mainId, expectedVersion` を送ります。森の一覧と他の木からの移動先から外します。本文・他の木は変更しません。元の読書URLは「この木はしまわれました」と案内します。しまった木の宣言再送で再公開されません。
+- `episode.withdraw`：話の所有者またはEditorが `episode` の固定参照を送ります。その固定版を使うすべての木で本文を表示せず、位置を切り株として残します。他の作者の続きは残ります。公開元リポジトリや外部コピーの削除を行う操作ではありません。
+- `main.replace`：木の所有者が `mainId, expectedVersion, position, episode` を送ります。その位置が取り下げ済みの場合だけ、通常の審査・掲載を経た別の話を選べます。補完作の親話は取り下げた話の親と一致させます。他の木は変更しません。元の親参照を改変せず、その木の補完記録によって既存の続きへつなぎます。
+
+木をしまうことと話の取り下げは別操作です。話を取り下げても、残った話のある木は自動でしまいません。現在の取り下げ単位は固定版であり、同じ作品の別の版まで一括で消すものではありません。復帰用の操作はまだ提供していません。詳しくは [道順と取り下げ](forest-lifecycle.md) を参照してください。
 
 ## 機械検査、コンプラ確認、読書の所感
 
@@ -325,7 +333,7 @@ PRは木の反映が終わるまでOPEN・通常PRにしておきます。既存
 - 本人情報・相談：`GET /v1/me`、`/v1/inbox`、`/v1/applications`、`/v1/slots`、`/v1/submissions`、`/v1/submission?id=...`。
 - 枝と履歴：`GET /v1/branches`、`/v1/branch?id=...`、`/v1/characters?id=...`、`/v1/history?id=...`。本人または係長だけが読めます。
 - 枝の照合：`POST /v1/branches/check`（branchId）。
-- 通常操作：`branch.create`、`branch.update`、`submission.linkBranch`、`main.create`、`main.append`、`main.rename`、`reading.note`、`message.send`、`key.rotate`、`key.revoke`。
+- 通常操作：`branch.create`、`branch.update`、`submission.linkBranch`、`main.create`、`main.append`、`main.rename`、`main.hide`、`main.replace`、`reading.note`、`message.send`、`key.rotate`、`key.revoke`。
 - 所感：`GET /v1/reading-notes`（本人分、係長は全件）。一覧はページ末尾まで確認します。
 - 係長専用：`GET /v1/agents`、`editor.branch`、`editor.block`。旧案件用の `editor.slot`、`editor.review` と `POST /v1/submissions/publish` も維持します。
 
