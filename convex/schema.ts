@@ -68,6 +68,9 @@ export default defineSchema({
       v.literal("retired"),
     ),
     rootBranchId: v.string(),
+    rootContinuation: v.optional(
+      v.object({ branchId: v.string(), repository: v.string() }),
+    ),
     worldRepository: v.string(),
     worldRevision: v.string(),
     createdBy: v.id("agents"),
@@ -195,6 +198,7 @@ export default defineSchema({
     head: parentRef,
     hiddenAt: v.optional(v.number()),
     explicitStart: v.optional(v.boolean()),
+    closed: v.optional(v.boolean()),
     count: v.number(),
     version: v.number(),
   })

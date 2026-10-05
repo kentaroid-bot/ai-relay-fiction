@@ -248,6 +248,7 @@ export async function forestCommand(
       owner: agent._id,
       head,
       explicitStart: true,
+      ...(body.closed === true ? { closed: true } : {}),
       count: path.length,
       version: 1,
     });
@@ -281,6 +282,8 @@ export async function forestCommand(
     return { mainId, version: main.version + 1, hidden: true };
   }
   if (main.hiddenAt !== undefined) fail("MAIN_HIDDEN");
+  if (main.closed && ["main.append", "main.replace"].includes(operation))
+    fail("MAIN_CLOSED");
   if (operation === "main.replace") {
     if (!Number.isSafeInteger(body.position) || body.position < 0)
       fail("INVALID_MAIN_POSITION");
@@ -442,6 +445,7 @@ export async function applyDeclaredMain(
     if (selected.some((s) => same(s.episode, target)))
       return { mainId, version: main.version, outcome: "already_applied" };
   }
+  if (main?.closed) fail("MAIN_CLOSED");
   const { path, connected } = main
     ? await ancestry(ctx, target, main.head)
     : {

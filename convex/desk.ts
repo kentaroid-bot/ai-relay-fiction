@@ -11,6 +11,7 @@ import {
   REVIEW_POLICY,
 } from "./contentSafety";
 import {
+  requireContinuation,
   declarationForBranch,
   requireLineage,
   requireContentReview,
@@ -368,6 +369,7 @@ export const importGithubBranch = internalMutation({
       .withIndex("branchId", (q) => q.eq("branchId", branchId))
       .unique();
     const ref = await parent(ctx, manifest.parent);
+    await requireContinuation(ctx, ref, { branchId, repository });
     const contentDeclaration = await declarationForBranch(
       ctx,
       manifest,
@@ -641,6 +643,10 @@ export async function executeCommand(
     if (typeof body.firstTime !== "boolean") fail("INVALID_FIRST_TIME");
     const round = text(body.round, 80, "ROUND"),
       ref = await parent(ctx, body.parent);
+    await requireContinuation(ctx, ref, {
+      branchId: "origin",
+      repository: agent.repository,
+    });
     const existing = await ctx.db
       .query("applications")
       .withIndex("roundOwner", (q) =>
@@ -676,6 +682,10 @@ export async function executeCommand(
         .unique()
     )
       fail("BRANCH_ID_TAKEN");
+    await requireContinuation(ctx, ref, {
+      branchId,
+      repository: agent.repository,
+    });
     const declaration = await declarationForBranch(ctx, body, ref);
     const license = workLicense(body.license);
     const fromMain = await validateFromMain(ctx, body.fromMain, ref);
@@ -723,6 +733,7 @@ export async function executeCommand(
       branch.parent,
       branch,
     );
+    await requireContinuation(ctx, branch.parent, branch);
     await preserveListedEdition(ctx, branch);
     await ctx.db.patch(branch._id, {
       ...declaration,
@@ -760,6 +771,10 @@ export async function executeCommand(
       fail("ACTIVE_SLOT_REQUIRED");
     if (body.termsVersion !== TERMS) fail("CONSENT_REQUIRED");
     const ref = await parent(ctx, slot.parent);
+    await requireContinuation(ctx, ref, {
+      branchId: "origin",
+      repository: agent.repository,
+    });
     const declaration = await declarationForBranch(ctx, body, ref);
     const data = {
       license: workLicense(body.license),
@@ -905,6 +920,10 @@ export async function executeCommand(
         .first();
       if (existing) fail("SLOT_ALREADY_OPEN");
       const ref = await parent(ctx, body.parent);
+      await requireContinuation(ctx, ref, {
+        branchId: "origin",
+        repository: writer.repository,
+      });
       const slotId = await ctx.db.insert("slots", {
         owner: writer._id,
         parent: ref,
@@ -1233,6 +1252,7 @@ export async function storeCheckedSource(
     return ref;
   }
   for (const ep of episodes) {
+    await requireContinuation(ctx, ep.parent, b);
     if (ep.parent) await episodeSource(ep.parent);
     else if (!isRoot || ep !== episodes[0]) fail("INVALID_PARENT");
     if (ep.sourceRef) {
@@ -1547,6 +1567,7 @@ export const recordPublication = internalMutation({
     await requireLineage(ctx, sub.lineageId);
     if (root.lineageId !== sub.lineageId) fail("LINEAGE_MISMATCH");
     await parent(ctx, sub.parent);
+    await requireContinuation(ctx, sub.parent, root);
     const old = await ctx.db
       .query("episodes")
       .withIndex("reference", (q) =>
@@ -1637,6 +1658,7 @@ export async function setBranchPublication(
     if (!checkedEpisodes.length || checkedEpisodes.length > 20)
       fail("CHECK_REQUIRED");
     for (const ep of checkedEpisodes) {
+      await requireContinuation(ctx, ep.parent ?? null, branch);
       await requireContentReview(ctx, branch, ep);
       if (ep.sourceRef) {
         await awardAcorn(ctx, branch, ep);

@@ -1,6 +1,6 @@
 import type { Doc } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
-import { fail, keyHash, path, revision, text } from "./policy";
+import { fail, keyHash, path, revision, text, repo } from "./policy";
 import {
   fingerprint,
   lineageId,
@@ -125,6 +125,24 @@ export async function contentCommand(
     const provenanceHash = await fingerprint(provenance);
     const episodeId = text(body.episodeId, 80, "EPISODE_ID");
     if (!/^[a-z0-9][a-z0-9-]*$/.test(episodeId)) fail("INVALID_EPISODE_ID");
+    const ownerId =
+      body.ownerId === undefined
+        ? actor._id
+        : ctx.db.normalizeId("agents", body.ownerId);
+    const owner = ownerId ? await ctx.db.get(ownerId) : null;
+    if (!owner || owner.status !== "active" || owner.role === "auditor")
+      fail("VERIFIED_OWNER_REQUIRED");
+    let rootContinuation;
+    if (body.rootContinuation !== undefined) {
+      const allowed = body.rootContinuation;
+      const childId = text(allowed.branchId, 80, "BRANCH_ID");
+      if (!/^[a-z0-9][a-z0-9-]{1,79}$/.test(childId) || childId === branchId)
+        fail("INVALID_BRANCH_ID");
+      rootContinuation = {
+        branchId: childId,
+        repository: repo(allowed.repository),
+      };
+    }
     const declaration = {
       lineageId: id,
       worldHash,
@@ -139,17 +157,18 @@ export async function contentCommand(
       policyVersion: REVIEW_POLICY,
       status: "draft",
       rootBranchId: branchId,
-      worldRepository: actor.repository,
+      ...(rootContinuation ? { rootContinuation } : {}),
+      worldRepository: owner.repository,
       worldRevision: commit,
       createdBy: actor._id,
     });
     await ctx.db.insert("branches", {
       ...declaration,
       branchId,
-      owner: actor._id,
-      repository: actor.repository,
+      owner: owner._id,
+      repository: owner.repository,
       title: text(body.title, 200, "TITLE"),
-      readingUrl: actor.repository + "/blob/" + commit + "/" + file,
+      readingUrl: owner.repository + "/blob/" + commit + "/" + file,
       parent: null,
       revision: commit,
       status: "pending",
@@ -160,7 +179,7 @@ export async function contentCommand(
       ...declaration,
       branchId,
       episodeId,
-      author: actor._id,
+      author: owner._id,
       parent: null,
       listed: false,
       revision: commit,

@@ -1272,3 +1272,232 @@ it("provisions auditors only through an operator mutation and rejects repository
     }),
   ).rejects.toThrow("KEY_ALREADY_REGISTERED");
 });
+
+it("reserves only the root's immediate continuation, including intake and source-check paths", async () => {
+  const t = await fresh();
+  await activate(t);
+  await t.run(async (ctx) => {
+    const l = await ctx.db.query("contentLineages").first();
+    await ctx.db.patch(l!._id, {
+      rootContinuation: { branchId: "allowed-child", repository },
+    });
+  });
+  const parent = { branchId: "origin", episodeId: "ep-001", revision: commit };
+  const input = {
+    branchId: "other-child",
+    title: "A child",
+    parent,
+    lineageId,
+    provenance,
+    license,
+    revision: nextCommit,
+    readingUrl: repository + "/blob/" + nextCommit + "/manuscript/02.md",
+  };
+  expect((await command(t, "branch.create", input)).data.error).toBe(
+    "ROOT_CONTINUATION_RESERVED",
+  );
+  vi.stubEnv("INTAKE_OPEN", "true");
+  await expect(
+    t.mutation(internal.intake.submit, {
+      hash: await digest(editorKey),
+      requestId: "reserved-intake",
+      revision: nextCommit,
+      license,
+      manifest: {
+        schemaVersion: 1,
+        ...input,
+        repository,
+        license: "CC0-1.0",
+        termsVersion: WORK_TERMS,
+        episodes: [
+          {
+            episodeId: "ep-002",
+            title: "A child",
+            path: "manuscript/02.md",
+            contentHash: await digest("child"),
+          },
+        ],
+      },
+    }),
+  ).rejects.toThrow("ROOT_CONTINUATION_RESERVED");
+  expect(
+    (await command(t, "branch.create", { ...input, branchId: "allowed-child" }))
+      .status,
+  ).toBe(200);
+  const { requireContinuation } = await import("../convex/lineage");
+  await expect(
+    t.run((ctx) =>
+      requireContinuation(ctx, parent, {
+        branchId: "allowed-child",
+        repository: "https://github.com/impostor/story",
+      }),
+    ),
+  ).rejects.toThrow("ROOT_CONTINUATION_RESERVED");
+  // Descendants of the allowed child are unrestricted by this root-only rule.
+  await expect(
+    t.run((ctx) =>
+      requireContinuation(
+        ctx,
+        { ...parent, branchId: "allowed-child" },
+        { branchId: "free-child", repository: "https://github.com/any/writer" },
+      ),
+    ),
+  ).resolves.toBeNull();
+  // A later manifest cannot smuggle a second child into the reserved root's own branch.
+  await t.run(async (ctx) => {
+    const b = await ctx.db
+      .query("branches")
+      .withIndex("branchId", (q) => q.eq("branchId", "origin"))
+      .unique();
+    await ctx.db.patch(b!._id, { status: "pending" });
+  });
+  await expect(
+    t.mutation(internal.desk.recordCheck, {
+      hash: await digest(editorKey),
+      branchId: "origin",
+      version: 3,
+      episodes: [
+        {
+          episodeId: "extra",
+          title: "Not allowed",
+          path: "manuscript/extra.md",
+          contentHash: await digest("extra"),
+          parent,
+        },
+      ],
+      characters: [],
+      gate: {
+        scannerVersion: "signals-v1",
+        notChecked: [],
+        source: "fixed_source_hash_checked",
+        terms: "cc0_declared",
+        findings: [],
+      },
+    }),
+  ).rejects.toThrow("ROOT_CONTINUATION_RESERVED");
+});
+
+it("keeps a closed tree at its selected path while allowing it to be renamed or hidden", async () => {
+  const t = await fresh();
+  await activate(t);
+  const ref = { branchId: "origin", episodeId: "ep-001", revision: commit };
+  expect(
+    (
+      await command(t, "main.create", {
+        mainId: "closed-tree",
+        title: "Root alone",
+        start: ref,
+        closed: true,
+      })
+    ).status,
+  ).toBe(200);
+  expect(
+    (
+      await command(t, "main.append", {
+        mainId: "closed-tree",
+        expectedVersion: 1,
+        episode: ref,
+      })
+    ).data.error,
+  ).toBe("MAIN_CLOSED");
+  expect(
+    (
+      await command(t, "main.replace", {
+        mainId: "closed-tree",
+        expectedVersion: 1,
+        position: 0,
+        episode: ref,
+      })
+    ).data.error,
+  ).toBe("MAIN_CLOSED");
+  expect(
+    (
+      await command(t, "main.rename", {
+        mainId: "closed-tree",
+        expectedVersion: 1,
+        title: "Root",
+      })
+    ).status,
+  ).toBe(200);
+  expect(
+    (
+      await command(t, "main.hide", {
+        mainId: "closed-tree",
+        expectedVersion: 2,
+      })
+    ).status,
+  ).toBe(200);
+});
+
+it("prepares a root under an existing verified owner without granting editorial privileges", async () => {
+  const t = await fresh();
+  const owner = await t.run((ctx) =>
+    ctx.db.insert("agents", {
+      repository: "https://github.com/root-author/root",
+      agentName: "Root author",
+      operatorName: "Author",
+      role: "writer",
+      status: "active",
+      challenge: "",
+      claimExpires: 0,
+      termsVersion: TERMS,
+    }),
+  );
+  expect(
+    (
+      await prepareTree(t, {
+        ownerId: owner,
+        rootContinuation: { branchId: "allowed-child", repository },
+      })
+    ).status,
+  ).toBe(200);
+  const b = await t.run((ctx) =>
+    ctx.db
+      .query("branches")
+      .withIndex("branchId", (q) => q.eq("branchId", "pebble-root"))
+      .unique(),
+  );
+  expect(b?.owner).toBe(owner);
+  expect(b?.repository).toBe("https://github.com/root-author/root");
+  expect((await t.run((ctx) => ctx.db.get(owner)))?.role).toBe("writer");
+  await t.run((ctx) => ctx.db.patch(owner, { status: "pending" }));
+  expect(
+    (
+      await prepareTree(t, {
+        ownerId: owner,
+        lineageId: "another-world",
+        branchId: "another-root",
+      })
+    ).data.error,
+  ).toBe("VERIFIED_OWNER_REQUIRED");
+});
+
+it("rechecks the reserved connection at publication even if an older check already stored it", async () => {
+  const t = await fresh();
+  await activate(t);
+  await t.run(async (ctx) => {
+    const l = await ctx.db.query("contentLineages").first();
+    await ctx.db.patch(l!._id, {
+      rootContinuation: { branchId: "only-child", repository },
+    });
+    const b = await ctx.db
+      .query("branches")
+      .withIndex("branchId", (q) => q.eq("branchId", "origin"))
+      .unique();
+    const ep = await ctx.db.query("episodes").first();
+    await ctx.db.patch(b!._id, { status: "checked" });
+    await ctx.db.patch(ep!._id, {
+      parent: { branchId: "origin", episodeId: "ep-001", revision: commit },
+    });
+  });
+  expect(
+    (
+      await command(t, "editor.branch", {
+        branchId: "origin",
+        expectedVersion: 3,
+        status: "verified",
+        complianceNote: "Cannot override a reserved connection",
+      })
+    ).data.error,
+  ).toBe("ROOT_CONTINUATION_RESERVED");
+});

@@ -167,3 +167,25 @@ export async function declarationForBranch(
     provenanceHash: await fingerprint(provenance),
   };
 }
+
+// A root may reserve its immediate continuation for a named, proved repository.
+// This is a forest connection rule, not a restriction on reuse of the text.
+export async function requireContinuation(
+  ctx: Ctx,
+  ref: ReviewTarget["parent"],
+  child: { branchId: string; repository: string },
+) {
+  if (!ref) return;
+  const root = await ctx.db
+    .query("branches")
+    .withIndex("branchId", (q) => q.eq("branchId", ref.branchId))
+    .unique();
+  const lineage = root && (await getLineage(ctx, root.lineageId));
+  const rule = lineage?.rootContinuation;
+  if (
+    rule &&
+    lineage.rootBranchId === ref.branchId &&
+    (child.branchId !== rule.branchId || child.repository !== rule.repository)
+  )
+    fail("ROOT_CONTINUATION_RESERVED");
+}
