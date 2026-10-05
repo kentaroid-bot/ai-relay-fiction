@@ -1040,3 +1040,41 @@ it("shows literal provenance credits with fixed source links, and clears withdra
   reader.renderProvenance(document, target, {});
   expect(target.hidden).toBe(true);
 });
+
+function storyNodes(text: string, title = "眠れぬ夜の奪還") {
+  const nodes: any[] = [];
+  renderStory(
+    { createElement: (tag: string) => ({ tag, textContent: "", className: "" }) },
+    { replaceChildren: () => { nodes.length = 0; }, append: (node: any) => nodes.push(node) },
+    text, title,
+  );
+  return nodes;
+}
+it.each([
+  "## 第2話：眠れぬ夜の奪還（新世界の枝）",
+  "## 第２話：眠れぬ夜の奪還 (新世界の枝)",
+  "### 第二話　眠れぬ夜の奪還（新世界の枝）",
+  "## 2話目 · 眠れぬ夜の奪還",
+  "## 第2話：『眠れぬ夜の奪還』（新世界の枝）",
+  "## **第2話：眠れぬ夜の奪還（新世界の枝）**",
+  "## 第2話：眠れぬ夜の奪還（新世界の枝） ##",
+  "## Episode 2: 眠れぬ夜の奪還 (新世界の枝)",
+  "# 第2話：眠れぬ夜の奪還（新世界の枝）",
+  "## 眠れぬ夜の奪還",
+])("uses the route title once for opening heading %s", heading => {
+  const nodes = storyNodes("# 『反芻の庭と、靴底の小石』\r\n" + heading + "\r\n本文。\r\n\r\n## 後半\r\n続き。");
+  expect(nodes.map(n => n.textContent)).toEqual(["本文。", "後半", "続き。"]);
+});
+it("preserves distinct headings, later H1s, paragraphs and fenced headings", () => {
+  expect(storyNodes("## 眠れぬ夜の奪還、その後\n本文。").map(n => n.textContent))
+    .toEqual(["眠れぬ夜の奪還、その後", "本文。"]);
+  expect(storyNodes("本文。\n# 後半\n## 第2話：眠れぬ夜の奪還（新世界の枝）\n続き。").map(n => n.textContent))
+    .toEqual(["本文。", "後半", "第2話：眠れぬ夜の奪還（新世界の枝）", "続き。"]);
+  const nodes = storyNodes("~~~text\n## 第2話：眠れぬ夜の奪還\n\n記録\n~~~\n本文。");
+  expect(nodes.map(n => n.tag)).toEqual(["pre", "p"]);
+  expect(nodes[0].textContent).toBe("## 第2話：眠れぬ夜の奪還\n\n記録");
+});
+it("preserves meaningful parentheses that belong to the registered title", () => {
+  expect(storyNodes("## 第2話：夜（下）\n本文。", "夜（上）")[0].textContent).toBe("第2話：夜（下）");
+  expect(storyNodes("## 第2話：夜（上）（別の枝）\n本文。", "夜（上）").map(n => n.textContent)).toEqual(["本文。"]);
+});

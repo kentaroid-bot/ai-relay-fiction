@@ -38,30 +38,71 @@ export function validatePath(data, steps, version) {
     }
   }
 }
+// Headings are separate blocks even when authors omit surrounding blank lines.
+// Fenced text remains opaque: a heading inside a quotation/code block is prose.
+function storyBlocks(text) {
+  const blocks = [];
+  let lines = [], fence = null;
+  const flush = () => { if (lines.length) blocks.push(lines.join('\n')); lines = []; };
+  for (const line of text.replace(/\r\n?/g, '\n').trim().split('\n')) {
+    if (fence) {
+      lines.push(line);
+      if (new RegExp('^' + fence[0] + '{' + fence.length + ',}\\s*$').test(line)) { flush(); fence = null; }
+    } else if (/^(`{3,}|~{3,})/.test(line)) {
+      flush(); fence = /^(?:`{3,}|~{3,})/.exec(line)[0]; lines.push(line);
+    } else if (/^#{1,6}\s/.test(line)) {
+      flush(); blocks.push(line);
+    } else if (!line.trim()) flush();
+    else lines.push(line);
+  }
+  flush();
+  return blocks;
+}
+function titleText(value) {
+  return value.normalize('NFKC').trim()
+    .replace(/^(\*\*|__|`)(.*)\1$/, '$2')
+    .replace(/^[「『](.*)[」』](?=\s*(?:\(|$))/, '$1')
+    .replace(/\s+/g, ' ').trim();
+}
+function repeatsEpisodeTitle(heading, episodeTitle) {
+  if (!episodeTitle) return false;
+  const expected = titleText(episodeTitle);
+  const candidate = titleText(titleText(heading)
+    .replace(/^(?:第\s*)?[0-9一二三四五六七八九十百千〇零]+\s*話(?:目)?\s*[:.、·・\-–—]?\s*/, '')
+    .replace(/^(?:episode|chapter)\s+[0-9]+\s*[:.\-–—]?\s*/i, ''));
+  if (candidate === expected) return true;
+  // A branch label following the registered title is opening metadata too.
+  // Keep different titles and any subtitle that is not a parenthetical label.
+  return !!expected && candidate.startsWith(expected) &&
+    /^(?:\s*\([^()]*\))+$/.test(candidate.slice(expected.length));
+}
 export function renderStory(document, target, text, episodeTitle) {
   target.replaceChildren();
-  let atStart = true;
-  for (const block of text.trim().split(/\n\s*\n/)) {
-    // Minimal prose layout; author-supplied Markdown never becomes executable markup.
-    if (block.startsWith('# ')) continue;
-    const level = /^(#{2,3})\s/.exec(block);
-    const heading = level ? block.slice(level[0].length).trim() : '';
-    // The route already supplies the episode number and title. Keep all prose
-    // and later section headings; only omit an identical opening title.
-    if (atStart && episodeTitle && level &&
-        heading.replace(/^第[0-9０-９一二三四五六七八九十百]+話\s*[:：.．、\s]\s*/, '') === episodeTitle.trim()) {
+  let atStart = true, omittedWorkTitle = false;
+  for (const block of storyBlocks(text)) {
+    const level = /^(#{1,6})\s+/.exec(block);
+    const heading = level ? block.slice(level[0].length).replace(/\s+#+\s*$/, '').trim() : '';
+    if (atStart && level && repeatsEpisodeTitle(heading, episodeTitle)) {
       atStart = false;
       continue;
     }
+    // Legacy manuscripts put the work title in their first H1. Only that one
+    // is metadata; headings later in the story must remain visible.
+    if (atStart && level?.[1] === '#' && !omittedWorkTitle) {
+      omittedWorkTitle = true;
+      continue;
+    }
     atStart = false;
-    if (block.startsWith('```')) {
+    if (/^(`{3,}|~{3,})/.test(block)) {
       const node = document.createElement('pre');
-      node.textContent = block.replace(/^```[^\n]*\n?/, '').replace(/\n?```$/, '');
+      const fence = /^(?:`{3,}|~{3,})/.exec(block)[0];
+      node.textContent = block.replace(/^(?:`{3,}|~{3,})[^\n]*\n?/, '')
+        .replace(new RegExp('\\n?' + fence[0] + '{' + fence.length + ',}\\s*$'), '');
       target.append(node);
       continue;
     }
     const node = document.createElement(level ? 'h' + level[1].length : 'p');
-    node.textContent = level ? block.slice(level[0].length) : block;
+    node.textContent = level ? heading : block;
     if (block.trim() === '＊') node.className = 'scene-break';
     target.append(node);
   }
