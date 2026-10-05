@@ -1,6 +1,10 @@
 import type { Doc } from "./_generated/dataModel";
 import { ConvexError } from "convex/values";
-import { fingerprint, validateProvenance } from "./contentSafety";
+import {
+  fingerprint,
+  validateProvenance,
+  episodeProvenance,
+} from "./contentSafety";
 import {
   digest,
   fail,
@@ -124,6 +128,12 @@ export async function inspectSource(
       path: file,
       contentHash,
       title: text(ep.title, 200, "TITLE"),
+      ...(ep.influences === undefined
+        ? {}
+        : {
+            influences: episodeProvenance(branch.provenance!, ep.influences)
+              .influences!,
+          }),
       parent,
       ...(ep.sourceRef === undefined
         ? {}

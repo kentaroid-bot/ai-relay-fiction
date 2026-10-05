@@ -51,7 +51,11 @@ async function visible(ctx: QueryCtx | MutationCtx, ref: Ref) {
         contentReview: await publicReview(ctx, branch, ep),
         // Use the declaration bound to this reviewed edition, never a newer
         // branch submission or the auditor's comparison candidates.
-        influences: (ep.provenance?.influences ?? []).map((influence) => ({
+        influences: (
+          ep.influenceCorrection?.influences ??
+          ep.provenance?.influences ??
+          []
+        ).map((influence) => ({
           title: influence.title,
           ...(influence.author ? { author: influence.author } : {}),
           ...(influence.publishedYear !== undefined

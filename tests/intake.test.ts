@@ -616,6 +616,267 @@ it("accepts one submission, runs server reading, preserves influences and publis
   const catalog = await t.query(internal.desk.publicBranches, {});
   expect(JSON.stringify(catalog)).toContain("river-branch");
 });
+it("binds each episode's influences to its review target and publishes only that episode's declarations", async () => {
+  const influences = [
+    { title: "Another classic", relationship: "A direct dialogue" },
+  ];
+  const { t } = await fresh({
+    episodes: [
+      {
+        episodeId: "ep-002",
+        title: "Bridge",
+        path: "manuscript/02.md",
+        contentHash: await digest(prose),
+        influences,
+      },
+      {
+        episodeId: "ep-003",
+        title: "After",
+        path: "manuscript/03.md",
+        contentHash: await digest(prose),
+        influences: [],
+      },
+    ],
+  });
+  const c = await submit(t);
+  await drain(t);
+  const pending = await get(t, c.intakeId);
+  expect(pending.status).toBe("reviewing");
+  const first = pending.evidence.find((e) => e.target?.episodeId === "ep-002")!;
+  const second = pending.evidence.find(
+    (e) => e.target?.episodeId === "ep-003",
+  )!;
+  expect(first.provenance?.influences).toEqual(influences);
+  expect(second.provenance?.influences).toEqual([]);
+  expect(first.target?.provenanceHash).not.toBe(second.target?.provenanceHash);
+  expect(first.provenance?.statedSources).toEqual(provenance.statedSources);
+  const missingEpisodeInfluence = await review(t, c.intakeId);
+  expect(missingEpisodeInfluence.data.error).toBe(
+    "DECLARED_INFLUENCE_NOT_CHECKED",
+  );
+  const result = await review(t, c.intakeId, {
+    reviews: pending.evidence.map((e) => ({
+      target: e.target,
+      review: {
+        ...goodReview(),
+        candidates: (e.provenance?.influences ?? []).map((i) => ({
+          ...goodReview().candidates[0],
+          title: i.title,
+        })),
+      },
+    })),
+  });
+  expect(result.status, JSON.stringify(result.data)).toBe(200);
+  expect(result.data.status).toBe("published");
+});
+
+it("rejects malformed episode influences instead of silently using the branch declaration", async () => {
+  const { t } = await fresh({
+    episodes: [
+      {
+        episodeId: "ep-002",
+        title: "Bridge",
+        path: "manuscript/02.md",
+        contentHash: await digest(prose),
+        influences: [{ title: "Missing relationship" }],
+      },
+    ],
+  });
+  const c = await submit(t);
+  await drain(t);
+  expect((await get(t, c.intakeId)).status).not.toBe("published");
+  expect(
+    await t.run((ctx) =>
+      ctx.db
+        .query("episodes")
+        .withIndex("branchRevision", (q) =>
+          q.eq("branchId", "river-branch").eq("revision", commit),
+        )
+        .collect(),
+    ),
+  ).toHaveLength(0);
+});
+
+async function legacyInfluenceFixture() {
+  const influences = [
+    {
+      title: "Episode classic",
+      relationship: "Original fixed episode declaration",
+    },
+  ];
+  const fixture = await fresh({
+    episodes: [
+      {
+        episodeId: "ep-002",
+        title: "Bridge",
+        path: "manuscript/02.md",
+        contentHash: await digest(prose),
+        influences,
+      },
+    ],
+  });
+  const { t, manifest } = fixture;
+  const seeded = await seedCheckedBranch(t, manifest);
+  await t.run(async (ctx) => {
+    await ctx.db.patch(seeded.branchId, { status: "verified" });
+    const branch = (await ctx.db.get(seeded.branchId))!;
+    const ep = (await ctx.db
+      .query("episodes")
+      .withIndex("branchRevision", (q) =>
+        q.eq("branchId", manifest.branchId).eq("revision", commit),
+      )
+      .unique())!;
+    await ctx.db.patch(ep._id, { listed: true });
+    const auditor = (await ctx.db
+      .query("agents")
+      .filter((q) => q.eq(q.field("role"), "auditor"))
+      .first())!;
+    const target = episodeTarget(branch, ep)!;
+    await ctx.db.insert("contentReviews", {
+      target,
+      targetHash: await fingerprint(target),
+      review: goodReview(),
+      reviewer: auditor._id,
+      checkedAt: Date.now(),
+    });
+    await ctx.db.insert("mains", {
+      mainId: "test-tree",
+      title: "Tree",
+      owner: branch.owner,
+      lineageId: branch.lineageId,
+      head: {
+        branchId: ep.branchId,
+        episodeId: ep.episodeId,
+        revision: commit,
+      },
+      count: 1,
+      version: 1,
+    });
+    await ctx.db.insert("mainSteps", {
+      mainId: "test-tree",
+      position: 0,
+      episode: {
+        branchId: ep.branchId,
+        episodeId: ep.episodeId,
+        revision: commit,
+      },
+      selectedAt: 1,
+    });
+  });
+  return {
+    ...fixture,
+    influences,
+    args: {
+      branchId: manifest.branchId,
+      revision: commit,
+      manifestHash: await digest(JSON.stringify(manifest)),
+    },
+  };
+}
+it("repairs the fixed-source import with a dry run, preserving reviews and provenance, and retries without duplicate writes", async () => {
+  const { t, args, influences } = await legacyInfluenceFixture();
+  const beforeReviews = await t.run((ctx) =>
+    ctx.db.query("contentReviews").collect(),
+  );
+  const before = await t.query(internal.forest.publicMain, { id: "test-tree" });
+  expect(before.page[0].episode?.influences).toEqual(provenance.influences);
+  const dry: any = await t.action(
+    internal.influenceRepair.fromFixedManifest,
+    args,
+  );
+  expect(dry.episodes[0]).toMatchObject({
+    before: provenance.influences,
+    after: influences,
+    status: "correction_required",
+  });
+  expect(
+    (await t.query(internal.forest.publicMain, { id: "test-tree" })).page[0]
+      .episode?.influences,
+  ).toEqual(provenance.influences);
+  await t.action(internal.influenceRepair.fromFixedManifest, {
+    ...args,
+    dryRun: false,
+  });
+  const after = await t.query(internal.forest.publicMain, { id: "test-tree" });
+  expect(after.page[0].episode?.influences).toEqual(influences);
+  expect(after.page[0].episode?.contentReview).toEqual(
+    before.page[0].episode?.contentReview,
+  );
+  expect(
+    await t.run((ctx) => ctx.db.query("contentReviews").collect()),
+  ).toEqual(beforeReviews);
+  const snapshot = await t.query(internal.influenceRepair.source, {
+    branchId: args.branchId,
+    revision: commit,
+  });
+  expect(snapshot.episodes[0].provenance).toEqual(provenance);
+  const retry: any = await t.action(
+    internal.influenceRepair.fromFixedManifest,
+    { ...args, dryRun: false },
+  );
+  expect(retry.episodes[0].status).toBe("already_corrected");
+  expect(
+    await t.query(internal.influenceRepair.source, {
+      branchId: args.branchId,
+      revision: commit,
+    }),
+  ).toEqual(snapshot);
+  await t.run((ctx) =>
+    ctx.db.patch(snapshot.branch._id, { status: "checked" }),
+  );
+  const adopted = await adopt(t, "editor");
+  expect(adopted.status, JSON.stringify(adopted.data)).toBe(202);
+  expect(
+    (await get(t, adopted.data.intakeId)).evidence[0].influenceCorrection
+      ?.influences,
+  ).toEqual(influences);
+});
+it.each([
+  "manifest-hash",
+  "manuscript-hash",
+  "unlisted",
+  "withdrawn",
+  "unreviewed",
+  "provenance-mismatch",
+])("refuses influence import repair with %s", async (kind) => {
+  const { t, args, fetcher } = await legacyInfluenceFixture();
+  if (kind === "manifest-hash") args.manifestHash = "0".repeat(64);
+  if (kind === "manuscript-hash") {
+    const implementation = fetcher.getMockImplementation()!;
+    fetcher.mockImplementation((url, init) =>
+      String(url).endsWith("relay-branch.json")
+        ? implementation(url, init)
+        : Promise.resolve(new Response("changed text")),
+    );
+  }
+  await t.run(async (ctx) => {
+    const ep = (await ctx.db
+      .query("episodes")
+      .withIndex("branchRevision", (q) =>
+        q.eq("branchId", args.branchId).eq("revision", commit),
+      )
+      .unique())!;
+    if (kind === "unlisted") await ctx.db.patch(ep._id, { listed: false });
+    if (kind === "withdrawn") await ctx.db.patch(ep._id, { withdrawnAt: 1 });
+    if (kind === "provenance-mismatch")
+      await ctx.db.patch(ep._id, { provenanceHash: "0".repeat(64) });
+    if (kind === "unreviewed")
+      for (const review of await ctx.db.query("contentReviews").collect())
+        if (review.target.branchId === args.branchId)
+          await ctx.db.delete(review._id);
+  });
+  await expect(
+    t.action(internal.influenceRepair.fromFixedManifest, {
+      ...args,
+      dryRun: false,
+    }),
+  ).rejects.toThrow();
+  const snapshot = await t.query(internal.influenceRepair.source, {
+    branchId: args.branchId,
+    revision: commit,
+  });
+  expect(snapshot.episodes[0].influenceCorrection).toBeUndefined();
+});
 it("does not duplicate cases or work when the same edition is submitted again", async () => {
   const { t } = await fresh();
   const one = await submit(t);

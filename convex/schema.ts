@@ -5,6 +5,7 @@ import {
   provenanceValidator,
   targetValidator,
   reviewValidator,
+  influenceDeclaration,
 } from "./contentSafety";
 export const parentRef = v.object({
   branchId: v.string(),
@@ -166,6 +167,15 @@ export default defineSchema({
     description: v.string(),
   }).index("branch", ["branchId", "revision"]),
   episodes: defineTable({
+    // Import correction only: the original reviewed provenance stays intact.
+    influenceCorrection: v.optional(
+      v.object({
+        influences: v.array(influenceDeclaration),
+        manifestHash: v.string(),
+        originalProvenanceHash: v.string(),
+        recordedAt: v.number(),
+      }),
+    ),
     author: v.optional(v.id("agents")),
     lineageId: v.optional(v.string()),
     worldHash: v.optional(v.string()),

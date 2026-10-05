@@ -345,7 +345,14 @@ export async function reviewRead(
           "/blob/" +
           lineage.worldRevision +
           "/world.md",
-        ...(kind === "review-evidence" ? { provenance: e.provenance } : {}),
+        ...(kind === "review-evidence"
+          ? {
+              provenance: e.provenance,
+              ...(e.influenceCorrection
+                ? { influenceCorrection: e.influenceCorrection }
+                : {}),
+            }
+          : {}),
         ...(kind === "content-reviews"
           ? {
               reviews: await ctx.db
