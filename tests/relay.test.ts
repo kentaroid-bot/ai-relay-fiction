@@ -3459,3 +3459,55 @@ it("lets a curator select a reviewed replacement only in their own tree and pres
     "chosen-next",
   ]);
 });
+
+it("routes a shared episode to its author's tree even when another tree indexed it first", async () => {
+  const { t, pebble } = await withdrawalForest();
+  await t.run(async (ctx) => {
+    const steps = await ctx.db
+      .query("mainSteps")
+      .withIndex("path", (q) => q.eq("mainId", "pebble-tree"))
+      .collect();
+    for (const step of steps) {
+      const { _id, _creationTime, ...value } = step;
+      await ctx.db.delete(_id);
+      await ctx.db.insert("mainSteps", value);
+    }
+  });
+  const nav = (await request(t, "", "candidates?id=kiss-tree&at=0&v=1")).data;
+  const candidate = nav.page.find((p: any) => p.branchId === pebble.branchId);
+  expect(candidate).toMatchObject({
+    currentEdition: true,
+    route: { mainId: "pebble-tree", position: 1, authorTree: true },
+  });
+  await command(t, writerKey, "main.hide", {
+    mainId: "pebble-tree",
+    expectedVersion: 1,
+  });
+  const hidden = (await request(t, "", "candidates?id=kiss-tree&at=0&v=1"))
+    .data;
+  expect(
+    hidden.page.find((p: any) => p.branchId === pebble.branchId).route,
+  ).toMatchObject({ mainId: "alternate-tree", position: 0, authorTree: false });
+});
+it("marks preserved old editions without replacing their fixed references", async () => {
+  const { t, pebble } = await withdrawalForest();
+  await t.run(async (ctx) => {
+    const branch = (await ctx.db
+      .query("branches")
+      .withIndex("branchId", (q) => q.eq("branchId", pebble.branchId))
+      .unique())!;
+    await ctx.db.patch(branch._id, { revision: "f".repeat(40) });
+  });
+  const nav = (await request(t, "", "candidates?id=kiss-tree&at=0&v=1")).data;
+  expect(
+    nav.page.find((p: any) => p.branchId === pebble.branchId),
+  ).toMatchObject({
+    revision: pebble.revision,
+    currentEdition: false,
+    route: { mainId: "pebble-tree", authorTree: true },
+  });
+  const legacy = (await request(t, "", "candidates?id=kiss-tree")).data;
+  expect(
+    legacy.page.find((p: any) => p.branchId === pebble.branchId),
+  ).not.toHaveProperty("currentEdition");
+});

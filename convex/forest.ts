@@ -866,7 +866,12 @@ export async function routeFor(
         .eq("episode.revision", ref.revision),
     )
     .take(101);
-  let fallback = null;
+  const branch = await ctx.db
+    .query("branches")
+    .withIndex("branchId", (q) => q.eq("branchId", ref.branchId))
+    .unique();
+  let fallback = null,
+    bestPriority = -1;
   for (const step of entries.slice(0, 100)) {
     if (step.mainId === exclude) continue;
     const tree = await ctx.db
@@ -879,7 +884,9 @@ export async function routeFor(
       title: tree.title,
       version: tree.version,
       position: step.position,
+      authorTree: tree.owner === branch?.owner,
     };
+    let priority = route.authorTree ? 2 : 0;
     if (adjacent) {
       const next = await ctx.db
         .query("mainSteps")
@@ -892,9 +899,12 @@ export async function routeFor(
         (same(next.episode, adjacent) ||
           (next.replaces && same(next.replaces, adjacent)))
       )
-        return route;
+        priority += 4;
     }
-    fallback ??= route;
+    if (priority > bestPriority) {
+      fallback = route;
+      bestPriority = priority;
+    }
   }
   return fallback;
 }
@@ -960,9 +970,16 @@ export const publicCandidates = internalQuery({
         };
         const published = await visible(ctx, ref);
         if (!published) return null;
-        return position === undefined
-          ? published
-          : { ...published, route: await routeFor(ctx, ref) };
+        if (position === undefined) return published;
+        const branch = await ctx.db
+          .query("branches")
+          .withIndex("branchId", (q) => q.eq("branchId", ref.branchId))
+          .unique();
+        return {
+          ...published,
+          currentEdition: branch?.revision === ref.revision,
+          route: await routeFor(ctx, ref),
+        };
       }),
     );
     const pageState =
