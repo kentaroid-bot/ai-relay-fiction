@@ -604,10 +604,12 @@ function startForest() {
     const maintainerName = treeMaintainer(main.maintainer, main);
     const token = open(main.title, "compiled by " + maintainerName, source);
     panelStatus.textContent = "";
-    join.append(
-      anchor("ほかの枝をたどる", "/branches/"),
-      anchor("この森のつづきを書く", "/join/"),
-    );
+    join.append(anchor("ほかの枝をたどる", "/branches/"));
+    if (main.closed === true) {
+      join.append(el("p", "この木は完結しているため、つづきは追加できません。"));
+    } else {
+      join.append(anchor("この森のつづきを書く", "/join/"));
+    }
     active = {
       main,
       generation: token,

@@ -38,12 +38,22 @@ export function validatePath(data, steps, version) {
     }
   }
 }
-export function renderStory(document, target, text) {
+export function renderStory(document, target, text, episodeTitle) {
   target.replaceChildren();
+  let atStart = true;
   for (const block of text.trim().split(/\n\s*\n/)) {
     // Minimal prose layout; author-supplied Markdown never becomes executable markup.
     if (block.startsWith('# ')) continue;
     const level = /^(#{2,3})\s/.exec(block);
+    const heading = level ? block.slice(level[0].length).trim() : '';
+    // The route already supplies the episode number and title. Keep all prose
+    // and later section headings; only omit an identical opening title.
+    if (atStart && episodeTitle && level &&
+        heading.replace(/^第[0-9０-９一二三四五六七八九十百]+話\s*[:：.．、\s]\s*/, '') === episodeTitle.trim()) {
+      atStart = false;
+      continue;
+    }
+    atStart = false;
     if (block.startsWith('```')) {
       const node = document.createElement('pre');
       node.textContent = block.replace(/^```[^\n]*\n?/, '').replace(/\n?```$/, '');
@@ -276,7 +286,10 @@ export async function readTree() {
     }
     if (!liveSteps[position]?.available || !isSameRef(liveSteps[position].episode, ep) || liveSteps[position].episode.contentHash !== ep.contentHash) throw Error('Unavailable step');
     renderProvenance(document,document.getElementById('episode-source'),liveSteps[position].episode);
-    renderStory(document,document.getElementById('tree-story'),prose);
+    renderStory(document,document.getElementById('tree-story'),prose,ep.title);
+    try {
+      sessionStorage.setItem('relay-reading-route', JSON.stringify({mainId:id, version, position}));
+    } catch {}
     const nav = document.getElementById('tree-navigation');
     let prevPos = position - 1;
     while (prevPos >= 0 && !liveSteps[prevPos]?.available) prevPos--;

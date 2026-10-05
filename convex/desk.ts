@@ -23,7 +23,12 @@ import {
   gateValidator,
   licenseValidator,
 } from "./safety";
-import { forestCommand, validateFromMain, applyDeclaredMain } from "./forest";
+import {
+  forestCommand,
+  validateFromMain,
+  applyDeclaredMain,
+  routeFor,
+} from "./forest";
 import { parentRef } from "./schema";
 import { checkSource, awardAcorn, preserveListedEdition } from "./provenance";
 import { canReadListedBranch, isListedEpisode } from "./visibility";
@@ -1380,19 +1385,21 @@ export const publicBranches = internalQuery({
             q.eq("branchId", b.branchId).eq("revision", published.revision),
           )
           .collect();
-        if (
-          !(
-            await Promise.all(
-              episodes.map((ep) => isListedEpisode(ctx, published, ep)),
-            )
-          ).some(Boolean)
-        )
-          return null;
+        const listed = await Promise.all(
+          episodes.map((ep) => isListedEpisode(ctx, published, ep)),
+        );
+        const first = episodes.find((_, i) => listed[i]);
+        if (!first) return null;
         return {
           branchId: b.branchId,
           title: published.title,
           repository: b.repository,
           readingUrl: published.readingUrl,
+          route: await routeFor(ctx, {
+            branchId: first.branchId,
+            episodeId: first.episodeId,
+            revision: first.revision,
+          }),
           parent: published.parent,
           revision: published.revision,
           checkedAt: published.checkedAt,

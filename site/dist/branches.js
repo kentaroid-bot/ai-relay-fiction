@@ -1,3 +1,13 @@
+// A reading link uses a server-confirmed visible tree and exact position.
+function branchReaderLink(label, route) {
+  if (!route || !/^[a-z0-9][a-z0-9-]+$/.test(route.mainId) ||
+      !Number.isSafeInteger(route.version) || route.version < 1 ||
+      !Number.isSafeInteger(route.position) || route.position < 0 || route.position >= 1000)
+    throw Error('Invalid reading route');
+  const a = document.createElement('a'); a.textContent = label;
+  a.href = '/read/main/?id=' + encodeURIComponent(route.mainId) + '&v=' + route.version + '&at=' + route.position;
+  return a;
+}
 (() => {
   const container = document.getElementById('live-branches');
   if (!container) return;
@@ -31,8 +41,8 @@
           const p=element('p', '分岐した流れ：');const a=element('a', branch.fromMain.mainId + ' の ' + (branch.fromMain.position+1) + ' 話目');a.href='#main-'+encodeURIComponent(branch.fromMain.mainId);p.append(a);section.append(p);
         }
         const reading = element('p', '');
-        if (branch.branchId === 'origin') { const first = element('a', '第1話を読む'); first.href = '../read/ep-001/'; reading.append(first); }
-        else reading.append(link('この枝を読む', branch.readingUrl));
+        if (branch.route) reading.append(branchReaderLink('この枝を読む', branch.route));
+        else reading.append(link('公開元の本文', branch.readingUrl));
         reading.append(document.createTextNode(' / '), link('リポジトリ', branch.repository));
         section.append(reading);
         if (branch.checkedAt) section.append(element('p', '最終確認：' + new Date(branch.checkedAt).toLocaleDateString('ja-JP')));
@@ -85,7 +95,7 @@
             if(!loaded) { path.replaceChildren(); loaded=true; }
             for(const step of page.page) {
               const li=el('li',''); li.value=step.position+1;
-              if(step.available && step.episode) {const e=step.episode;li.append(safeLink(e.title,e.readingUrl),document.createTextNode(' — '+e.branchId+' / '+e.episodeId));}
+              if(step.available && step.episode) {const e=step.episode;li.append(branchReaderLink(e.title,{mainId:main.mainId,version:main.version,position:step.position}),document.createTextNode(' — '+e.branchId+' / '+e.episodeId));}
               else li.textContent='現在は案内を停止している話';
               path.append(li);
             }
@@ -101,7 +111,7 @@
           try {
             const page=await get('candidates?id='+encodeURIComponent(main.mainId)+(candidateCursor?'&cursor='+encodeURIComponent(candidateCursor):''));
             if(page.version!==main.version) throw Error('Path changed');
-            for(const e of page.page) {const li=el('li','');li.append(safeLink(e.title,e.readingUrl),document.createTextNode(' — '+e.branchId));candidates.append(li);candidateCount++;}
+            for(const e of page.page) {const li=el('li','');li.append(e.route ? branchReaderLink(e.title,e.route) : safeLink(e.title+'（公開元）',e.readingUrl),document.createTextNode(' — '+e.branchId));candidates.append(li);candidateCount++;}
             candidateCursor=page.continueCursor;pick.hidden=page.isDone===true;pick.textContent='ほかの続きを見る';
             candidateStatus.textContent=page.isDone && !candidateCount?'この先の枝は、まだ一覧にありません。':'どれを続きとして選ぶかは、それぞれの書き手と読者へ。';
           } catch {candidateStatus.textContent='読み込めませんでした。流れが変わった場合はページを更新してください。';}

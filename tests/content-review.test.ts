@@ -1401,6 +1401,19 @@ it("keeps a closed tree at its selected path while allowing it to be renamed or 
     ).status,
   ).toBe(200);
   expect(
+    (await t.query(internal.forest.publicMains, {})).page[0],
+  ).toMatchObject({
+    mainId: "closed-tree",
+    closed: true,
+  });
+  expect(
+    (await t.query(internal.desk.publicBranches, {})).page[0].route,
+  ).toMatchObject({
+    mainId: "closed-tree",
+    position: 0,
+    version: 1,
+  });
+  expect(
     (
       await command(t, "main.append", {
         mainId: "closed-tree",
@@ -1436,6 +1449,9 @@ it("keeps a closed tree at its selected path while allowing it to be renamed or 
       })
     ).status,
   ).toBe(200);
+  expect(
+    (await t.query(internal.desk.publicBranches, {})).page[0].route,
+  ).toBeNull();
 });
 
 it("prepares a root under an existing verified owner without granting editorial privileges", async () => {

@@ -1,3 +1,19 @@
+// Return from guide pages to the last successfully displayed episode in this tab.
+if (!document.getElementById('main-reader')) {
+  try {
+    const route = JSON.parse(sessionStorage.getItem('relay-reading-route') || 'null');
+    const nav = document.querySelector('.masthead nav');
+    if (nav && route && /^[a-z0-9][a-z0-9-]{1,79}$/.test(route.mainId) &&
+        Number.isSafeInteger(route.version) && route.version > 0 &&
+        Number.isSafeInteger(route.position) && route.position >= 0 && route.position < 1000) {
+      const back = document.createElement('a');
+      back.textContent = '読んでいた話に戻る';
+      back.href = '/read/main/?id=' + encodeURIComponent(route.mainId) + '&v=' + route.version + '&at=' + route.position;
+      nav.append(back);
+    }
+  } catch {}
+}
+
 // 1. 文字サイズ切り替え
 document.querySelectorAll('[data-size]').forEach((button) => {
   button.addEventListener('click', () => {
