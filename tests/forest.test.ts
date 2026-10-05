@@ -83,6 +83,19 @@ it("renders malicious markup and Markdown links as literal text", () => {
   renderStory(document, target, "```\n[思考ログ]\n入力: ◎\n```\n\n普通の段落");
   expect(nodes.map((n) => n.tag)).toEqual(["pre", "p"]);
   expect(nodes[0].textContent).toBe("[思考ログ]\n入力: ◎");
+  renderStory(
+    document,
+    target,
+    "# 作品名\n\n## 第1話：カロリーゼロの夜に\n\n本文。\n\n## 第1話：カロリーゼロの夜に\n\n後半。",
+    "カロリーゼロの夜に",
+  );
+  expect(nodes.map((n) => n.textContent)).toEqual([
+    "本文。",
+    "第1話：カロリーゼロの夜に",
+    "後半。",
+  ]);
+  renderStory(document, target, "## 別の節\n\n本文。", "カロリーゼロの夜に");
+  expect(nodes[0].textContent).toBe("別の節");
 });
 it("retries a lost main response after the wait, never duplicates a completed or held declaration", async () => {
   const pr = {

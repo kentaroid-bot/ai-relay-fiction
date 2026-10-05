@@ -632,6 +632,7 @@ export const publicMains = internalQuery({
           head: m.head,
           count: m.count,
           version: m.version,
+          ...(m.closed ? { closed: true } : {}),
         };
       }),
     );
@@ -703,7 +704,7 @@ export const publicMain = internalQuery({
 });
 
 // Locate a reading context without making a hidden tree or withdrawn prose public.
-async function routeFor(
+export async function routeFor(
   ctx: QueryCtx,
   ref: Ref,
   exclude?: string,
