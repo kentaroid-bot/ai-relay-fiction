@@ -15,16 +15,24 @@ import {
   setBranchPublication,
 } from "./desk";
 import { contentCommand } from "./contentCommands";
-import { fingerprint, reviewValidator, targetValidator } from "./contentSafety";
+import {
+  fingerprint,
+  reviewValidator,
+  targetValidator,
+  validateProvenance,
+} from "./contentSafety";
 import {
   currentReview,
   episodeTarget,
   requireLineage,
   getLineage,
+  isLineageRoot,
+  requireContinuation,
 } from "./lineage";
-import { applyDeclaredMain } from "./forest";
+import { applyDeclaredMain, applyLegacyDeclaredMain } from "./forest";
+import { canReadListedBranch } from "./visibility";
 import { fail, text, revision, repo } from "./policy";
-import { gateValidator } from "./safety";
+import { gateValidator, workLicense } from "./safety";
 import { parentRef } from "./schema";
 
 const ACTIVE_WORK = ["checking", "reading"];
@@ -134,6 +142,188 @@ async function saveReceipt(
     result,
   });
   return result;
+}
+
+function sameRef(a: any, b: any) {
+  if (a === null || a === undefined || b === null || b === undefined)
+    return (a === null || a === undefined) && (b === null || b === undefined);
+  return (
+    a.branchId === b.branchId &&
+    a.episodeId === b.episodeId &&
+    a.revision === b.revision
+  );
+}
+
+async function requireAdoptableBranch(
+  ctx: Ctx,
+  branch: Doc<"branches">,
+  revisionValue: string,
+  expectedVersion: number,
+) {
+  if (branch.revision !== revisionValue) fail("INTAKE_SUPERSEDED");
+  if (branch.version !== expectedVersion) fail("VERSION_CONFLICT");
+  if (
+    branch.status !== "checked" ||
+    branch.checkedAt === null ||
+    branch.checkedAt === undefined ||
+    !branch.gate ||
+    branch.gate.source !== "fixed_source_hash_checked" ||
+    branch.gate.terms !== "cc0_declared"
+  )
+    fail("BRANCH_NOT_CHECKED");
+
+  const owner = await ctx.db.get(branch.owner);
+  if (
+    !owner ||
+    owner.status !== "active" ||
+    owner.repository !== branch.repository ||
+    repo(branch.repository) !== branch.repository
+  )
+    fail("FORBIDDEN");
+
+  const license = workLicense(branch.license);
+  const lineage = await requireLineage(ctx, branch.lineageId);
+  if (!(await canReadListedBranch(ctx, branch)))
+    fail("BRANCH_LISTING_SUSPENDED");
+  if (!branch.worldHash || branch.worldHash !== lineage.worldHash)
+    fail("WORLD_HASH_MISMATCH");
+  if (await isLineageRoot(ctx, branch)) fail("ROOT_BRANCH_NOT_ADOPTABLE");
+  await requireContinuation(ctx, branch.parent, branch);
+  if (
+    !branch.provenance ||
+    !branch.provenanceHash ||
+    (await fingerprint(validateProvenance(branch.provenance))) !==
+      branch.provenanceHash
+  )
+    fail("PROVENANCE_REQUIRED");
+  return { owner, license, lineage };
+}
+
+async function requireManifestMatchesCheckedBranch(
+  ctx: Ctx,
+  branch: Doc<"branches">,
+  source: any,
+  license: ReturnType<typeof workLicense>,
+) {
+  const manifest = source?.manifest;
+  if (
+    !manifest ||
+    typeof manifest !== "object" ||
+    Array.isArray(manifest) ||
+    manifest.schemaVersion !== 1 ||
+    manifest.branchId !== branch.branchId ||
+    repo(manifest.repository) !== branch.repository ||
+    manifest.title !== branch.title ||
+    manifest.lineageId !== branch.lineageId ||
+    !sameRef(manifest.parent, branch.parent) ||
+    manifest.license !== license.id ||
+    manifest.termsVersion !== license.termsVersion ||
+    (await fingerprint(validateProvenance(manifest.provenance))) !==
+      branch.provenanceHash
+  )
+    fail("MANIFEST_MISMATCH");
+
+  const episodes = source.episodes;
+  const characters = source.characters;
+  if (
+    !Array.isArray(manifest.episodes) ||
+    manifest.episodes.length < 1 ||
+    manifest.episodes.length > 20 ||
+    !Array.isArray(episodes) ||
+    episodes.length !== manifest.episodes.length ||
+    !Array.isArray(characters)
+  )
+    fail("MANIFEST_MISMATCH");
+
+  const storedEpisodes = await ctx.db
+    .query("episodes")
+    .withIndex("branchRevision", (q) =>
+      q.eq("branchId", branch.branchId).eq("revision", branch.revision),
+    )
+    .collect();
+  if (storedEpisodes.length !== episodes.length) fail("MANIFEST_MISMATCH");
+  const byEpisodeId = new Map(storedEpisodes.map((ep) => [ep.episodeId, ep]));
+  for (const ep of episodes) {
+    const old = byEpisodeId.get(ep.episodeId);
+    if (
+      !old ||
+      old.path !== ep.path ||
+      old.contentHash !== ep.contentHash ||
+      old.title !== ep.title ||
+      old.lineageId !== branch.lineageId ||
+      old.worldHash !== branch.worldHash ||
+      old.provenanceHash !== branch.provenanceHash ||
+      old.author !== branch.owner ||
+      old.license?.id !== license.id ||
+      old.license?.termsVersion !== license.termsVersion ||
+      old.license?.humanApproved !== true ||
+      !sameRef(old.parent, ep.parent) ||
+      !sameRef(old.sourceRef, ep.sourceRef)
+    )
+      fail("MANIFEST_MISMATCH");
+  }
+
+  const storedCharacters = await ctx.db
+    .query("characters")
+    .withIndex("branch", (q) =>
+      q.eq("branchId", branch.branchId).eq("revision", branch.revision),
+    )
+    .collect();
+  if (storedCharacters.length !== characters.length) fail("MANIFEST_MISMATCH");
+  const byCharacterId = new Map(
+    storedCharacters.map((character) => [character.characterId, character]),
+  );
+  for (const character of characters) {
+    const old = byCharacterId.get(character.characterId);
+    if (
+      !old ||
+      old.name !== character.name ||
+      old.description !== character.description ||
+      !sameRef(old.origin, character.origin)
+    )
+      fail("MANIFEST_MISMATCH");
+  }
+
+  if (
+    !source.gate ||
+    (await fingerprint(source.gate)) !== (await fingerprint(branch.gate))
+  )
+    fail("CHECK_REQUIRED");
+  return manifest;
+}
+
+async function legacyMainVersion(
+  ctx: MutationCtx,
+  branch: Doc<"branches">,
+  manifest: any,
+) {
+  const declaration = manifest.main;
+  if (
+    !declaration ||
+    typeof declaration !== "object" ||
+    Array.isArray(declaration)
+  )
+    return undefined;
+  const explicit = declaration.expectedVersion;
+  if (Number.isSafeInteger(explicit) && explicit >= 0)
+    return explicit as number;
+  if (explicit !== undefined || typeof declaration.mainId !== "string")
+    return undefined;
+  const main = await ctx.db
+    .query("mains")
+    .withIndex("mainId", (q) => q.eq("mainId", declaration.mainId))
+    .unique();
+  if (!main) return 0;
+  if (
+    main.owner !== branch.owner ||
+    main.hiddenAt !== undefined ||
+    main.closed ||
+    main.lineageId !== branch.lineageId ||
+    typeof declaration.title !== "string" ||
+    main.title !== declaration.title
+  )
+    return undefined;
+  return main.version;
 }
 export const submitContext = internalMutation({
   args: { hash: v.string() },
@@ -252,6 +442,151 @@ export const submit = internalMutation({
     });
   },
 });
+
+// This editor-only bridge creates a new v2 case from an already checked v1
+// branch. It deliberately skips the general INTAKE_OPEN gate and leaves the
+// checked branch and its version untouched.
+export const adoptContext = internalQuery({
+  args: {
+    hash: v.string(),
+    branchId: v.string(),
+    revision: v.string(),
+    expectedVersion: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const { agent } = await identity(ctx, args.hash);
+    if (agent.role !== "editor") fail("FORBIDDEN");
+    const branchId = text(args.branchId, 80, "BRANCH_ID");
+    const commit = revision(args.revision);
+    if (!Number.isSafeInteger(args.expectedVersion) || args.expectedVersion < 1)
+      fail("INVALID_VERSION");
+    const existing = await ctx.db
+      .query("intakes")
+      .withIndex("edition", (q) =>
+        q.eq("branchId", branchId).eq("revision", commit),
+      )
+      .unique();
+    if (existing) return { existing: true as const };
+
+    const branch = await ctx.db
+      .query("branches")
+      .withIndex("branchId", (q) => q.eq("branchId", branchId))
+      .unique();
+    if (!branch) fail("BRANCH_NOT_FOUND");
+    await requireAdoptableBranch(ctx, branch, commit, args.expectedVersion);
+    return {
+      existing: false as const,
+      branch: { ...branch, isLineageRoot: await isLineageRoot(ctx, branch) },
+    };
+  },
+});
+
+export const adoptLegacy = internalMutation({
+  args: {
+    hash: v.string(),
+    requestId: v.string(),
+    branchId: v.string(),
+    revision: v.string(),
+    expectedVersion: v.number(),
+    source: v.optional(v.any()),
+  },
+  handler: async (ctx, args) => {
+    const { agent } = await identity(ctx, args.hash);
+    if (agent.role !== "editor") fail("FORBIDDEN");
+    const branchId = text(args.branchId, 80, "BRANCH_ID");
+    const commit = revision(args.revision);
+    if (!Number.isSafeInteger(args.expectedVersion) || args.expectedVersion < 1)
+      fail("INVALID_VERSION");
+    const actor = "intake-adopt:" + agent._id;
+    const { old, fp } = await receipt(ctx, actor, args.requestId, {
+      branchId,
+      revision: commit,
+      expectedVersion: args.expectedVersion,
+    });
+    if (old) return old.result;
+
+    const existing = await ctx.db
+      .query("intakes")
+      .withIndex("edition", (q) =>
+        q.eq("branchId", branchId).eq("revision", commit),
+      )
+      .unique();
+    if (existing)
+      return saveReceipt(ctx, actor, args.requestId, fp, {
+        intakeId: existing._id,
+        status: existing.status,
+        version: existing.version,
+      });
+
+    const branch = await ctx.db
+      .query("branches")
+      .withIndex("branchId", (q) => q.eq("branchId", branchId))
+      .unique();
+    if (!branch) fail("BRANCH_NOT_FOUND");
+    const { license } = await requireAdoptableBranch(
+      ctx,
+      branch,
+      commit,
+      args.expectedVersion,
+    );
+    if (!args.source) fail("SOURCE_REQUIRED");
+    const manifest = await requireManifestMatchesCheckedBranch(
+      ctx,
+      branch,
+      args.source,
+      license,
+    );
+
+    const cases = await ctx.db
+      .query("intakes")
+      .withIndex("branch", (q) => q.eq("branchId", branchId))
+      .order("desc")
+      .take(50);
+    for (const oldCase of cases.filter(
+      (c) => !["published", "rejected", "superseded"].includes(c.status),
+    ))
+      await transition(
+        ctx,
+        oldCase,
+        "superseded",
+        "旧受付済みの固定版を新受付へ引き継ぎました。この版の処理を終了します。",
+        { generation: oldCase.generation + 1 },
+      );
+
+    const mainVersion = await legacyMainVersion(ctx, branch, manifest);
+    const id = await ctx.db.insert("intakes", {
+      owner: branch.owner,
+      branchId,
+      revision: commit,
+      branchVersion: branch.version,
+      version: 1,
+      status: "reading",
+      manifest: JSON.stringify(manifest),
+      questions: [],
+      readings: [],
+      attempts: 0,
+      generation: 0,
+      leaseUntil: 0,
+      updatedAt: Date.now(),
+      ...(mainVersion !== undefined ? { legacyMainVersion: mainVersion } : {}),
+    });
+    await event(
+      ctx,
+      (await ctx.db.get(id))!,
+      "received",
+      "旧受付で固定版確認済みの作品を新受付へ引き継ぎました。読書と独立審査へ進みます。",
+    );
+    await ctx.scheduler.runAfter(0, internal.intakeWorker.process, {
+      intakeId: id,
+    });
+    return saveReceipt(ctx, actor, args.requestId, fp, {
+      intakeId: id,
+      status: "reading",
+      version: 1,
+    });
+  },
+});
+
 export const get = internalQuery({
   args: { hash: v.string(), intakeId: v.id("intakes") },
   handler: async (ctx, { hash, intakeId }) => {
@@ -966,6 +1301,13 @@ export const selectMain = internalMutation({
     const c = await ctx.db.get(intakeId);
     if (!c || c.status !== "published") fail("INVALID_TRANSITION");
     const b = await current(ctx, c);
-    await applyDeclaredMain(ctx, b, JSON.parse(c.manifest));
+    if (c.legacyMainVersion !== undefined)
+      await applyLegacyDeclaredMain(
+        ctx,
+        b,
+        JSON.parse(c.manifest),
+        c.legacyMainVersion,
+      );
+    else await applyDeclaredMain(ctx, b, JSON.parse(c.manifest));
   },
 });

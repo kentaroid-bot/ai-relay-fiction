@@ -397,6 +397,143 @@ export async function forestCommand(
 }
 // The HTTP action fetches this declaration from a proved PR at a fixed SHA.
 // The privileged caller cannot supply a chosen title, route or target episode.
+// An editor's legacy handoff keeps the author's selected route and may refresh
+// an unchanged, reviewed prefix to the new edition. Other trees keep their refs.
+export async function applyLegacyDeclaredMain(
+  ctx: MutationCtx,
+  branch: Doc<"branches">,
+  manifest: any,
+  expectedVersion: number,
+) {
+  if (manifest.main === undefined) return { outcome: "no_declaration" };
+  const declaration = manifest.main;
+  if (
+    !declaration ||
+    typeof declaration !== "object" ||
+    Array.isArray(declaration)
+  )
+    fail("INVALID_MAIN_DECLARATION");
+  const mainId = text(declaration.mainId, 80, "MAIN_ID");
+  text(declaration.title, 200, "TITLE");
+  if (!/^[a-z0-9][a-z0-9-]+$/.test(mainId)) fail("INVALID_MAIN_ID");
+  if (mainId === "monku-main") fail("RESERVED_MAIN_ID");
+  const main = await ctx.db
+    .query("mains")
+    .withIndex("mainId", (q) => q.eq("mainId", mainId))
+    .unique();
+  if (!main)
+    return applyDeclaredMain(ctx, branch, {
+      ...manifest,
+      main: { ...declaration, expectedVersion },
+    });
+  if (main.owner !== branch.owner) fail("FORBIDDEN");
+  if (main.hiddenAt !== undefined) fail("MAIN_HIDDEN");
+  if (main.closed) fail("MAIN_CLOSED");
+  await requireLineage(ctx, branch.lineageId);
+  if (main.lineageId !== branch.lineageId) fail("LINEAGE_MISMATCH");
+  if (main.title !== declaration.title) fail("MAIN_TITLE_MISMATCH");
+  const episodeId =
+    declaration.episodeId ??
+    (manifest.episodes?.length === 1
+      ? manifest.episodes[0].episodeId
+      : undefined);
+  const target = await parent(ctx, {
+    branchId: branch.branchId,
+    episodeId: text(episodeId, 80, "EPISODE_ID"),
+    revision: branch.revision,
+  });
+  const declared = manifest.episodes?.find(
+    (e: any) => e.episodeId === episodeId,
+  );
+  const targetEpisode = await episode(ctx, target);
+  if (
+    !declared ||
+    !targetEpisode ||
+    targetEpisode.contentHash !== declared.contentHash ||
+    targetEpisode.path !== declared.path
+  )
+    fail("MANIFEST_MISMATCH");
+  const selected = await ctx.db
+    .query("mainSteps")
+    .withIndex("path", (q) => q.eq("mainId", mainId))
+    .take(1001);
+  selected.sort((a, b) => a.position - b.position);
+  if (selected.some((s) => same(s.episode, target)))
+    return { mainId, version: main.version, outcome: "already_applied" };
+  if (
+    !Number.isSafeInteger(expectedVersion) ||
+    main.version !== expectedVersion
+  )
+    fail("VERSION_CONFLICT");
+  if (
+    selected.length !== main.count ||
+    selected.some((s, i) => s.position !== i) ||
+    !selected.length ||
+    !same(selected.at(-1)!.episode, main.head)
+  )
+    fail("MAIN_CONTINUITY_REQUIRED");
+  const path = await selectedPath(
+    ctx,
+    declaration.start ?? selected[0].episode,
+    target,
+  );
+  if (path.length < selected.length || path.length > 1000)
+    fail("MAIN_PATH_LIMIT");
+  // Check the whole prefix before writing. A changed manuscript or a replaced,
+  // withdrawn, or unrelated step requires an explicit new author decision.
+  for (const [i, step] of selected.entries()) {
+    const ref = path[i];
+    await parent(ctx, step.episode);
+    if (step.replaces) fail("MAIN_CONTINUITY_REQUIRED");
+    if (same(step.episode, ref)) continue;
+    const old = await episode(ctx, step.episode),
+      next = await episode(ctx, ref);
+    if (
+      step.replaces ||
+      step.episode.branchId !== branch.branchId ||
+      ref.branchId !== branch.branchId ||
+      step.episode.episodeId !== ref.episodeId ||
+      ref.revision !== branch.revision ||
+      !old ||
+      !next ||
+      old.contentHash !== next.contentHash ||
+      old.lineageId !== next.lineageId
+    )
+      fail("MAIN_CONTINUITY_REQUIRED");
+    if (old.sourceRef || next.sourceRef) {
+      if (!next.sourceRef || !same(old.sourceRef, next.sourceRef))
+        fail("MAIN_CONTINUITY_REQUIRED");
+    }
+    const parentsMatch =
+      (old.parent === null && next.parent === null) ||
+      (old.parent && next.parent && same(old.parent, next.parent)) ||
+      (i > 0 &&
+        old.parent &&
+        next.parent &&
+        same(old.parent, selected[i - 1].episode) &&
+        same(next.parent, path[i - 1]));
+    if (!parentsMatch) fail("MAIN_CONTINUITY_REQUIRED");
+  }
+  for (const [i, step] of selected.entries()) {
+    if (!same(step.episode, path[i]))
+      await ctx.db.patch(step._id, {
+        episode: path[i],
+        selectedAt: Date.now(),
+      });
+  }
+  for (let i = selected.length; i < path.length; i++)
+    await ctx.db.insert("mainSteps", {
+      mainId,
+      position: i,
+      episode: path[i],
+      selectedAt: Date.now(),
+    });
+  const version = main.version + 1;
+  await ctx.db.patch(main._id, { head: target, count: path.length, version });
+  await audit(ctx, branch.owner, "main.legacy-handoff", mainId, version);
+  return { mainId, version, outcome: "extended" };
+}
+
 export async function applyDeclaredMain(
   ctx: MutationCtx,
   branch: Doc<"branches">,

@@ -1,6 +1,5 @@
 import { webhook } from "./githubIntake";
-import { parseManifest } from "./sourceCheck";
-import { inspectSource } from "./sourceCheck";
+import { inspectSource, parseManifest } from "./sourceCheck";
 import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
 import { internal } from "./_generated/api";
@@ -189,6 +188,52 @@ const endpoint = httpAction(async (ctx, request) => {
       }
       if (request.method !== "POST") fail("NOT_FOUND");
       const data = await body(request);
+      if (url.pathname === "/v2/intakes/adopt") {
+        const branchId = text(data.branchId, 80, "BRANCH_ID");
+        const commit = revision(data.revision);
+        if (
+          !Number.isSafeInteger(data.expectedVersion) ||
+          data.expectedVersion < 1
+        )
+          fail("INVALID_VERSION");
+        const requestId = text(
+          request.headers.get("Idempotency-Key"),
+          80,
+          "REQUEST_ID",
+        );
+        const context = await ctx.runQuery(internal.intake.adoptContext, {
+          hash,
+          branchId,
+          revision: commit,
+          expectedVersion: data.expectedVersion,
+        });
+        let source;
+        if (!context.existing) {
+          const manifest = parseManifest(
+            await githubText(
+              context.branch.repository,
+              commit,
+              "relay-branch.json",
+              20000,
+            ),
+          );
+          source = {
+            manifest,
+            ...(await inspectSource(context.branch, manifest)),
+          };
+        }
+        return json(
+          await ctx.runMutation(internal.intake.adoptLegacy, {
+            hash,
+            requestId,
+            branchId,
+            revision: commit,
+            expectedVersion: data.expectedVersion,
+            ...(source ? { source } : {}),
+          }),
+          202,
+        );
+      }
       if (url.pathname === "/v2/intakes") {
         const owner = await ctx.runMutation(internal.intake.submitContext, {
           hash,

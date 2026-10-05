@@ -6,7 +6,8 @@ import { digest, TERMS } from "../convex/policy";
 import { WORK_TERMS } from "../convex/safety";
 import { currentReview, requireContentReview } from "../convex/lineage";
 import { isListedEpisode } from "../convex/visibility";
-import { applyDeclaredMain } from "../convex/forest";
+import { applyDeclaredMain, applyLegacyDeclaredMain } from "../convex/forest";
+import { episodeTarget } from "../convex/lineage";
 import {
   fingerprint,
   type ContentReview,
@@ -736,7 +737,8 @@ it("publishes only the reviewed edition's influences, without draft declarations
       })
     ).status,
   ).toBe(200);
-  const path = async (): Promise<any> => (await t.fetch("/v1/main?id=influence-tree")).json();
+  const path = async (): Promise<any> =>
+    (await t.fetch("/v1/main?id=influence-tree")).json();
   const first = await path();
   expect(first.page[0].episode.influences).toEqual(
     influencedProvenance.influences,
@@ -1683,3 +1685,143 @@ it("switches only the identified active lineage after the new root passes every 
     "active",
   );
 });
+
+for (const failure of [
+  "none",
+  "changed-text",
+  "version",
+  "hidden",
+  "closed",
+  "withdrawn",
+  "replaced",
+] as const) {
+  it(`legacy main handoff preserves fixed choices and rejects ${failure}`, async () => {
+    const t = await fresh();
+    await activate(t);
+    const oldRef = { branchId: "child", episodeId: "one", revision: commit };
+    const newRef = { ...oldRef, revision: nextCommit };
+    const head = { ...newRef, episodeId: "two" };
+    const root = { branchId: "origin", episodeId: "ep-001", revision: commit };
+    await t.run(async (ctx) => {
+      const origin = (await ctx.db.query("branches").first())!;
+      const { _id, _creationTime, ...base } = origin;
+      const id = await ctx.db.insert("branches", {
+        ...base,
+        branchId: "child",
+        parent: root,
+        revision: nextCommit,
+        title: "Child",
+      });
+      const b = (await ctx.db.get(id))!;
+      const auditor = (await ctx.db.query("agents").collect()).find(
+        (a) => a.role === "auditor",
+      )!;
+      for (const [ref, prev, hash] of [
+        [oldRef, root, "old"],
+        [newRef, root, failure === "changed-text" ? "changed" : "old"],
+        [head, newRef, "second"],
+      ] as const) {
+        const epId = await ctx.db.insert("episodes", {
+          ...ref,
+          parent: prev,
+          path: `manuscript/${ref.episodeId}.md`,
+          title: ref.episodeId,
+          contentHash: await digest(hash),
+          lineageId,
+          worldHash: origin.worldHash,
+          provenance,
+          provenanceHash: await fingerprint(provenance),
+          listed: true,
+          ...(failure === "withdrawn" && ref === oldRef
+            ? { lifecycle: "withdrawn" }
+            : {}),
+        });
+        const ep = (await ctx.db.get(epId))!;
+        const rt = episodeTarget(b, ep)!;
+        await ctx.db.insert("contentReviews", {
+          target: rt,
+          targetHash: await fingerprint(rt),
+          review: goodReview(),
+          reviewer: auditor._id,
+          checkedAt: Date.now(),
+        });
+      }
+      for (const mainId of ["child-tree", "other-tree"]) {
+        await ctx.db.insert("mains", {
+          mainId,
+          owner: b.owner,
+          lineageId,
+          title: "Child",
+          head: oldRef,
+          count: 2,
+          version: 1,
+          ...(mainId === "child-tree" && failure === "hidden"
+            ? { hiddenAt: 1 }
+            : {}),
+          ...(mainId === "child-tree" && failure === "closed"
+            ? { closed: true }
+            : {}),
+        });
+        for (const [position, ref] of [root, oldRef].entries())
+          await ctx.db.insert("mainSteps", {
+            mainId,
+            position,
+            episode: ref,
+            selectedAt: 1,
+            ...(failure === "replaced" &&
+            mainId === "child-tree" &&
+            position === 1
+              ? { replaces: oldRef }
+              : {}),
+          });
+      }
+    });
+    const run = () =>
+      t.run(async (ctx) => {
+        const b = (await ctx.db
+          .query("branches")
+          .withIndex("branchId", (q) => q.eq("branchId", "child"))
+          .unique())!;
+        return applyLegacyDeclaredMain(
+          ctx,
+          b,
+          {
+            main: {
+              mainId: "child-tree",
+              title: "Child",
+              start: root,
+              episodeId: "two",
+            },
+            episodes: [
+              {
+                episodeId: "two",
+                path: "manuscript/two.md",
+                contentHash: await digest("second"),
+              },
+            ],
+          },
+          failure === "version" ? 2 : 1,
+        );
+      });
+    if (failure === "none") {
+      expect((await run()).outcome).toBe("extended");
+      expect((await run()).outcome).toBe("already_applied");
+      const rows = await t.run((ctx) => ctx.db.query("mainSteps").collect());
+      expect(
+        rows.filter((s) => s.mainId === "child-tree").map((s) => s.episode),
+      ).toEqual([root, newRef, head]);
+      expect(
+        rows.filter((s) => s.mainId === "other-tree").map((s) => s.episode),
+      ).toEqual([root, oldRef]);
+    } else {
+      await expect(run()).rejects.toThrow();
+      const main = await t.run((ctx) =>
+        ctx.db
+          .query("mains")
+          .withIndex("mainId", (q) => q.eq("mainId", "child-tree"))
+          .unique(),
+      );
+      expect(main).toMatchObject({ count: 2, version: 1, head: oldRef });
+    }
+  });
+}
