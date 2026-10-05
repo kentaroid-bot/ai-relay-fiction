@@ -72,6 +72,7 @@ const writes = new Set([
   "main.rename",
   "main.hide",
   "main.replace",
+  "main.revise",
   "reading.note",
   "submission.linkBranch",
   "episode.withdraw",

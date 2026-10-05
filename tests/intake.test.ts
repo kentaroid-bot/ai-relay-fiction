@@ -1632,3 +1632,283 @@ it("rejects a withdrawn fixed parent rather than replacing it with a newer editi
     expect(await ctx.db.query("intakes").collect()).toHaveLength(0);
   });
 });
+
+async function mainRevisionFixture() {
+  const { t } = await fresh({
+    main: { mainId: "river-tree", title: "River tree" },
+  });
+  const received = await submit(t);
+  await drain(t);
+  expect((await review(t, received.intakeId)).status).toBe(200);
+  const refs = await t.run(async (ctx) => {
+    const b = (await ctx.db
+      .query("branches")
+      .withIndex("branchId", (q) => q.eq("branchId", "river-branch"))
+      .unique())!;
+    const old = (await ctx.db
+      .query("episodes")
+      .withIndex("branchRevision", (q) =>
+        q.eq("branchId", b.branchId).eq("revision", commit),
+      )
+      .unique())!;
+    const { _id, _creationTime, ...copy } = old;
+    const revisedId = await ctx.db.insert("episodes", {
+      ...copy,
+      revision: next,
+      contentHash: await digest("Corrected prose"),
+      listed: true,
+    });
+    await ctx.db.patch(b._id, { revision: next });
+    const revised = (await ctx.db.get(revisedId))!;
+    const auditor = (await ctx.db
+      .query("agents")
+      .filter((q) => q.eq(q.field("role"), "auditor"))
+      .first())!;
+    const target = episodeTarget(b, revised)!;
+    const reviewId = await ctx.db.insert("contentReviews", {
+      target,
+      targetHash: await fingerprint(target),
+      review: goodReview(),
+      reviewer: auditor._id,
+      checkedAt: Date.now(),
+    });
+    const main = (await ctx.db
+      .query("mains")
+      .withIndex("mainId", (q) => q.eq("mainId", "river-tree"))
+      .unique())!;
+    // A second tree must retain its old fixed reference.
+    const { _id: mi, _creationTime: mt, ...mainCopy } = main;
+    await ctx.db.insert("mains", { ...mainCopy, mainId: "other-tree" });
+    await ctx.db.insert("mainSteps", {
+      mainId: "other-tree",
+      position: 0,
+      episode: {
+        branchId: b.branchId,
+        episodeId: old.episodeId,
+        revision: commit,
+      },
+      selectedAt: Date.now(),
+    });
+    return {
+      branch: b._id,
+      old: old._id,
+      revised: revisedId,
+      review: reviewId,
+      main: main._id,
+    };
+  });
+  const body = {
+    mainId: "river-tree",
+    expectedVersion: 1,
+    position: 0,
+    previous: {
+      branchId: "river-branch",
+      episodeId: "ep-002",
+      revision: commit,
+    },
+    episode: { branchId: "river-branch", episodeId: "ep-002", revision: next },
+    reason: "Remove a production heading",
+  };
+  const command = async (
+    input = body,
+    role: keyof typeof keys = "writer",
+    requestId: string = crypto.randomUUID(),
+  ) => {
+    const response = await t.fetch("/v1/commands", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer " + keys[role],
+        "Content-Type": "application/json",
+        "Idempotency-Key": requestId,
+      },
+      body: JSON.stringify({ operation: "main.revise", input }),
+    });
+    return { status: response.status, data: (await response.json()) as any };
+  };
+  return { t, refs, body, command };
+}
+it("revises a reviewed own tail edition once, preserving original editions, reviews and other trees", async () => {
+  const { t, refs, body, command } = await mainRevisionFixture();
+  const before = await t.run(async (ctx) => ({
+    old: await ctx.db.get(refs.old),
+    reviews: await ctx.db.query("contentReviews").collect(),
+  }));
+  const result = await command(body, "writer", "correct-once");
+  expect(result.status, JSON.stringify(result.data)).toBe(200);
+  expect(result.data).toMatchObject({
+    mainId: "river-tree",
+    version: 2,
+    position: 0,
+    episode: body.episode,
+  });
+  expect(await command(body, "writer", "correct-once")).toEqual(result);
+  await t.run(async (ctx) => {
+    const main = (await ctx.db.get(refs.main))!;
+    expect(main).toMatchObject({
+      title: "River tree",
+      count: 1,
+      version: 2,
+      head: body.episode,
+    });
+    const step = (await ctx.db
+      .query("mainSteps")
+      .withIndex("path", (q) => q.eq("mainId", "river-tree"))
+      .unique())!;
+    expect(step.episode).toEqual(body.episode);
+    expect(step.replaces).toBeUndefined();
+    expect(step.editionHistory).toEqual([
+      {
+        episode: body.previous,
+        changedAt: expect.any(Number),
+        reason: body.reason,
+      },
+    ]);
+    const other = (await ctx.db
+      .query("mainSteps")
+      .withIndex("path", (q) => q.eq("mainId", "other-tree"))
+      .unique())!;
+    expect(other.episode).toEqual(body.previous);
+    expect(await ctx.db.get(refs.old)).toEqual(before.old);
+    expect(await ctx.db.query("contentReviews").collect()).toEqual(
+      before.reviews,
+    );
+  });
+});
+it.each(["stranger", "editor", "auditor"] as const)(
+  "rejects revision by %s without tree ownership",
+  async (role) => {
+    const { command, body } = await mainRevisionFixture();
+    expect((await command(body, role)).status).toBe(403);
+  },
+);
+it.each([
+  "unlisted",
+  "unreviewed",
+  "withdrawn",
+  "old-withdrawn",
+  "hidden",
+  "closed",
+  "foreign-branch",
+  "title",
+  "parent",
+  "not-current",
+  "non-tail",
+  "replaced",
+])("rejects unsafe correction: %s", async (condition) => {
+  const { t, refs, command } = await mainRevisionFixture();
+  await t.run(async (ctx) => {
+    if (condition === "unlisted")
+      await ctx.db.patch(refs.revised, { listed: false });
+    if (condition === "unreviewed") await ctx.db.delete(refs.review);
+    if (condition === "withdrawn")
+      await ctx.db.patch(refs.revised, { lifecycle: "withdrawn" });
+    if (condition === "old-withdrawn")
+      await ctx.db.patch(refs.old, { lifecycle: "withdrawn" });
+    if (condition === "hidden")
+      await ctx.db.patch(refs.main, { hiddenAt: Date.now() });
+    if (condition === "closed") await ctx.db.patch(refs.main, { closed: true });
+    if (condition === "foreign-branch") {
+      const stranger = (await ctx.db
+        .query("agents")
+        .filter((q) =>
+          q.eq(q.field("repository"), "https://github.com/stranger/story"),
+        )
+        .unique())!;
+      await ctx.db.patch(refs.branch, { owner: stranger._id });
+    }
+    if (condition === "title")
+      await ctx.db.patch(refs.revised, { title: "Changed title" });
+    if (condition === "parent")
+      await ctx.db.patch(refs.revised, { parent: null });
+    if (condition === "not-current")
+      await ctx.db.patch(refs.branch, { revision: commit });
+    if (condition === "non-tail") await ctx.db.patch(refs.main, { count: 2 });
+    if (condition === "replaced") {
+      const step = (await ctx.db
+        .query("mainSteps")
+        .withIndex("path", (q) => q.eq("mainId", "river-tree"))
+        .unique())!;
+      await ctx.db.patch(step._id, { replaces: step.episode });
+    }
+  });
+  const before = await t.run(async (ctx) => ({
+    main: await ctx.db.get(refs.main),
+    steps: await ctx.db.query("mainSteps").collect(),
+  }));
+  expect((await command()).status).not.toBe(200);
+  expect(
+    await t.run(async (ctx) => ({
+      main: await ctx.db.get(refs.main),
+      steps: await ctx.db.query("mainSteps").collect(),
+    })),
+  ).toEqual(before);
+});
+it("rejects stale version and wrong previous edition", async () => {
+  const { command, body } = await mainRevisionFixture();
+  expect((await command({ ...body, expectedVersion: 0 })).status).toBe(409);
+  expect(
+    (await command({ ...body, previous: { ...body.previous, revision: next } }))
+      .status,
+  ).not.toBe(200);
+});
+
+it("reconciles a corrected intake's failed main declaration after explicit revision", async () => {
+  const { t, manifest } = await fresh({
+    main: { mainId: "river-tree", title: "River tree" },
+  });
+  const first = await submit(t);
+  await drain(t);
+  expect((await review(t, first.intakeId)).status).toBe(200);
+  const version = (await get(t, first.intakeId)).branchVersion;
+  const corrected = "The river flowed quietly beneath a stone bridge.";
+  const revisedManifest = {
+    ...manifest,
+    episodes: [
+      { ...manifest.episodes[0], contentHash: await digest(corrected) },
+    ],
+  };
+  vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+    if (String(url) === "https://reader.example/read") {
+      const input = JSON.parse(init!.body as string);
+      return Response.json({
+        episode: input.episode,
+        policy: POLICY,
+        model: MODEL,
+        reading,
+      });
+    }
+    return new Response(
+      String(url).endsWith("relay-branch.json")
+        ? JSON.stringify(revisedManifest)
+        : corrected,
+    );
+  });
+  const second = await submit(t, next, version);
+  await drain(t);
+  expect((await review(t, second.intakeId)).status).toBe(200);
+  expect((await get(t, second.intakeId)).mainSelection?.status).toBe("failed");
+  const input = {
+    mainId: "river-tree",
+    expectedVersion: 1,
+    position: 0,
+    previous: {
+      branchId: "river-branch",
+      episodeId: "ep-002",
+      revision: commit,
+    },
+    episode: { branchId: "river-branch", episodeId: "ep-002", revision: next },
+    reason: "Author correction",
+  };
+  await t.mutation(internal.desk.command, {
+    hash: await digest(keys.writer),
+    operation: "main.revise",
+    body: input,
+    requestId: "correction",
+    fingerprint: await fingerprint(input),
+  });
+  await t.mutation(internal.intake.selectMain, { intakeId: second.intakeId });
+  expect((await get(t, second.intakeId)).mainSelection).toEqual({
+    status: "completed",
+  });
+  expect((await get(t, first.intakeId)).status).toBe("published");
+});

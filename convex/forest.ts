@@ -12,6 +12,7 @@ import { parent, audit } from "./desk";
 import { fail, text, repo } from "./policy";
 import { publicSource } from "./provenance";
 import { canReadListedBranch, isListedEpisode } from "./visibility";
+import { fingerprint } from "./contentSafety";
 
 type Ref = { branchId: string; episodeId: string; revision: string };
 const same = (a: Ref | null | undefined, b: Ref) =>
@@ -281,9 +282,13 @@ export async function forestCommand(
     return { mainId, version: 1, head };
   }
   if (
-    !["main.append", "main.rename", "main.hide", "main.replace"].includes(
-      operation,
-    )
+    ![
+      "main.append",
+      "main.rename",
+      "main.hide",
+      "main.replace",
+      "main.revise",
+    ].includes(operation)
   )
     fail("UNKNOWN_OPERATION");
   if (!main || main.owner !== agent._id) fail("FORBIDDEN");
@@ -300,8 +305,91 @@ export async function forestCommand(
     return { mainId, version: main.version + 1, hidden: true };
   }
   if (main.hiddenAt !== undefined) fail("MAIN_HIDDEN");
-  if (main.closed && ["main.append", "main.replace"].includes(operation))
+  if (
+    main.closed &&
+    ["main.append", "main.replace", "main.revise"].includes(operation)
+  )
     fail("MAIN_CLOSED");
+  if (operation === "main.revise") {
+    // Only an author's own last step can change edition. Descendants and other
+    // trees keep their original fixed references; this is not withdrawal repair.
+    if (
+      !Number.isSafeInteger(body.position) ||
+      body.position !== main.count - 1
+    )
+      fail("MAIN_REVISION_TAIL_REQUIRED");
+    const step = await ctx.db
+      .query("mainSteps")
+      .withIndex("path", (q) =>
+        q.eq("mainId", mainId).eq("position", body.position),
+      )
+      .unique();
+    if (
+      !step ||
+      step.replaces ||
+      !same(body.previous, step.episode) ||
+      !same(main.head, step.episode)
+    )
+      fail("MAIN_REVISION_TARGET_MISMATCH");
+    const oldRef = await parent(ctx, step.episode);
+    const ref = await parent(ctx, body.episode);
+    if (
+      ref.branchId !== oldRef.branchId ||
+      ref.episodeId !== oldRef.episodeId ||
+      same(ref, oldRef)
+    )
+      fail("MAIN_REVISION_TARGET_MISMATCH");
+    const branch = await ctx.db
+      .query("branches")
+      .withIndex("branchId", (q) => q.eq("branchId", ref.branchId))
+      .unique();
+    if (!branch || branch.owner !== agent._id) fail("FORBIDDEN");
+    if (branch.revision !== ref.revision)
+      fail("CURRENT_BRANCH_REVISION_REQUIRED");
+    const old = (await episode(ctx, oldRef))!,
+      revised = (await episode(ctx, ref))!;
+    if (
+      old.lineageId !== main.lineageId ||
+      revised.lineageId !== main.lineageId ||
+      (old.parent ? !same(revised.parent, old.parent) : !!revised.parent)
+    )
+      fail("MAIN_CONTINUITY_REQUIRED");
+    // Keep this operation scoped to manuscript corrections with unchanged
+    // identity, attribution and declarations. Both editions must be reviewed.
+    for (const field of [
+      "title",
+      "path",
+      "worldHash",
+      "provenanceHash",
+      "provenance",
+      "license",
+      "sourceRef",
+      "influenceCorrection",
+    ] as const) {
+      if (
+        (await fingerprint(old[field] ?? null)) !==
+        (await fingerprint(revised[field] ?? null))
+      )
+        fail("MAIN_REVISION_METADATA_CHANGED");
+    }
+    const history = step.editionHistory ?? [];
+    if (history.length >= 100) fail("MAIN_REVISION_HISTORY_LIMIT");
+    const changedAt = Date.now(),
+      reason = text(body.reason, 500, "REVISION_REASON");
+    await ctx.db.patch(step._id, {
+      episode: ref,
+      selectedAt: changedAt,
+      editionHistory: [...history, { episode: oldRef, changedAt, reason }],
+    });
+    await ctx.db.patch(main._id, { head: ref, version: main.version + 1 });
+    await audit(ctx, agent._id, operation, mainId, main.version + 1);
+    return {
+      mainId,
+      version: main.version + 1,
+      position: step.position,
+      episode: ref,
+    };
+  }
   if (operation === "main.replace") {
     if (!Number.isSafeInteger(body.position) || body.position < 0)
       fail("INVALID_MAIN_POSITION");
