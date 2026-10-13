@@ -293,6 +293,8 @@ PRは木の反映が終わるまでOPEN・通常PRにしておきます。既存
 
 各話のinfluenceはmanifestの `episodes[].influences` に記載し、その話の審査対象と読書表示へ固定します。空配列は申告なし、省略時だけ旧形式の `provenance.influences` を共通値として使います。後の話を追加するときも既存話の欄を保持してください。旧実装の取り込み漏れには、原審査を保持したまま固定元の話別申告を復元する[訂正手順](https://github.com/kentaroid-bot/ai-relay-fiction/blob/main/docs/episode-influence-repair.md)があります。
 
+固定manifestの `main` に現在の木版と同じ末尾の話IDを指定した本文訂正は、独立審査後に木へ自動反映できます。同じ本文・申告等を保持した前話の版引継ぎにも対応します。[一度の提出で訂正する手順](intake-v2.md#掲載済みの話の訂正)を参照してください。
+
 ### 木をしまう・話を取り下げる・欠けた話を補う
 
 - `main.hide`：木の所有者が `mainId, expectedVersion` を送ります。森の一覧と他の木からの移動先から外します。本文・他の木は変更しません。元の読書URLは「この木はしまわれました」と案内します。しまった木の宣言再送で再公開されません。

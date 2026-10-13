@@ -500,8 +500,8 @@ export async function applyLegacyDeclaredMain(
   return applyEditionDeclaredMain(ctx, branch, manifest, expectedVersion, true);
 }
 
-// Rebind only the selected, unchanged prefix of this author's branch. This is
-// not a manuscript correction or a way to replace somebody else's fixed work.
+// Rebind only this author's selected route. An extension keeps every selected
+// manuscript unchanged; a correction may change only the reviewed tail text.
 async function applyEditionDeclaredMain(
   ctx: MutationCtx,
   branch: Doc<"branches">,
@@ -595,8 +595,12 @@ async function applyEditionDeclaredMain(
   );
   if (path.length < selected.length || path.length > 1000)
     fail("MAIN_PATH_LIMIT");
-  if (!legacy && path.length === selected.length)
-    fail("MAIN_CONTINUITY_REQUIRED");
+  const correcting = !legacy && path.length === selected.length;
+  if (correcting) {
+    const oldTail = await episode(ctx, main.head);
+    if (!oldTail || oldTail.contentHash === targetEpisode.contentHash)
+      fail("MAIN_CONTINUITY_REQUIRED");
+  }
   // Check the whole prefix before writing. A changed manuscript or a replaced,
   // withdrawn, or unrelated step requires an explicit new author decision.
   for (const [i, step] of selected.entries()) {
@@ -614,7 +618,8 @@ async function applyEditionDeclaredMain(
       ref.revision !== branch.revision ||
       !old ||
       !next ||
-      old.contentHash !== next.contentHash ||
+      (old.contentHash !== next.contentHash &&
+        !(correcting && i === selected.length - 1)) ||
       old.lineageId !== next.lineageId
     )
       fail("MAIN_CONTINUITY_REQUIRED");
@@ -629,6 +634,27 @@ async function applyEditionDeclaredMain(
         declared.path !== next.path
       )
         fail("MAIN_CONTINUITY_REQUIRED");
+    }
+    if (correcting) {
+      // The author selected the current tree version and the same tail ID.
+      // Preserve attribution/declarations throughout the rebound interval;
+      // changed references are checked as the same route below.
+      for (const field of [
+        "title",
+        "path",
+        "worldHash",
+        "provenanceHash",
+        "provenance",
+        "license",
+        "sourceRef",
+        "influenceCorrection",
+      ] as const) {
+        if (
+          (await fingerprint(old[field] ?? null)) !==
+          (await fingerprint(next[field] ?? null))
+        )
+          fail("MAIN_REVISION_METADATA_CHANGED");
+      }
     }
     if (old.sourceRef || next.sourceRef) {
       if (!next.sourceRef || !same(old.sourceRef, next.sourceRef))
@@ -657,7 +683,9 @@ async function applyEditionDeclaredMain(
             episode: step.episode,
             changedAt: Date.now(),
             reason:
-              "Unchanged manuscript carried into the declared reviewed edition",
+              correcting && i === selected.length - 1
+                ? "Reviewed tail correction selected by the author's fixed manifest"
+                : "Unchanged manuscript carried into the declared reviewed edition",
           },
         ],
       });
@@ -674,11 +702,15 @@ async function applyEditionDeclaredMain(
   await audit(
     ctx,
     branch.owner,
-    legacy ? "main.legacy-handoff" : "main.edition-extension",
+    legacy
+      ? "main.legacy-handoff"
+      : correcting
+        ? "main.edition-correction"
+        : "main.edition-extension",
     mainId,
     version,
   );
-  return { mainId, version, outcome: "extended" };
+  return { mainId, version, outcome: correcting ? "corrected" : "extended" };
 }
 
 export async function applyDeclaredMain(

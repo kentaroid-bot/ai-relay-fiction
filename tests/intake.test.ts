@@ -2170,3 +2170,189 @@ it.each([
     expect((await get(t, submitted.intakeId)).status).toBe("published");
   },
 );
+
+async function tailCorrectionFixture(failure = "", ownStart = false) {
+  const serial = await editionExtensionFixture(ownStart);
+  await serial.retry();
+  const { t, manifest: m, ref } = serial;
+  const correctionRevision = "3".repeat(40);
+  const corrected = prose + " Corrected final sentence.";
+  const oldCase = await get(t, serial.submitted.intakeId);
+  m.main.expectedVersion = 2;
+  if (ownStart) m.main.start = ref("ep-002", next);
+  m.episodes[1].parent = ref("ep-002", correctionRevision);
+  m.episodes[2].parent = ref("ep-003", correctionRevision);
+  m.episodes[2].contentHash = await digest(corrected);
+  const texts: Record<string, string> = { "manuscript/04.md": corrected };
+  if (failure === "prefix-text") {
+    texts["manuscript/03.md"] = "Changed earlier scene";
+    m.episodes[1].contentHash = await digest(texts["manuscript/03.md"]);
+  }
+  if (failure === "title") m.episodes[2].title = "Another title";
+  if (failure === "declaration") m.episodes[2].influences = [];
+  if (failure === "prefix-declaration") m.episodes[0].influences = [];
+  if (failure === "different-route")
+    m.episodes[2].parent = ref("ep-002", correctionRevision);
+  if (failure === "different-start")
+    m.main.start = ref("ep-002", correctionRevision);
+  if (failure === "no-version") delete m.main.expectedVersion;
+  const normal = vi.mocked(globalThis.fetch).getMockImplementation()!;
+  vi.stubGlobal("fetch", async (url: any, init?: RequestInit) => {
+    const path = Object.keys(texts).find((p) => String(url).endsWith(p));
+    return path ? new Response(texts[path]) : normal(url, init);
+  });
+  const c = await submit(t, correctionRevision, oldCase.branchVersion);
+  await drain(t);
+  expect((await get(t, c.intakeId)).status).toBe("reviewing");
+  if (
+    [
+      "closed",
+      "hidden",
+      "version",
+      "replaced",
+      "withdrawn",
+      "history-limit",
+    ].includes(failure)
+  ) {
+    await t.run(async (ctx) => {
+      const main = serial.before.main;
+      if (failure === "closed") await ctx.db.patch(main._id, { closed: true });
+      if (failure === "hidden") await ctx.db.patch(main._id, { hiddenAt: 1 });
+      if (failure === "version") await ctx.db.patch(main._id, { version: 3 });
+      const steps = await ctx.db
+        .query("mainSteps")
+        .withIndex("path", (q) => q.eq("mainId", main.mainId))
+        .collect();
+      const tail = steps.find((s) => s.episode.episodeId === "ep-004")!;
+      if (failure === "replaced")
+        await ctx.db.patch(tail._id, { replaces: ref("ep-004", commit) });
+      if (failure === "history-limit")
+        await ctx.db.patch(tail._id, {
+          editionHistory: Array.from({ length: 100 }, () => ({
+            episode: ref("ep-004", commit),
+            changedAt: 1,
+            reason: "Old edition",
+          })),
+        });
+      if (failure === "withdrawn") {
+        const oldTail = (await ctx.db.query("episodes").collect()).find(
+          (e) =>
+            e.branchId === "river-branch" &&
+            e.episodeId === "ep-004" &&
+            e.revision === next,
+        )!;
+        await ctx.db.patch(oldTail._id, { lifecycle: "withdrawn" });
+      }
+    });
+  }
+  const trees = () =>
+    t.run(async (ctx) => ({
+      mains: await ctx.db.query("mains").collect(),
+      steps: await ctx.db.query("mainSteps").collect(),
+    }));
+  return {
+    ...serial,
+    correction: c,
+    correctionRevision,
+    corrected,
+    trees,
+    beforeCorrection: await trees(),
+  };
+}
+
+it.each([false, true])(
+  "automatically applies a reviewed tail correction and two unchanged ancestors with one submission (own start: %s)",
+  async (ownStart) => {
+    const f = await tailCorrectionFixture("", ownStart);
+    const { t, correction, correctionRevision, trees, beforeCorrection, ref } =
+      f;
+    const oldDocuments = await t.run(async (ctx) => ({
+      episodes: (await ctx.db.query("episodes").collect()).filter(
+        (e) => e.revision !== correctionRevision,
+      ),
+      reviews: await ctx.db.query("contentReviews").collect(),
+    }));
+    // No author command or operator selection follows review: publication itself
+    // must apply the correction, and leave the case's declaration unchanged.
+    const c = await get(t, correction.intakeId);
+    expect(await trees()).toEqual(beforeCorrection);
+    const receipt = await review(t, correction.intakeId);
+    expect(receipt.data.status, JSON.stringify(receipt.data)).toBe("published");
+    const done = await get(t, correction.intakeId);
+    expect(done.mainSelection).toEqual({ status: "completed" });
+    expect(done.manifest).toBe(c.manifest);
+    const after = await trees();
+    const main = after.mains.find((m) => m.mainId === "serial-tree")!;
+    expect(main).toMatchObject({
+      version: 3,
+      count: ownStart ? 3 : 4,
+      head: ref("ep-004", correctionRevision),
+    });
+    for (const step of after.steps.filter(
+      (s) =>
+        s.mainId === "serial-tree" && s.episode.branchId === "river-branch",
+    )) {
+      const previous = beforeCorrection.steps.find((s) => s._id === step._id)!;
+      expect(step.episode).toEqual(
+        ref(step.episode.episodeId, correctionRevision),
+      );
+      expect(step.editionHistory?.slice(0, -1)).toEqual(
+        previous.editionHistory ?? [],
+      );
+      expect(step.editionHistory?.at(-1)).toMatchObject({
+        episode: previous.episode,
+        changedAt: expect.any(Number),
+      });
+      expect(step.editionHistory?.at(-1)?.reason).toContain(
+        step.episode.episodeId === "ep-004" ? "correction" : "Unchanged",
+      );
+    }
+    expect(after.mains.filter((m) => m.mainId !== "serial-tree")).toEqual(
+      beforeCorrection.mains.filter((m) => m.mainId !== "serial-tree"),
+    );
+    expect(after.steps.filter((s) => s.mainId !== "serial-tree")).toEqual(
+      beforeCorrection.steps.filter((s) => s.mainId !== "serial-tree"),
+    );
+    await t.run(async (ctx) => {
+      for (const ep of oldDocuments.episodes)
+        expect(await ctx.db.get(ep._id)).toEqual(ep);
+      for (const r of oldDocuments.reviews)
+        expect(await ctx.db.get(r._id)).toEqual(r);
+    });
+    await t.mutation(internal.intake.selectMain, {
+      intakeId: correction.intakeId,
+    });
+    expect(await trees()).toEqual(after);
+    const publicMain = await t.query(internal.forest.publicMain, {
+      id: "serial-tree",
+    });
+    expect(publicMain).toMatchObject({ version: 3, count: ownStart ? 3 : 4 });
+  },
+);
+
+it.each([
+  "prefix-text",
+  "title",
+  "declaration",
+  "prefix-declaration",
+  "different-route",
+  "different-start",
+  "no-version",
+  "closed",
+  "hidden",
+  "version",
+  "replaced",
+  "withdrawn",
+  "history-limit",
+])(
+  "holds automatic correction for %s while preserving all tree selections",
+  async (failure) => {
+    const { t, correction, trees, beforeCorrection } =
+      await tailCorrectionFixture(failure);
+    const receipt = await review(t, correction.intakeId);
+    expect(receipt.data.status, JSON.stringify(receipt.data)).toBe("published");
+    const c = await get(t, correction.intakeId);
+    expect(c.mainSelection?.status).toBe("failed");
+    expect(await trees()).toEqual(beforeCorrection);
+  },
+);
