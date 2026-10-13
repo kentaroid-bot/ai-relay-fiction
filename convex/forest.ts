@@ -497,6 +497,18 @@ export async function applyLegacyDeclaredMain(
   manifest: any,
   expectedVersion: number,
 ) {
+  return applyEditionDeclaredMain(ctx, branch, manifest, expectedVersion, true);
+}
+
+// Rebind only this author's selected route. An extension keeps every selected
+// manuscript unchanged; a correction may change only the reviewed tail text.
+async function applyEditionDeclaredMain(
+  ctx: MutationCtx,
+  branch: Doc<"branches">,
+  manifest: any,
+  expectedVersion: number,
+  legacy = false,
+) {
   if (manifest.main === undefined) return { outcome: "no_declaration" };
   const declaration = manifest.main;
   if (
@@ -564,13 +576,31 @@ export async function applyLegacyDeclaredMain(
     !same(selected.at(-1)!.episode, main.head)
   )
     fail("MAIN_CONTINUITY_REQUIRED");
+  const first = selected[0].episode;
+  const refreshedStart =
+    !legacy && first.branchId === branch.branchId
+      ? { ...first, revision: branch.revision }
+      : first;
+  if (
+    !legacy &&
+    declaration.start &&
+    !same(declaration.start, first) &&
+    !same(declaration.start, refreshedStart)
+  )
+    fail("MAIN_CONTINUITY_REQUIRED");
   const path = await selectedPath(
     ctx,
-    declaration.start ?? selected[0].episode,
+    legacy ? (declaration.start ?? first) : refreshedStart,
     target,
   );
   if (path.length < selected.length || path.length > 1000)
     fail("MAIN_PATH_LIMIT");
+  const correcting = !legacy && path.length === selected.length;
+  if (correcting) {
+    const oldTail = await episode(ctx, main.head);
+    if (!oldTail || oldTail.contentHash === targetEpisode.contentHash)
+      fail("MAIN_CONTINUITY_REQUIRED");
+  }
   // Check the whole prefix before writing. A changed manuscript or a replaced,
   // withdrawn, or unrelated step requires an explicit new author decision.
   for (const [i, step] of selected.entries()) {
@@ -588,10 +618,44 @@ export async function applyLegacyDeclaredMain(
       ref.revision !== branch.revision ||
       !old ||
       !next ||
-      old.contentHash !== next.contentHash ||
+      (old.contentHash !== next.contentHash &&
+        !(correcting && i === selected.length - 1)) ||
       old.lineageId !== next.lineageId
     )
       fail("MAIN_CONTINUITY_REQUIRED");
+    if (!legacy) {
+      const declared = manifest.episodes.find(
+        (e: any) => e.episodeId === ref.episodeId,
+      );
+      if (
+        old.title !== next.title ||
+        !declared ||
+        declared.contentHash !== next.contentHash ||
+        declared.path !== next.path
+      )
+        fail("MAIN_CONTINUITY_REQUIRED");
+    }
+    if (correcting) {
+      // The author selected the current tree version and the same tail ID.
+      // Preserve attribution/declarations throughout the rebound interval;
+      // changed references are checked as the same route below.
+      for (const field of [
+        "title",
+        "path",
+        "worldHash",
+        "provenanceHash",
+        "provenance",
+        "license",
+        "sourceRef",
+        "influenceCorrection",
+      ] as const) {
+        if (
+          (await fingerprint(old[field] ?? null)) !==
+          (await fingerprint(next[field] ?? null))
+        )
+          fail("MAIN_REVISION_METADATA_CHANGED");
+      }
+    }
     if (old.sourceRef || next.sourceRef) {
       if (!next.sourceRef || !same(old.sourceRef, next.sourceRef))
         fail("MAIN_CONTINUITY_REQUIRED");
@@ -605,12 +669,25 @@ export async function applyLegacyDeclaredMain(
         same(old.parent, selected[i - 1].episode) &&
         same(next.parent, path[i - 1]));
     if (!parentsMatch) fail("MAIN_CONTINUITY_REQUIRED");
+    if ((step.editionHistory?.length ?? 0) >= 100)
+      fail("MAIN_REVISION_HISTORY_LIMIT");
   }
   for (const [i, step] of selected.entries()) {
     if (!same(step.episode, path[i]))
       await ctx.db.patch(step._id, {
         episode: path[i],
         selectedAt: Date.now(),
+        editionHistory: [
+          ...(step.editionHistory ?? []),
+          {
+            episode: step.episode,
+            changedAt: Date.now(),
+            reason:
+              correcting && i === selected.length - 1
+                ? "Reviewed tail correction selected by the author's fixed manifest"
+                : "Unchanged manuscript carried into the declared reviewed edition",
+          },
+        ],
       });
   }
   for (let i = selected.length; i < path.length; i++)
@@ -622,15 +699,31 @@ export async function applyLegacyDeclaredMain(
     });
   const version = main.version + 1;
   await ctx.db.patch(main._id, { head: target, count: path.length, version });
-  await audit(ctx, branch.owner, "main.legacy-handoff", mainId, version);
-  return { mainId, version, outcome: "extended" };
+  await audit(
+    ctx,
+    branch.owner,
+    legacy
+      ? "main.legacy-handoff"
+      : correcting
+        ? "main.edition-correction"
+        : "main.edition-extension",
+    mainId,
+    version,
+  );
+  return { mainId, version, outcome: correcting ? "corrected" : "extended" };
 }
 
 export async function applyDeclaredMain(
   ctx: MutationCtx,
   branch: Doc<"branches">,
   manifest: any,
-) {
+): Promise<{
+  outcome: string;
+  mainId?: string;
+  version?: number;
+  count?: number;
+  head?: Ref;
+}> {
   if (manifest.main === undefined) return { outcome: "no_declaration" };
   const declaration = manifest.main;
   if (
@@ -702,7 +795,8 @@ export async function applyDeclaredMain(
     expected !== (main?.version ?? 0)
   )
     fail("VERSION_CONFLICT");
-  if (main && !connected) fail("MAIN_CONTINUITY_REQUIRED");
+  if (main && !connected)
+    return applyEditionDeclaredMain(ctx, branch, manifest, expected);
   if (!main) {
     const owned = await ctx.db
       .query("mains")

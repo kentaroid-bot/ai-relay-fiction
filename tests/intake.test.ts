@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { convexTest } from "convex-test";
 import schema from "../convex/schema";
+import type { Id } from "../convex/_generated/dataModel";
 import { internal } from "../convex/_generated/api";
 import { digest, TERMS } from "../convex/policy";
 import { scanText, WORK_TERMS } from "../convex/safety";
@@ -1912,3 +1913,446 @@ it("reconciles a corrected intake's failed main declaration after explicit revis
   });
   expect((await get(t, first.intakeId)).status).toBe("published");
 });
+
+// Two unchanged own episodes acquire new fixed parent references when a third
+// episode is submitted. Exercise the real intake/review/selectMain pipeline.
+async function editionExtensionFixture(ownStart = false) {
+  const root = { branchId: "origin", episodeId: "ep-001", revision: commit };
+  const ref = (episodeId: string, revision = commit) => ({
+    branchId: "river-branch",
+    episodeId,
+    revision,
+  });
+  const { t, manifest } = await fresh({
+    main: {
+      mainId: "serial-tree",
+      title: "Serial",
+      start: ownStart ? ref("ep-002") : root,
+      episodeId: "ep-003",
+    },
+  });
+  const m = manifest as any;
+  m.episodes.push({
+    ...m.episodes[0],
+    episodeId: "ep-003",
+    title: "Second",
+    path: "manuscript/03.md",
+    parent: ref("ep-002"),
+  });
+  const oldCase = await submit(t);
+  await drain(t);
+  expect((await review(t, oldCase.intakeId)).data.status).toBe("published");
+  const before = await t.run(async (ctx) => {
+    const main = (await ctx.db
+      .query("mains")
+      .withIndex("mainId", (q) => q.eq("mainId", "serial-tree"))
+      .unique())!;
+    const steps = await ctx.db
+      .query("mainSteps")
+      .withIndex("path", (q) => q.eq("mainId", main.mainId))
+      .collect();
+    const { _id, _creationTime, ...copy } = main;
+    await ctx.db.insert("mains", { ...copy, mainId: "other-tree" });
+    for (const { _id, _creationTime, ...step } of steps)
+      await ctx.db.insert("mainSteps", { ...step, mainId: "other-tree" });
+    // Hold just selection, so the already-published case can be retried below.
+    await ctx.db.patch(main._id, { closed: true });
+    return {
+      main,
+      steps,
+      episodes: await ctx.db.query("episodes").collect(),
+      reviews: await ctx.db.query("contentReviews").collect(),
+    };
+  });
+  m.main.expectedVersion = 1;
+  m.main.episodeId = "ep-004";
+  m.episodes[1].parent = ref("ep-002", next);
+  m.episodes.push({
+    ...m.episodes[0],
+    episodeId: "ep-004",
+    title: "Third",
+    path: "manuscript/04.md",
+    parent: ref("ep-003", next),
+  });
+  const old = await get(t, oldCase.intakeId);
+  const submitted = await submit(t, next, old.branchVersion);
+  await drain(t);
+  expect((await review(t, submitted.intakeId)).data.status).toBe("published");
+  expect((await get(t, submitted.intakeId)).mainSelection?.status).toBe(
+    "failed",
+  );
+  await t.run((ctx) => ctx.db.patch(before.main._id, { closed: undefined }));
+  const retry = () =>
+    t.mutation(internal.intake.selectMain, { intakeId: submitted.intakeId });
+  return { t, before, submitted, retry, root, ref, manifest: m };
+}
+
+it.each([false, true])(
+  "extends a published serial across two unchanged editions (own start: %s), preserving history and other trees",
+  async (ownStart) => {
+    const { t, before, submitted, retry, ref, root } =
+      await editionExtensionFixture(ownStart);
+    const editionSnapshot = await t.run(async (ctx) => ({
+      episodes: await ctx.db.query("episodes").collect(),
+      reviews: await ctx.db.query("contentReviews").collect(),
+    }));
+    await retry();
+    const snapshot = () =>
+      t.run(async (ctx) => ({
+        mains: await ctx.db.query("mains").collect(),
+        steps: await ctx.db.query("mainSteps").collect(),
+      }));
+    const after = await snapshot();
+    await retry();
+    expect(await snapshot()).toEqual(after);
+    expect((await get(t, submitted.intakeId)).mainSelection).toEqual({
+      status: "completed",
+    });
+    const main = after.mains.find((m) => m.mainId === "serial-tree")!;
+    expect(main).toMatchObject({
+      version: 2,
+      count: ownStart ? 3 : 4,
+      head: ref("ep-004", next),
+    });
+    const steps = after.steps
+      .filter((s) => s.mainId === main.mainId)
+      .sort((a, b) => a.position - b.position);
+    expect(steps.map((s) => s.episode)).toEqual([
+      ...(ownStart ? [] : [root]),
+      ref("ep-002", next),
+      ref("ep-003", next),
+      ref("ep-004", next),
+    ]);
+    for (const episodeId of ["ep-002", "ep-003"]) {
+      expect(
+        steps.find(
+          (s) =>
+            s.episode.episodeId === episodeId &&
+            s.episode.branchId === "river-branch",
+        )!.editionHistory,
+      ).toEqual([
+        {
+          episode: ref(episodeId),
+          changedAt: expect.any(Number),
+          reason: expect.any(String),
+        },
+      ]);
+    }
+    expect(
+      after.steps
+        .filter((s) => s.mainId === "other-tree")
+        .map((s) => s.episode),
+    ).toEqual(before.steps.map((s) => s.episode));
+    expect(after.mains.find((m) => m.mainId === "other-tree")).toMatchObject({
+      version: 1,
+      head: ref("ep-003"),
+    });
+    expect(
+      await t.run(async (ctx) => ({
+        episodes: await ctx.db.query("episodes").collect(),
+        reviews: await ctx.db.query("contentReviews").collect(),
+      })),
+    ).toEqual(editionSnapshot);
+    const publicMain = await t.query(internal.forest.publicMain, {
+      id: main.mainId,
+    });
+    expect(publicMain).toMatchObject({ version: 2, count: ownStart ? 3 : 4 });
+  },
+);
+
+it.each([
+  "text",
+  "parent",
+  "title",
+  "source",
+  "foreign-prefix",
+  "withdrawn",
+  "unreviewed",
+  "unlisted",
+  "replaced",
+  "closed",
+  "hidden",
+  "owner",
+  "version",
+  "start",
+  "history-limit",
+  "gap",
+  "no-extension",
+])(
+  "refuses unsafe edition extension: %s, without partially changing any tree",
+  async (failure) => {
+    const { t, before, submitted, retry, root, ref } =
+      await editionExtensionFixture();
+    await t.run(async (ctx) => {
+      const episodes = await ctx.db.query("episodes").collect();
+      const old = episodes.find(
+        (e) =>
+          e.branchId === "river-branch" &&
+          e.episodeId === "ep-002" &&
+          e.revision === commit,
+      )!;
+      const revised = episodes.find(
+        (e) =>
+          e.branchId === "river-branch" &&
+          e.episodeId === "ep-003" &&
+          e.revision === next,
+      )!;
+      const steps = await ctx.db
+        .query("mainSteps")
+        .withIndex("path", (q) => q.eq("mainId", "serial-tree"))
+        .collect();
+      const firstOwn = steps.find((s) => s.episode.episodeId === "ep-002")!;
+      if (failure === "text")
+        await ctx.db.patch(old._id, {
+          contentHash: await digest("different manuscript"),
+        });
+      if (failure === "parent") await ctx.db.patch(old._id, { parent: null });
+      if (failure === "title")
+        await ctx.db.patch(old._id, { title: "Different title" });
+      if (failure === "source")
+        await ctx.db.patch(old._id, { sourceRef: root });
+      if (failure === "foreign-prefix")
+        await ctx.db.patch(firstOwn._id, { episode: root });
+      if (failure === "withdrawn")
+        await ctx.db.patch(old._id, { lifecycle: "withdrawn" });
+      if (failure === "unlisted")
+        await ctx.db.patch(revised._id, { listed: false });
+      if (failure === "unreviewed") {
+        const reviews = await ctx.db.query("contentReviews").collect();
+        for (const r of reviews)
+          if (
+            r.target.branchId === "river-branch" &&
+            r.target.episodeId === "ep-003" &&
+            r.target.revision === next
+          )
+            await ctx.db.delete(r._id);
+      }
+      if (failure === "replaced")
+        await ctx.db.patch(firstOwn._id, { replaces: root });
+      if (failure === "history-limit")
+        await ctx.db.patch(firstOwn._id, {
+          editionHistory: Array.from({ length: 100 }, () => ({
+            episode: ref("ep-002"),
+            changedAt: 1,
+            reason: "Earlier edition",
+          })),
+        });
+      if (failure === "gap") await ctx.db.patch(firstOwn._id, { position: 20 });
+      if (failure === "closed")
+        await ctx.db.patch(before.main._id, { closed: true });
+      if (failure === "hidden")
+        await ctx.db.patch(before.main._id, { hiddenAt: 1 });
+      if (failure === "version")
+        await ctx.db.patch(before.main._id, { version: 7 });
+      if (failure === "owner") {
+        const stranger = (await ctx.db.query("agents").collect()).find(
+          (a) => a.agentName === "stranger",
+        )!;
+        await ctx.db.patch(before.main._id, { owner: stranger._id });
+      }
+      if (["start", "no-extension"].includes(failure)) {
+        const c = (await ctx.db.get(submitted.intakeId as Id<"intakes">))!;
+        const m = JSON.parse(c.manifest);
+        if (failure === "start") m.main.start = ref("ep-002", next);
+        else m.main.episodeId = "ep-003";
+        await ctx.db.patch(c._id, { manifest: JSON.stringify(m) });
+      }
+    });
+    const snapshot = () =>
+      t.run(async (ctx) => ({
+        mains: await ctx.db.query("mains").collect(),
+        steps: await ctx.db.query("mainSteps").collect(),
+        audits: await ctx.db.query("audits").collect(),
+      }));
+    const beforeRetry = await snapshot();
+    await expect(retry()).rejects.toThrow();
+    expect(await snapshot()).toEqual(beforeRetry);
+    expect((await get(t, submitted.intakeId)).status).toBe("published");
+  },
+);
+
+async function tailCorrectionFixture(failure = "", ownStart = false) {
+  const serial = await editionExtensionFixture(ownStart);
+  await serial.retry();
+  const { t, manifest: m, ref } = serial;
+  const correctionRevision = "3".repeat(40);
+  const corrected = prose + " Corrected final sentence.";
+  const oldCase = await get(t, serial.submitted.intakeId);
+  m.main.expectedVersion = 2;
+  if (ownStart) m.main.start = ref("ep-002", next);
+  m.episodes[1].parent = ref("ep-002", correctionRevision);
+  m.episodes[2].parent = ref("ep-003", correctionRevision);
+  m.episodes[2].contentHash = await digest(corrected);
+  const texts: Record<string, string> = { "manuscript/04.md": corrected };
+  if (failure === "prefix-text") {
+    texts["manuscript/03.md"] = "Changed earlier scene";
+    m.episodes[1].contentHash = await digest(texts["manuscript/03.md"]);
+  }
+  if (failure === "title") m.episodes[2].title = "Another title";
+  if (failure === "declaration") m.episodes[2].influences = [];
+  if (failure === "prefix-declaration") m.episodes[0].influences = [];
+  if (failure === "different-route")
+    m.episodes[2].parent = ref("ep-002", correctionRevision);
+  if (failure === "different-start")
+    m.main.start = ref("ep-002", correctionRevision);
+  if (failure === "no-version") delete m.main.expectedVersion;
+  const normal = vi.mocked(globalThis.fetch).getMockImplementation()!;
+  vi.stubGlobal("fetch", async (url: any, init?: RequestInit) => {
+    const path = Object.keys(texts).find((p) => String(url).endsWith(p));
+    return path ? new Response(texts[path]) : normal(url, init);
+  });
+  const c = await submit(t, correctionRevision, oldCase.branchVersion);
+  await drain(t);
+  expect((await get(t, c.intakeId)).status).toBe("reviewing");
+  if (
+    [
+      "closed",
+      "hidden",
+      "version",
+      "replaced",
+      "withdrawn",
+      "history-limit",
+    ].includes(failure)
+  ) {
+    await t.run(async (ctx) => {
+      const main = serial.before.main;
+      if (failure === "closed") await ctx.db.patch(main._id, { closed: true });
+      if (failure === "hidden") await ctx.db.patch(main._id, { hiddenAt: 1 });
+      if (failure === "version") await ctx.db.patch(main._id, { version: 3 });
+      const steps = await ctx.db
+        .query("mainSteps")
+        .withIndex("path", (q) => q.eq("mainId", main.mainId))
+        .collect();
+      const tail = steps.find((s) => s.episode.episodeId === "ep-004")!;
+      if (failure === "replaced")
+        await ctx.db.patch(tail._id, { replaces: ref("ep-004", commit) });
+      if (failure === "history-limit")
+        await ctx.db.patch(tail._id, {
+          editionHistory: Array.from({ length: 100 }, () => ({
+            episode: ref("ep-004", commit),
+            changedAt: 1,
+            reason: "Old edition",
+          })),
+        });
+      if (failure === "withdrawn") {
+        const oldTail = (await ctx.db.query("episodes").collect()).find(
+          (e) =>
+            e.branchId === "river-branch" &&
+            e.episodeId === "ep-004" &&
+            e.revision === next,
+        )!;
+        await ctx.db.patch(oldTail._id, { lifecycle: "withdrawn" });
+      }
+    });
+  }
+  const trees = () =>
+    t.run(async (ctx) => ({
+      mains: await ctx.db.query("mains").collect(),
+      steps: await ctx.db.query("mainSteps").collect(),
+    }));
+  return {
+    ...serial,
+    correction: c,
+    correctionRevision,
+    corrected,
+    trees,
+    beforeCorrection: await trees(),
+  };
+}
+
+it.each([false, true])(
+  "automatically applies a reviewed tail correction and two unchanged ancestors with one submission (own start: %s)",
+  async (ownStart) => {
+    const f = await tailCorrectionFixture("", ownStart);
+    const { t, correction, correctionRevision, trees, beforeCorrection, ref } =
+      f;
+    const oldDocuments = await t.run(async (ctx) => ({
+      episodes: (await ctx.db.query("episodes").collect()).filter(
+        (e) => e.revision !== correctionRevision,
+      ),
+      reviews: await ctx.db.query("contentReviews").collect(),
+    }));
+    // No author command or operator selection follows review: publication itself
+    // must apply the correction, and leave the case's declaration unchanged.
+    const c = await get(t, correction.intakeId);
+    expect(await trees()).toEqual(beforeCorrection);
+    const receipt = await review(t, correction.intakeId);
+    expect(receipt.data.status, JSON.stringify(receipt.data)).toBe("published");
+    const done = await get(t, correction.intakeId);
+    expect(done.mainSelection).toEqual({ status: "completed" });
+    expect(done.manifest).toBe(c.manifest);
+    const after = await trees();
+    const main = after.mains.find((m) => m.mainId === "serial-tree")!;
+    expect(main).toMatchObject({
+      version: 3,
+      count: ownStart ? 3 : 4,
+      head: ref("ep-004", correctionRevision),
+    });
+    for (const step of after.steps.filter(
+      (s) =>
+        s.mainId === "serial-tree" && s.episode.branchId === "river-branch",
+    )) {
+      const previous = beforeCorrection.steps.find((s) => s._id === step._id)!;
+      expect(step.episode).toEqual(
+        ref(step.episode.episodeId, correctionRevision),
+      );
+      expect(step.editionHistory?.slice(0, -1)).toEqual(
+        previous.editionHistory ?? [],
+      );
+      expect(step.editionHistory?.at(-1)).toMatchObject({
+        episode: previous.episode,
+        changedAt: expect.any(Number),
+      });
+      expect(step.editionHistory?.at(-1)?.reason).toContain(
+        step.episode.episodeId === "ep-004" ? "correction" : "Unchanged",
+      );
+    }
+    expect(after.mains.filter((m) => m.mainId !== "serial-tree")).toEqual(
+      beforeCorrection.mains.filter((m) => m.mainId !== "serial-tree"),
+    );
+    expect(after.steps.filter((s) => s.mainId !== "serial-tree")).toEqual(
+      beforeCorrection.steps.filter((s) => s.mainId !== "serial-tree"),
+    );
+    await t.run(async (ctx) => {
+      for (const ep of oldDocuments.episodes)
+        expect(await ctx.db.get(ep._id)).toEqual(ep);
+      for (const r of oldDocuments.reviews)
+        expect(await ctx.db.get(r._id)).toEqual(r);
+    });
+    await t.mutation(internal.intake.selectMain, {
+      intakeId: correction.intakeId,
+    });
+    expect(await trees()).toEqual(after);
+    const publicMain = await t.query(internal.forest.publicMain, {
+      id: "serial-tree",
+    });
+    expect(publicMain).toMatchObject({ version: 3, count: ownStart ? 3 : 4 });
+  },
+);
+
+it.each([
+  "prefix-text",
+  "title",
+  "declaration",
+  "prefix-declaration",
+  "different-route",
+  "different-start",
+  "no-version",
+  "closed",
+  "hidden",
+  "version",
+  "replaced",
+  "withdrawn",
+  "history-limit",
+])(
+  "holds automatic correction for %s while preserving all tree selections",
+  async (failure) => {
+    const { t, correction, trees, beforeCorrection } =
+      await tailCorrectionFixture(failure);
+    const receipt = await review(t, correction.intakeId);
+    expect(receipt.data.status, JSON.stringify(receipt.data)).toBe("published");
+    const c = await get(t, correction.intakeId);
+    expect(c.mainSelection?.status).toBe("failed");
+    expect(await trees()).toEqual(beforeCorrection);
+  },
+);
